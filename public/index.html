@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monopoly Online — 3D Board Game</title>
+  <meta name="description"
+    content="Play Monopoly online with friends in a stunning 3D isometric board. Real-time multiplayer powered by Socket.io." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <div id="notification-container"></div>
+
+  <!-- ══════════════════════════════════════════════════════
+       GAME HUD — Main game interface
+       ══════════════════════════════════════════════════════ -->
+  <div id="game-hud" class="hidden">
+    <!-- Top Bar -->
+    <div class="top-bar">
+      <div id="turn-indicator" class="turn-indicator"></div>
+      <div id="dice-result" class="dice-result hidden"></div>
+    </div>
+
+    <!-- Right Side: Leaderboard Panel -->
+    <div class="leaderboard-wrapper">
+      <div class="lb-header">🏆 Leaderboard</div>
+      <div id="leaderboard-panel" class="leaderboard-panel"></div>
+    </div>
+
+    <!-- Bottom Left: Own Auction Button -->
+    <button id="own-auction-btn" class="own-auction-btn">🔨 Own Auction</button>
+
+    <!-- Bottom Center: Jail Actions (shown when in jail) -->
+    <div id="jail-actions" class="jail-actions hidden">
+      <button id="jail-buyout-btn" class="jail-btn buyout">💸 Buy out for $50</button>
+      <button id="jail-pardon-btn" class="jail-btn pardon disabled">🃏 Use pardon card</button>
+    </div>
+
+    <!-- Bottom Center: Roll Dice -->
+    <button id="roll-dice-btn" class="roll-dice-btn disabled">🎲 Roll Dice</button>
+
+    <!-- Bottom Right: Trades & History Panel -->
+    <div class="history-log">
+      <div class="panel-tabs">
+        <div id="tab-history" class="panel-tab active">📜 History</div>
+        <div id="tab-trades" class="panel-tab">🤝 Trades (<span id="trades-count">0</span>)</div>
+      </div>
+      <div id="history-content" class="panel-content active">
+        <div id="history-log-list" class="hl-list"></div>
+      </div>
+      <div id="trades-content" class="panel-content hidden">
+        <!-- Trade cards appended here dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       BUY PROPERTY MODAL
+       ══════════════════════════════════════════════════════ -->
+  <div id="buy-modal" class="modal-overlay hidden">
+    <div class="buy-modal-card">
+      <div class="buy-modal-header">
+        <span id="buy-prop-type" class="buy-type-badge">🏠 Property</span>
+        <h2 id="buy-prop-name">Property Name</h2>
+        <div class="buy-price-tag"><span id="buy-prop-price">$0</span></div>
+      </div>
+      <div class="buy-modal-actions">
+        <button id="buy-btn" class="modal-btn buy">Buy</button>
+        <button id="pass-btn" class="modal-btn pass">Auction</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       ACTION CARD MODAL (3D Flip)
+       ══════════════════════════════════════════════════════ -->
+  <div id="card-modal" class="modal-overlay hidden">
+    <div class="card-container">
+      <div id="card-inner" class="card-inner">
+        <div class="card-face card-front">
+          <span id="card-front-emoji" class="card-emoji">🃏</span>
+          <p class="card-label">Action Card</p>
+        </div>
+        <div class="card-face card-back">
+          <span id="card-back-emoji" class="card-emoji">🎲</span>
+          <p id="card-back-text" class="card-text">Card text</p>
+          <span id="card-back-amount" class="card-amount positive">+$0</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       AUCTION MODAL (3-Column)
+       ══════════════════════════════════════════════════════ -->
+  <div id="auction-modal" class="modal-overlay hidden">
+    <div class="auction-grid">
+      <!-- Left: Property Card -->
+      <div class="auc-left">
+        <div class="auc-prop-card">
+          <span id="auc-color-dot" class="auc-color-dot"></span>
+          <h3 id="auc-prop-name">Property</h3>
+          <span id="auc-prop-type" class="auc-prop-type">🏠 Property</span>
+          <div class="auc-prop-detail"><span>Price:</span><span id="auc-prop-price">$0</span></div>
+          <div class="auc-prop-detail"><span>Rent:</span><span id="auc-prop-rent">$0</span></div>
+        </div>
+      </div>
+
+      <!-- Middle: Bidding -->
+      <div class="auc-middle">
+        <div class="auc-timer-wrapper">
+          <div class="auc-timer-track">
+            <div id="auc-timer-bar" class="auc-timer-bar"></div>
+          </div>
+          <span id="auc-timer-text" class="auc-timer-text">15s</span>
+        </div>
+        <div class="auc-bid-section">
+          <div class="auc-label">Current Bid</div>
+          <div class="auc-current-bid">
+            <span id="auc-current-bidder" class="auc-bidder-name">No bids yet</span>
+            <span id="auc-current-bid-amount" class="auc-bid-amount">$0</span>
+          </div>
+        </div>
+        <div class="auc-label">I am bidding</div>
+        <div id="auc-bid-grid" class="auc-bid-grid"></div>
+      </div>
+
+      <!-- Right: Player List -->
+      <div class="auc-right">
+        <div class="auc-label">Players</div>
+        <div id="auc-player-list" class="auc-player-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       OWN AUCTION — "Create own auction" gidd.io modal
+       ══════════════════════════════════════════════════════ -->
+  <!-- Step 1: Property selector -->
+  <div id="own-auction-select" class="modal-overlay hidden">
+    <div class="oa-card">
+      <div class="oa-card-header">
+        <h3>🔨 Own Auction</h3>
+        <p class="oa-subtitle">Select a property to put up for auction</p>
+      </div>
+      <div id="own-auction-list" class="oa-list"></div>
+      <button id="own-auction-close" class="modal-btn pass">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Step 2: Configure auction -->
+  <div id="own-auction-config" class="modal-overlay hidden">
+    <div class="oa-config-card">
+      <h3 class="oa-config-title">Create own auction</h3>
+      <p class="oa-config-desc">You can try to sell one of your properties by conducting an auction with start price and bid reset time.</p>
+
+      <div class="oa-config-section">
+        <div class="oa-section-label">Reset time in seconds</div>
+        <div class="oa-time-toggles">
+          <button class="oa-toggle-btn active" data-time="3">3</button>
+          <button class="oa-toggle-btn" data-time="6">6</button>
+          <button class="oa-toggle-btn" data-time="9">9</button>
+        </div>
+      </div>
+
+      <div class="oa-config-section">
+        <div class="oa-section-label">Start Price: <span id="oa-slider-value" class="oa-slider-val">$0</span></div>
+        <input type="range" id="oa-price-slider" class="oa-price-slider" min="0" max="1000" value="0" step="10" />
+        <div class="oa-slider-bounds">
+          <span>$0</span>
+          <span id="oa-slider-max">$0</span>
+        </div>
+      </div>
+
+      <div class="oa-config-footer">
+        <button id="oa-conduct-btn" class="oa-conduct-btn">🔨 Conduct auction now</button>
+        <button id="oa-config-close" class="modal-btn pass">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       TRADE MODAL — 2-column gidd.io layout
+       ══════════════════════════════════════════════════════ -->
+  <div id="trade-modal" class="modal-overlay hidden">
+    <div class="trade-two-col-card">
+      <h2 class="trade-title-bar">🤝 Trade Offer</h2>
+      <div class="trade-two-col">
+        <!-- Left: You -->
+        <div class="trade-col">
+          <div class="trade-col-header">
+            <div class="trade-col-avatar" id="trade-my-avatar">🧑</div>
+            <div>
+              <div class="trade-col-name" id="trade-my-name">Me</div>
+              <div class="trade-col-cash" id="trade-my-cash-display">$0</div>
+            </div>
+          </div>
+          <div class="trade-col-label">Properties to offer:</div>
+          <div id="trade-my-props" class="trade-props-list"></div>
+          <div class="trade-cash-row">
+            <label class="trade-cash-label">Cash offer: $</label>
+            <input type="number" id="trade-my-cash" class="trade-cash-input" min="0" value="0" />
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <div class="trade-col-divider">⇄</div>
+
+        <!-- Right: Them -->
+        <div class="trade-col">
+          <div class="trade-col-header">
+            <div class="trade-col-avatar" id="trade-target-avatar">🧑</div>
+            <div>
+              <div class="trade-col-name" id="trade-target-name">Target</div>
+              <div class="trade-col-cash" id="trade-target-cash-display">$0</div>
+            </div>
+          </div>
+          <div class="trade-col-label">Properties to request:</div>
+          <div id="trade-target-props" class="trade-props-list"></div>
+          <div class="trade-cash-row">
+            <label class="trade-cash-label">Cash request: $</label>
+            <input type="number" id="trade-target-cash" class="trade-cash-input" min="0" value="0" />
+          </div>
+        </div>
+      </div>
+
+      <div class="trade-sticky-footer">
+        <button id="trade-send-btn" class="trade-make-offer-btn">Make offer</button>
+        <button id="trade-cancel-btn" class="modal-btn pass">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       TRADE INCOMING MODAL
+       ══════════════════════════════════════════════════════ -->
+  <div id="trade-incoming-modal" class="modal-overlay hidden">
+    <div class="trade-card">
+      <h2 class="trade-title">📨 Trade Incoming!</h2>
+      <div class="trade-sides">
+        <div class="trade-side">
+          <div class="ts-header"><span id="ti-from-name">Player</span> offers:</div>
+          <div id="ti-offer-list" class="ts-items"></div>
+        </div>
+        <div class="trade-arrow">⇄</div>
+        <div class="trade-side">
+          <div class="ts-header"><span id="ti-to-name">You</span> give:</div>
+          <div id="ti-request-list" class="ts-items"></div>
+        </div>
+      </div>
+      <div class="trade-actions">
+        <button id="trade-accept-btn" class="modal-btn buy">✅ Accept</button>
+        <button id="trade-reject-btn" class="modal-btn pass">❌ Reject</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       PROPERTY DETAILS MODAL — 2-column gidd.io layout
+       ══════════════════════════════════════════════════════ -->
+  <div id="prop-details-modal" class="modal-overlay hidden">
+    <div class="pdm-grid">
+      <!-- ── LEFT COLUMN ── -->
+      <div class="pdm-left">
+        <div class="pdm-prop-header">
+          <div id="pdm-color-block" class="pdm-color-block"></div>
+          <div>
+            <div id="pdm-type-badge" class="pdm-type-badge">🏠 Property</div>
+            <h2 id="pd-name" class="pdm-prop-name">Property Name</h2>
+          </div>
+        </div>
+
+        <!-- 3-col stats grid -->
+        <div class="pdm-stats-grid">
+          <div class="pdm-stat">
+            <div class="pdm-stat-label">Price</div>
+            <div id="pd-price" class="pdm-stat-val">$0</div>
+          </div>
+          <div class="pdm-stat">
+            <div class="pdm-stat-label">🏠 Cost</div>
+            <div id="pdm-house-cost" class="pdm-stat-val">—</div>
+          </div>
+          <div class="pdm-stat">
+            <div class="pdm-stat-label">🏨 Cost</div>
+            <div id="pdm-hotel-cost" class="pdm-stat-val">—</div>
+          </div>
+        </div>
+
+        <!-- Rent tiers list -->
+        <div id="pd-rent-tiers" class="pdm-rent-tiers"></div>
+
+        <!-- Action buttons 2x2 grid -->
+        <div id="pd-actions" class="pdm-action-grid"></div>
+
+        <!-- Footer: your cash -->
+        <div class="pdm-cash-footer">
+          <span class="pdm-cash-label">Your Cash</span>
+          <span id="pdm-my-cash" class="pdm-cash-val">$0</span>
+        </div>
+      </div>
+
+      <!-- ── RIGHT COLUMN ── -->
+      <div class="pdm-right">
+        <button id="pd-close-btn" class="pdm-close">✕</button>
+
+        <!-- Owner header -->
+        <div class="pdm-owner-header">
+          <div id="pdm-owner-avatar" class="pdm-owner-avatar">👤</div>
+          <div>
+            <div id="pd-owner" class="pdm-owner-name">Unowned</div>
+            <div class="pdm-owner-subtitle">Current property owner</div>
+          </div>
+        </div>
+
+        <!-- Analytics -->
+        <div class="pdm-analytics">
+          <div class="pdm-analytic-box">
+            <div class="pdm-analytic-label">Amount landed</div>
+            <div id="pdm-landed-count" class="pdm-analytic-val">0</div>
+          </div>
+          <div class="pdm-analytic-box">
+            <div class="pdm-analytic-label">Rent collected</div>
+            <div id="pdm-rent-collected" class="pdm-analytic-val">$0</div>
+          </div>
+        </div>
+
+        <!-- Timeline tree -->
+        <div class="pdm-timeline-label">History</div>
+        <div id="pd-timeline" class="pdm-timeline"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       LOBBY
+       ══════════════════════════════════════════════════════ -->
+  <div id="lobby-screen">
+    <div class="lobby-panel">
+      <div class="lobby-header">
+        <div class="lobby-logo">🎲</div>
+        <h1>MONOPOLY</h1>
+        <p class="lobby-subtitle">Choose your character to join</p>
+      </div>
+      <div id="character-grid" class="character-grid"></div>
+      <div id="lobby-status" class="lobby-status">
+        <span class="dot-pulse"></span> Waiting for players...
+      </div>
+      <button id="start-game-btn" class="start-game-btn disabled">Need 2+ players</button>
+    </div>
+  </div>
+
+  <!-- Error Overlay -->
+  <div id="error-overlay" class="error-overlay hidden">
+    <div class="error-box">
+      <span class="error-icon">⛔</span>
+      <p id="error-message">Error</p>
+      <button id="error-dismiss" class="btn-dismiss">OK</button>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/shared/boardData.js"></script>
+  <script src="/shared/gameState.js"></script>
+  <script src="/shared/actionCards.js"></script>
+  <script src="lib/notifications.js"></script>
+  <script src="lib/scene.js"></script>
+  <script src="lib/board.js"></script>
+  <script src="lib/dice.js"></script>
+  <script src="lib/tokens.js"></script>
+  <script src="lib/lobby.js"></script>
+  <script src="lib/gameUI.js"></script>
+  <script src="lib/modals.js"></script>
+  <script src="lib/historyLog.js"></script>
+  <script src="lib/trade.js"></script>
+  <script src="lib/auction.js"></script>
+  <script src="main.js"></script>
+</body>
+
+</html>
