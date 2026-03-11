@@ -50,8 +50,8 @@ const TradeSystem = (() => {
         const target = currentPlayers.find(p => p.id === targetId);
         if (!me || !target) return;
 
-        myProperties = currentProperties.filter(p => p.owner === mySocketId);
-        targetProperties = currentProperties.filter(p => p.owner === targetId);
+        const myProperties = currentProperties.filter(p => p.owner === mySocketId);
+        const targetProperties = currentProperties.filter(p => p.owner === targetId);
 
         // Populate left (my) column
         const myAva = document.getElementById('trade-my-avatar');

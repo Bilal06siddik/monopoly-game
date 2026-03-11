@@ -1,7 +1,0 @@
-ReferenceError: TradeSystem is not defined
-    at <anonymous> (http://localhost:3000/main.js:34:9)
-    at Emitter.emit (http://localhost:3000/socket.io/socket.io.js:627:22)
-    at onconnect (http://localhost:3000/socket.io/socket.io.js:4151:12)
-    at onpacket (http://localhost:3000/socket.io/socket.io.js:4029:18)
-    at Emitter.emit (http://localhost:3000/socket.io/socket.io.js:627:22)
-    at <anonymous> (http://localhost:3000/socket.io/socket.io.js:4740:16)
