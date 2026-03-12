@@ -25,6 +25,10 @@ const takenCharacters = new Set();
 let gameState = null;
 let lastDiceTotal = 0;
 let lastDiceIsDoubles = false;
+const TURN_TIMER_SECONDS = 45;
+const DICE_ANIMATION_MS = 1800;
+const TOKEN_STEP_MS = 250;
+const MOVE_RESOLUTION_BUFFER_MS = 300;
 
 // Action cards deck
 let actionDeck = [];
@@ -39,6 +43,9 @@ function drawActionCard() {
 // ── Auction State ───────────────────────────────────────────
 let auctionState = null;
 let auctionTimer = null;
+let turnTimerState = null;
+let turnTimerInterval = null;
+let pendingMoveResolution = null;
 
 // ── History Log ─────────────────────────────────────────────
 function logEvent(text, type = 'info') {
@@ -57,6 +64,124 @@ function getLobbyState() {
       takenBy: playerList.find(p => p.character === c)?.id || null
     }))
   };
+}
+
+function syncTurnTimerState(timerState) {
+  if (gameState) {
+    gameState.turnTimer = timerState ? { ...timerState } : null;
+  }
+}
+
+function stopTurnTimer(emitEvent = true) {
+  const hadTimer = Boolean(turnTimerState || turnTimerInterval);
+  if (turnTimerInterval) clearInterval(turnTimerInterval);
+  turnTimerInterval = null;
+  turnTimerState = null;
+  syncTurnTimerState(null);
+  if (emitEvent && hadTimer) {
+    io.emit('turn-timer-stop');
+  }
+}
+
+function startTurnTimer(phase) {
+  if (!gameState || !gameState.isGameStarted || auctionState) {
+    stopTurnTimer(false);
+    return;
+  }
+
+  const currentPlayer = gameState.getCurrentPlayer();
+  if (!currentPlayer || !currentPlayer.isActive || (phase !== 'waiting' && phase !== 'buying')) {
+    stopTurnTimer(false);
+    return;
+  }
+
+  if (turnTimerInterval) clearInterval(turnTimerInterval);
+
+  turnTimerState = {
+    currentPlayerId: currentPlayer.id,
+    phase,
+    remainingSeconds: TURN_TIMER_SECONDS
+  };
+  syncTurnTimerState(turnTimerState);
+  io.emit('turn-timer-start', gameState.turnTimer);
+
+  turnTimerInterval = setInterval(() => {
+    if (!gameState || !gameState.isGameStarted || !turnTimerState) {
+      stopTurnTimer();
+      return;
+    }
+
+    const activePlayer = gameState.getCurrentPlayer();
+    if (
+      !activePlayer ||
+      activePlayer.id !== turnTimerState.currentPlayerId ||
+      gameState.turnPhase !== turnTimerState.phase ||
+      auctionState
+    ) {
+      stopTurnTimer();
+      return;
+    }
+
+    turnTimerState.remainingSeconds--;
+    syncTurnTimerState(turnTimerState);
+    io.emit('turn-timer-tick', gameState.turnTimer);
+
+    if (turnTimerState.remainingSeconds <= 0) {
+      const expiredTimer = { ...turnTimerState };
+      stopTurnTimer();
+      handleTurnTimeout(expiredTimer);
+    }
+  }, 1000);
+}
+
+function setTurnPhase(phase) {
+  if (!gameState) return;
+  gameState.turnPhase = phase;
+  if (phase === 'waiting' || phase === 'buying') {
+    startTurnTimer(phase);
+  } else {
+    stopTurnTimer();
+  }
+}
+
+function clearPendingMoveResolution() {
+  if (pendingMoveResolution?.timeoutId) {
+    clearTimeout(pendingMoveResolution.timeoutId);
+  }
+  pendingMoveResolution = null;
+}
+
+function scheduleMoveResolution(playerId, steps) {
+  clearPendingMoveResolution();
+  const timeoutMs = DICE_ANIMATION_MS + ((steps || 0) * TOKEN_STEP_MS) + MOVE_RESOLUTION_BUFFER_MS;
+  pendingMoveResolution = {
+    playerId,
+    timeoutId: setTimeout(() => {
+      resolveMoveCompletion(playerId);
+    }, timeoutMs)
+  };
+}
+
+function getColorGroupProperties(colorGroup) {
+  if (!gameState || !colorGroup) return [];
+  return gameState.properties.filter(p => p.type === 'property' && p.colorGroup === colorGroup);
+}
+
+function playerOwnsFullColorGroup(playerId, colorGroup) {
+  const groupProps = getColorGroupProperties(colorGroup);
+  return groupProps.length > 0 && groupProps.every(prop => prop.owner === playerId);
+}
+
+function colorGroupHasBuildings(colorGroup) {
+  return getColorGroupProperties(colorGroup).some(prop => prop.houses > 0);
+}
+
+function isGroupAssetLocked(tile) {
+  return tile?.type === 'property' && Boolean(tile.colorGroup) && colorGroupHasBuildings(tile.colorGroup);
+}
+
+function getGroupAssetLockMessage(tile, action) {
+  return `Sell all buildings in the ${tile.colorGroup} set before ${action}`;
 }
 
 // ── Rent Calculation ────────────────────────────────────────
@@ -79,6 +204,7 @@ function calculateRent(property, diceTotal) {
 
 // ── Bankruptcy Handler ──────────────────────────────────────
 function handleBankruptcy(player) {
+  clearPendingMoveResolution();
   player.isActive = false;
   player.money = 0;
   const returnedProps = [];
@@ -100,13 +226,25 @@ function handleBankruptcy(player) {
   });
   const activePlayers = gameState.players.filter(p => p.isActive);
   if (activePlayers.length === 1) {
+    stopTurnTimer();
     logEvent(`🏆 ${activePlayers[0].character} WINS THE GAME!`, 'win');
     io.emit('game-over', { winner: activePlayers[0].toJSON(), gameState: gameState.getState() });
   }
 }
 
 // ── Evaluate Tile After Landing ─────────────────────────────
-function evaluateTile(socket, player, diceTotal) {
+function emitBuyPrompt(player, tile) {
+  io.to(player.id).emit('buy-prompt', {
+    playerId: player.id, tileIndex: tile.index,
+    tileName: tile.name, tileType: tile.type,
+    price: tile.price, colorGroup: tile.colorGroup,
+    canAfford: player.money >= tile.price,
+    gameState: gameState.getState()
+  });
+  io.emit('player-deciding', { character: player.character, tileName: tile.name });
+}
+
+function evaluateTile(player, diceTotal) {
   const tile = gameState.properties[player.position];
 
   // 0: GO — already handled by movePlayer
@@ -173,15 +311,8 @@ function evaluateTile(socket, player, diceTotal) {
   if (tile.type === 'property' || tile.type === 'railroad' || tile.type === 'utility') {
     tile.landedCount++;
     if (tile.owner === null) {
-      gameState.turnPhase = 'buying';
-      socket.emit('buy-prompt', {
-        playerId: player.id, tileIndex: tile.index,
-        tileName: tile.name, tileType: tile.type,
-        price: tile.price, colorGroup: tile.colorGroup,
-        canAfford: player.money >= tile.price,
-        gameState: gameState.getState()
-      });
-      socket.broadcast.emit('player-deciding', { character: player.character, tileName: tile.name });
+      setTurnPhase('buying');
+      emitBuyPrompt(player, tile);
       return 'buying';
     } else if (tile.owner !== player.id) {
       const rent = calculateRent(tile, diceTotal);
@@ -205,11 +336,142 @@ function evaluateTile(socket, player, diceTotal) {
   return 'done';
 }
 
+function resolveMoveCompletion(playerId) {
+  if (!gameState || !gameState.isGameStarted) return;
+
+  const currentPlayer = gameState.getCurrentPlayer();
+  if (!currentPlayer || currentPlayer.id !== playerId) return;
+  if (gameState.turnPhase !== 'moving' && gameState.turnPhase !== 'rolling') return;
+
+  clearPendingMoveResolution();
+
+  const result = evaluateTile(currentPlayer, lastDiceTotal);
+  if (result === 'buying') return;
+  if (result === 'bankrupt') {
+    const activePlayers = gameState.players.filter(p => p.isActive);
+    if (activePlayers.length > 1) advanceTurnGlobal();
+    return;
+  }
+  advanceTurnGlobal();
+}
+
+function handleRollDice(playerId) {
+  if (!gameState || !gameState.isGameStarted || auctionState) return false;
+
+  const currentPlayer = gameState.getCurrentPlayer();
+  if (!currentPlayer || currentPlayer.id !== playerId) return false;
+  if (gameState.turnPhase !== 'waiting') return false;
+
+  setTurnPhase('rolling');
+  const diceResult = gameState.rollDice();
+  lastDiceTotal = diceResult.total;
+  lastDiceIsDoubles = diceResult.isDoubles;
+
+  if (currentPlayer.inJail) {
+    if (diceResult.isDoubles) {
+      currentPlayer.inJail = false;
+      currentPlayer.jailTurns = 0;
+      logEvent(`🔓 ${currentPlayer.character} rolled doubles and escaped jail!`, 'roll');
+    } else {
+      currentPlayer.jailTurns++;
+      if (currentPlayer.jailTurns >= 3) {
+        currentPlayer.money -= 50;
+        currentPlayer.inJail = false;
+        currentPlayer.jailTurns = 0;
+        logEvent(`🔓 ${currentPlayer.character} paid $50 to leave jail (3 turns).`, 'tax');
+      } else {
+        logEvent(`🔒 ${currentPlayer.character} failed to roll doubles (jail turn ${currentPlayer.jailTurns}/3)`, 'roll');
+        io.emit('dice-rolled', {
+          playerId: playerId, character: currentPlayer.character,
+          die1: diceResult.die1, die2: diceResult.die2,
+          total: diceResult.total, isDoubles: false,
+          moveResult: {
+            oldPosition: currentPlayer.position,
+            newPosition: currentPlayer.position,
+            steps: 0,
+            passedGo: false
+          },
+          gameState: gameState.getState(),
+          jailRoll: true
+        });
+        scheduleMoveResolution(playerId, 0);
+        return true;
+      }
+    }
+  }
+
+  const moveResult = gameState.movePlayer(playerId, diceResult.total);
+  setTurnPhase('moving');
+
+  logEvent(`🎲 ${currentPlayer.character} rolled ${diceResult.die1} & ${diceResult.die2}${diceResult.isDoubles ? ' (DOUBLES!)' : ''}`, 'roll');
+
+  io.emit('dice-rolled', {
+    playerId,
+    character: currentPlayer.character,
+    die1: diceResult.die1, die2: diceResult.die2,
+    total: diceResult.total, isDoubles: diceResult.isDoubles,
+    moveResult: {
+      oldPosition: moveResult.oldPosition,
+      newPosition: moveResult.newPosition,
+      steps: moveResult.steps,
+      passedGo: moveResult.passedGo
+    },
+    gameState: gameState.getState()
+  });
+  scheduleMoveResolution(playerId, moveResult.steps);
+  return true;
+}
+
+function handlePassProperty(playerId, { timedOut = false } = {}) {
+  if (!gameState || !gameState.isGameStarted) return false;
+
+  const currentPlayer = gameState.getCurrentPlayer();
+  if (!currentPlayer || currentPlayer.id !== playerId) return false;
+  if (gameState.turnPhase !== 'buying') return false;
+
+  const tile = gameState.properties[currentPlayer.position];
+  if (!tile) return false;
+
+  if (timedOut) {
+    logEvent(`⏰ ${currentPlayer.character} ran out of time on ${tile.name}. Starting auction.`, 'system');
+  } else {
+    logEvent(`⏭️ ${currentPlayer.character} passed on ${tile.name}`, 'pass');
+  }
+
+  setTurnPhase('auctioning');
+  startAuction(currentPlayer.position, 1, currentPlayer.id);
+  return true;
+}
+
+function handleTurnTimeout(expiredTimer) {
+  if (!gameState || !gameState.isGameStarted) return;
+
+  const currentPlayer = gameState.getCurrentPlayer();
+  if (
+    !currentPlayer ||
+    currentPlayer.id !== expiredTimer.currentPlayerId ||
+    gameState.turnPhase !== expiredTimer.phase
+  ) {
+    return;
+  }
+
+  if (expiredTimer.phase === 'waiting') {
+    logEvent(`⏰ ${currentPlayer.character} ran out of time. Auto-rolling.`, 'system');
+    handleRollDice(currentPlayer.id);
+    return;
+  }
+
+  if (expiredTimer.phase === 'buying') {
+    handlePassProperty(currentPlayer.id, { timedOut: true });
+  }
+}
+
 // ── Auction Logic ───────────────────────────────────────────
 function startAuction(tileIndex, startingBid, initiatorId) {
   if (auctionState) return; // Already in auction
   const tile = gameState.properties[tileIndex];
   if (!tile) return;
+  stopTurnTimer();
 
   auctionState = {
     tileIndex,
@@ -281,10 +543,11 @@ function endAuction() {
 }
 
 function advanceTurnGlobal() {
-  gameState.turnPhase = 'done';
+  clearPendingMoveResolution();
+  setTurnPhase('done');
   const nextPlayer = gameState.nextTurn();
   console.log(`✦ Turn passes to ${nextPlayer.character}`);
-  gameState.turnPhase = 'waiting';
+  setTurnPhase('waiting');
   io.emit('turn-changed', {
     currentPlayerId: nextPlayer.id,
     currentCharacter: nextPlayer.character,
@@ -359,7 +622,7 @@ io.on('connection', (socket) => {
       p.properties = [];
     });
     gameState.isGameStarted = true;
-    gameState.turnPhase = 'waiting';
+    setTurnPhase('waiting');
     console.log(`\n  🎮 Game started with ${readyPlayers.length} players!\n`);
     logEvent(`🎮 Game started with ${readyPlayers.length} players!`, 'system');
     io.emit('gameStarted', gameState.getState());
@@ -369,87 +632,22 @@ io.on('connection', (socket) => {
   socket.on('roll-dice', () => {
     if (!gameState || !gameState.isGameStarted) return;
     if (auctionState) { socket.emit('game-error', { message: 'Auction in progress' }); return; }
-    const currentPlayer = gameState.getCurrentPlayer();
-    if (currentPlayer.id !== socket.id) return;
-    if (gameState.turnPhase !== 'waiting') return;
-
-    gameState.turnPhase = 'rolling';
-    const diceResult = gameState.rollDice();
-    lastDiceTotal = diceResult.total;
-    lastDiceIsDoubles = diceResult.isDoubles;
-
-    // ── Jail handling ───────────
-    if (currentPlayer.inJail) {
-      if (diceResult.isDoubles) {
-        // Freed by doubles!
-        currentPlayer.inJail = false;
-        currentPlayer.jailTurns = 0;
-        logEvent(`🔓 ${currentPlayer.character} rolled doubles and escaped jail!`, 'roll');
-      } else {
-        currentPlayer.jailTurns++;
-        if (currentPlayer.jailTurns >= 3) {
-          // Force pay $50 after 3 failed attempts
-          currentPlayer.money -= 50;
-          currentPlayer.inJail = false;
-          currentPlayer.jailTurns = 0;
-          logEvent(`🔓 ${currentPlayer.character} paid $50 to leave jail (3 turns).`, 'tax');
-        } else {
-          logEvent(`🔒 ${currentPlayer.character} failed to roll doubles (jail turn ${currentPlayer.jailTurns}/3)`, 'roll');
-          // Only show dice, don't move
-          io.emit('dice-rolled', {
-            playerId: socket.id, character: currentPlayer.character,
-            die1: diceResult.die1, die2: diceResult.die2,
-            total: diceResult.total, isDoubles: false,
-            moveResult: { oldPosition: currentPlayer.position, newPosition: currentPlayer.position, steps: 0, passedGo: false },
-            gameState: gameState.getState(),
-            jailRoll: true
-          });
-          return;
-        }
-      }
-    }
-
-    const moveResult = gameState.movePlayer(socket.id, diceResult.total);
-    gameState.turnPhase = 'moving';
-
-    logEvent(`🎲 ${currentPlayer.character} rolled ${diceResult.die1} & ${diceResult.die2}${diceResult.isDoubles ? ' (DOUBLES!)' : ''}`, 'roll');
-
-    io.emit('dice-rolled', {
-      playerId: socket.id,
-      character: currentPlayer.character,
-      die1: diceResult.die1, die2: diceResult.die2,
-      total: diceResult.total, isDoubles: diceResult.isDoubles,
-      moveResult: {
-        oldPosition: moveResult.oldPosition,
-        newPosition: moveResult.newPosition,
-        steps: moveResult.steps,
-        passedGo: moveResult.passedGo
-      },
-      gameState: gameState.getState()
-    });
+    handleRollDice(socket.id);
   });
 
   // ── Move Complete → Evaluate Tile ───────────────────────
   socket.on('move-complete', () => {
     if (!gameState || !gameState.isGameStarted) return;
     const currentPlayer = gameState.getCurrentPlayer();
-    if (currentPlayer.id !== socket.id) return;
-
-    const result = evaluateTile(socket, currentPlayer, lastDiceTotal);
-    if (result === 'buying') return;
-    if (result === 'bankrupt') {
-      const activePlayers = gameState.players.filter(p => p.isActive);
-      if (activePlayers.length > 1) advanceTurnGlobal();
-      return;
-    }
-    advanceTurnGlobal();
+    if (!currentPlayer || currentPlayer.id !== socket.id) return;
+    resolveMoveCompletion(socket.id);
   });
 
   // ── Buy Property ────────────────────────────────────────
   socket.on('buy-property', (data) => {
     if (!gameState || !gameState.isGameStarted) return;
     const currentPlayer = gameState.getCurrentPlayer();
-    if (currentPlayer.id !== socket.id) return;
+    if (!currentPlayer || currentPlayer.id !== socket.id) return;
     if (gameState.turnPhase !== 'buying') return;
 
     const tile = gameState.properties[data.tileIndex];
@@ -507,15 +705,7 @@ io.on('connection', (socket) => {
 
   // ── Pass Property → Start Auction ───────────────────────
   socket.on('pass-property', () => {
-    if (!gameState || !gameState.isGameStarted) return;
-    const currentPlayer = gameState.getCurrentPlayer();
-    if (currentPlayer.id !== socket.id) return;
-    if (gameState.turnPhase !== 'buying') return;
-
-    const tile = gameState.properties[currentPlayer.position];
-    logEvent(`⏭️ ${currentPlayer.character} passed on ${tile.name}`, 'pass');
-    gameState.turnPhase = 'auctioning';
-    startAuction(currentPlayer.position, 1, currentPlayer.id);
+    handlePassProperty(socket.id);
   });
 
   // ── Own Auction (sell own property) ─────────────────────
@@ -526,6 +716,10 @@ io.on('connection', (socket) => {
 
     const tile = gameState.properties[data.tileIndex];
     if (!tile || tile.owner !== socket.id) return;
+    if (isGroupAssetLocked(tile)) {
+      socket.emit('game-error', { message: getGroupAssetLockMessage(tile, 'starting an auction') });
+      return;
+    }
 
     // Remove property from owner
     const player = gameState.getPlayerById(socket.id);
@@ -533,7 +727,7 @@ io.on('connection', (socket) => {
     player.properties = player.properties.filter(i => i !== data.tileIndex);
 
     logEvent(`🔨 ${player.character} put ${tile.name} up for auction!`, 'auction');
-    gameState.turnPhase = 'auctioning';
+    setTurnPhase('auctioning');
     startAuction(data.tileIndex, Math.floor(tile.price / 2), socket.id);
   });
 
@@ -568,6 +762,20 @@ io.on('connection', (socket) => {
     const to = gameState.getPlayerById(data.targetId);
     if (!from || !to || !from.isActive || !to.isActive) return;
 
+    const offeredProps = (data.offerProperties || []).map(idx => gameState.properties[idx]).filter(Boolean);
+    const requestedProps = (data.requestProperties || []).map(idx => gameState.properties[idx]).filter(Boolean);
+
+    if (offeredProps.some(prop => prop.owner !== socket.id) || requestedProps.some(prop => prop.owner !== data.targetId)) {
+      socket.emit('game-error', { message: 'Trade offer contains invalid properties' });
+      return;
+    }
+
+    const lockedProp = [...offeredProps, ...requestedProps].find(isGroupAssetLocked);
+    if (lockedProp) {
+      socket.emit('game-error', { message: getGroupAssetLockMessage(lockedProp, 'trading') });
+      return;
+    }
+
     const offer = {
       fromId: socket.id,
       fromCharacter: from.character,
@@ -590,6 +798,19 @@ io.on('connection', (socket) => {
     const accepter = gameState.getPlayerById(socket.id);
     const offerer = gameState.getPlayerById(data.fromId);
     if (!accepter || !offerer) return;
+
+    const offeredProps = (data.offerProperties || []).map(idx => gameState.properties[idx]).filter(Boolean);
+    const requestedProps = (data.requestProperties || []).map(idx => gameState.properties[idx]).filter(Boolean);
+    if (offeredProps.some(prop => prop.owner !== data.fromId) || requestedProps.some(prop => prop.owner !== socket.id)) {
+      socket.emit('game-error', { message: 'Trade can no longer be completed' });
+      return;
+    }
+
+    const lockedProp = [...offeredProps, ...requestedProps].find(isGroupAssetLocked);
+    if (lockedProp) {
+      socket.emit('game-error', { message: getGroupAssetLockMessage(lockedProp, 'trading') });
+      return;
+    }
 
     // Swap cash
     offerer.money -= data.offerCash;
@@ -646,6 +867,10 @@ io.on('connection', (socket) => {
     if (tile.type !== 'property') return;
     if (tile.isMortgaged) return;
     if (tile.houses >= 5) return;
+    if (!playerOwnsFullColorGroup(socket.id, tile.colorGroup)) {
+      socket.emit('game-error', { message: 'Own the full color group before upgrading' });
+      return;
+    }
 
     const upgradeCost = Math.floor(tile.price * 0.5);
     if (player.money < upgradeCost) {
@@ -698,8 +923,8 @@ io.on('connection', (socket) => {
     const tile = gameState.properties[data.tileIndex];
     if (!tile || tile.owner !== socket.id) return;
     if (tile.isMortgaged) return;
-    if (tile.houses > 0) {
-      socket.emit('game-error', { message: 'Sell all houses before mortgaging' });
+    if (isGroupAssetLocked(tile)) {
+      socket.emit('game-error', { message: getGroupAssetLockMessage(tile, 'mortgaging') });
       return;
     }
 
@@ -750,6 +975,10 @@ io.on('connection', (socket) => {
 
     const tile = gameState.properties[data.tileIndex];
     if (!tile || tile.owner !== socket.id) return;
+    if (isGroupAssetLocked(tile)) {
+      socket.emit('game-error', { message: getGroupAssetLockMessage(tile, 'selling') });
+      return;
+    }
 
     const sellValue = Math.floor(tile.price * 0.5) + (tile.houses * Math.floor(tile.price * 0.25));
     player.money += sellValue;
@@ -775,6 +1004,9 @@ io.on('connection', (socket) => {
     if (gameState && gameState.isGameStarted) {
       const gp = gameState.getPlayerById(socket.id);
       if (gp && gp.isActive) {
+        if (pendingMoveResolution?.playerId === socket.id) {
+          clearPendingMoveResolution();
+        }
         gp.isActive = false;
         logEvent(`🚪 ${gp.character} disconnected`, 'system');
         const currentPlayer = gameState.getCurrentPlayer();
@@ -783,6 +1015,7 @@ io.on('connection', (socket) => {
         }
         const activePlayers = gameState.players.filter(p => p.isActive);
         if (activePlayers.length === 1) {
+          stopTurnTimer();
           logEvent(`🏆 ${activePlayers[0].character} WINS THE GAME!`, 'win');
           io.emit('game-over', { winner: activePlayers[0].toJSON(), gameState: gameState.getState() });
         }

@@ -274,79 +274,138 @@ const GameBoard = (() => {
         onTileClickCallback = callback;
     }
 
-    // ── House / Skyscraper Meshes ───────────────────────────
+    // ── House / Hotel Meshes ────────────────────────────────
+    function addBlock(group, width, height, depth, y, material) {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
+        mesh.position.y = y + (height / 2);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        group.add(mesh);
+        return y + height;
+    }
+
+    function addRoof(group, radius, height, y, material) {
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(radius, height, 4), material);
+        roof.rotation.y = Math.PI / 4;
+        roof.position.y = y + (height / 2);
+        roof.castShadow = true;
+        roof.receiveShadow = true;
+        group.add(roof);
+        return y + height;
+    }
+
+    function createHouseModel(level) {
+        const group = new THREE.Group();
+        const bodyMat = new THREE.MeshStandardMaterial({
+            color: 0x5dd39e,
+            emissive: 0x0a7a58,
+            emissiveIntensity: 0.18,
+            roughness: 0.35,
+            metalness: 0.28
+        });
+        const trimMat = new THREE.MeshStandardMaterial({
+            color: 0xdff8eb,
+            emissive: 0x295545,
+            emissiveIntensity: 0.08,
+            roughness: 0.45,
+            metalness: 0.12
+        });
+        const roofMat = new THREE.MeshStandardMaterial({
+            color: 0x1b4332,
+            emissive: 0x0d2018,
+            emissiveIntensity: 0.12,
+            roughness: 0.5,
+            metalness: 0.1
+        });
+
+        let y = 0;
+        const levelShapes = {
+            1: [
+                { w: 0.34, h: 0.22, d: 0.34, mat: bodyMat },
+                { roof: true, r: 0.28, h: 0.12, mat: roofMat }
+            ],
+            2: [
+                { w: 0.42, h: 0.26, d: 0.42, mat: bodyMat },
+                { w: 0.30, h: 0.12, d: 0.30, mat: trimMat },
+                { roof: true, r: 0.24, h: 0.14, mat: roofMat }
+            ],
+            3: [
+                { w: 0.50, h: 0.30, d: 0.50, mat: bodyMat },
+                { w: 0.36, h: 0.16, d: 0.36, mat: trimMat },
+                { w: 0.28, h: 0.12, d: 0.28, mat: bodyMat },
+                { roof: true, r: 0.23, h: 0.16, mat: roofMat }
+            ],
+            4: [
+                { w: 0.58, h: 0.34, d: 0.58, mat: bodyMat },
+                { w: 0.44, h: 0.18, d: 0.44, mat: trimMat },
+                { w: 0.32, h: 0.16, d: 0.32, mat: bodyMat },
+                { w: 0.22, h: 0.10, d: 0.22, mat: trimMat },
+                { roof: true, r: 0.21, h: 0.18, mat: roofMat }
+            ]
+        };
+
+        (levelShapes[level] || []).forEach(shape => {
+            y = shape.roof
+                ? addRoof(group, shape.r, shape.h, y, shape.mat)
+                : addBlock(group, shape.w, shape.h, shape.d, y, shape.mat);
+        });
+
+        return group;
+    }
+
+    function createHotelModel() {
+        const group = new THREE.Group();
+        const baseMat = new THREE.MeshStandardMaterial({
+            color: 0x87d3ff,
+            emissive: 0x1b4b72,
+            emissiveIntensity: 0.2,
+            roughness: 0.26,
+            metalness: 0.58
+        });
+        const accentMat = new THREE.MeshStandardMaterial({
+            color: 0xeaf7ff,
+            emissive: 0x36566d,
+            emissiveIntensity: 0.14,
+            roughness: 0.34,
+            metalness: 0.22
+        });
+        const roofMat = new THREE.MeshStandardMaterial({
+            color: 0x294861,
+            emissive: 0x152432,
+            emissiveIntensity: 0.12,
+            roughness: 0.42,
+            metalness: 0.25
+        });
+
+        let y = 0;
+        y = addBlock(group, 0.70, 0.24, 0.70, y, accentMat);
+        y = addBlock(group, 0.54, 0.42, 0.54, y, baseMat);
+        y = addBlock(group, 0.40, 0.34, 0.40, y, accentMat);
+        y = addBlock(group, 0.28, 0.26, 0.28, y, baseMat);
+        addRoof(group, 0.23, 0.22, y, roofMat);
+
+        const wingLeft = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.26, 0.34), accentMat);
+        wingLeft.position.set(-0.28, 0.37, 0);
+        wingLeft.castShadow = true;
+        wingLeft.receiveShadow = true;
+        const wingRight = wingLeft.clone();
+        wingRight.position.x = 0.28;
+        group.add(wingLeft, wingRight);
+
+        return group;
+    }
+
     function addHouse(tileIndex, houseCount, scene) {
         removeHouses(tileIndex, scene);
 
         const pos = tilePositions[tileIndex];
-        if (!pos) return;
-        const tile = BOARD_DATA[tileIndex];
+        if (!pos || houseCount <= 0) return;
+
         houseMeshes[tileIndex] = [];
-
-        if (houseCount >= 5) {
-            // Compound skyscraper (hotel) — gidd.io style light blue tower
-            const group = new THREE.Group();
-
-            // Main tall base
-            const baseMat = new THREE.MeshStandardMaterial({
-                color: 0x7EC8E3,       // light blue
-                emissive: 0x1a4a5a,
-                emissiveIntensity: 0.25,
-                roughness: 0.3,
-                metalness: 0.6
-            });
-            const capMat = new THREE.MeshStandardMaterial({
-                color: 0x3a6a7a,       // darker blue-grey cap
-                emissive: 0x0a2030,
-                emissiveIntensity: 0.2,
-                roughness: 0.4,
-                metalness: 0.5
-            });
-            const edgeMat = new THREE.MeshStandardMaterial({
-                color: 0x222833, roughness: 0.5, metalness: 0.3
-            });
-
-            const base = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.4, 0.45), baseMat);
-            base.position.y = 0;
-            base.castShadow = true;
-
-            const cap = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.32, 0.38), capMat);
-            cap.position.y = 0.86;
-            cap.castShadow = true;
-
-            // Dark border edges (thin strips on sides of base)
-            const edgeGeo = new THREE.BoxGeometry(0.46, 1.42, 0.02);
-            const edgeFront = new THREE.Mesh(edgeGeo, edgeMat);
-            edgeFront.position.set(0, 0, 0.225);
-            const edgeBack = new THREE.Mesh(edgeGeo, edgeMat);
-            edgeBack.position.set(0, 0, -0.225);
-
-            group.add(base, cap, edgeFront, edgeBack);
-            group.position.set(pos.x, 0.8, pos.z);
-            group.castShadow = true;
-            scene.add(group);
-            houseMeshes[tileIndex].push(group);
-        } else {
-            // Small houses
-            const houseGeo = new THREE.BoxGeometry(0.22, 0.3, 0.22);
-            const houseMat = new THREE.MeshStandardMaterial({
-                color: 0x55efc4,
-                emissive: 0x00b894,
-                emissiveIntensity: 0.2,
-                roughness: 0.4,
-                metalness: 0.3
-            });
-
-            for (let h = 0; h < houseCount; h++) {
-                const house = new THREE.Mesh(houseGeo, houseMat);
-                // Spread houses along tile edge
-                const offset = (h - (houseCount - 1) / 2) * 0.3;
-                house.position.set(pos.x + offset, 0.25, pos.z);
-                house.castShadow = true;
-                scene.add(house);
-                houseMeshes[tileIndex].push(house);
-            }
-        }
+        const building = houseCount >= 5 ? createHotelModel() : createHouseModel(houseCount);
+        building.position.set(pos.x, (TILE_H / 2) + 0.02, pos.z);
+        scene.add(building);
+        houseMeshes[tileIndex].push(building);
     }
 
     function removeHouses(tileIndex, scene) {

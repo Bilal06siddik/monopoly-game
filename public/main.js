@@ -26,6 +26,44 @@
         return p ? p.color : '#fff';
     }
 
+    function syncTurnTimerUI(state = currentGameState) {
+        GameUI.updateTurnTimer(state?.turnTimer || null);
+    }
+
+    function getColorGroupProperties(colorGroup) {
+        if (!currentGameState || !colorGroup) return [];
+        return currentGameState.properties.filter(prop => prop.type === 'property' && prop.colorGroup === colorGroup);
+    }
+
+    function ownsFullColorGroup(playerId, tile) {
+        if (!playerId || tile?.type !== 'property' || !tile.colorGroup) return false;
+        const group = getColorGroupProperties(tile.colorGroup);
+        return group.length > 0 && group.every(prop => prop.owner === playerId);
+    }
+
+    function colorGroupHasBuildings(tile) {
+        return tile?.type === 'property'
+            && Boolean(tile.colorGroup)
+            && getColorGroupProperties(tile.colorGroup).some(prop => prop.houses > 0);
+    }
+
+    function createActionButton(variant, html, onClick) {
+        const btn = document.createElement('button');
+        btn.className = `pdm-action-btn ${variant}`;
+        btn.innerHTML = html;
+        btn.onclick = onClick;
+        return btn;
+    }
+
+    function createDisabledActionButton(variant, html, title) {
+        const btn = document.createElement('button');
+        btn.className = `pdm-action-btn ${variant} disabled`;
+        btn.innerHTML = html;
+        btn.disabled = true;
+        if (title) btn.title = title;
+        return btn;
+    }
+
     socket.on('connect', () => {
         mySocketId = socket.id;
         console.log('🔌 Connected:', socket.id);
@@ -87,6 +125,7 @@
                 state.players,
                 state
             );
+            syncTurnTimerUI(state);
             
             console.log('✅ UI transition complete!');
         } catch (err) {
@@ -117,6 +156,7 @@
     socket.on('buy-prompt', (data) => {
         currentGameState = data.gameState;
         GameModals.showBuyModal(data);
+        syncTurnTimerUI(data.gameState);
     });
 
     socket.on('player-deciding', (data) => {
@@ -133,6 +173,7 @@
         const ownerColor = getPlayerColor(data.playerId);
         GameBoard.updateTileOwner(data.tileIndex, ownerColor);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
+        syncTurnTimerUI(data.gameState);
     });
 
     // ── Rent Paid ─────────────────────────────────────────
@@ -140,6 +181,7 @@
         currentGameState = data.gameState;
         GameModals.showRentPaid(data, data.payerId === socket.id);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
+        syncTurnTimerUI(data.gameState);
     });
 
     // ── Tax Paid ──────────────────────────────────────────
@@ -147,6 +189,7 @@
         currentGameState = data.gameState;
         GameModals.showTaxPaid(data, data.playerId === socket.id);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
+        syncTurnTimerUI(data.gameState);
     });
 
     // ── Card Drawn ────────────────────────────────────────
@@ -154,6 +197,7 @@
         currentGameState = data.gameState;
         GameModals.showActionCard(data.card);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
+        syncTurnTimerUI(data.gameState);
     });
 
     // ── Bankruptcy ────────────────────────────────────────
@@ -166,10 +210,13 @@
             if (!prop.owner) GameBoard.updateTileOwner(prop.index, null);
         });
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
+        syncTurnTimerUI(data.gameState);
     });
 
     // ── Game Over ─────────────────────────────────────────
     socket.on('game-over', (data) => {
+        if (currentGameState) currentGameState.turnTimer = null;
+        GameUI.updateTurnTimer(null);
         const isMe = data.winner.id === socket.id;
         Notifications.show(
             isMe ? '🏆 You WIN! Congratulations!' : `🏆 ${data.winner.character} wins!`,
@@ -180,8 +227,10 @@
     // ── Turn Changed ──────────────────────────────────────
     socket.on('turn-changed', (data) => {
         currentGameState = data.gameState;
+        GameModals.hideBuyModal();
         GameUI.updateTurnIndicator(data.currentPlayerId, data.currentCharacter, data.gameState.players, data.gameState);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
+        syncTurnTimerUI(data.gameState);
     });
 
     // ── Jail Events ──────────────────────────────────────────
@@ -194,12 +243,14 @@
         }
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
         GameUI.updateTurnIndicator(data.gameState.currentPlayerId, null, data.gameState.players, data.gameState);
+        syncTurnTimerUI(data.gameState);
     });
 
     socket.on('jail-state-changed', (data) => {
         currentGameState = data.gameState;
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
         GameUI.updateTurnIndicator(data.gameState.currentPlayerId, null, data.gameState.players, data.gameState);
+        syncTurnTimerUI(data.gameState);
     });
 
     socket.on('bailout-collected', (data) => {
@@ -210,13 +261,16 @@
             Notifications.show(`💰 ${data.character} collected $${data.amount} Bailout!`, 'hype', 3000);
         }
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
+        syncTurnTimerUI(data.gameState);
     });
 
     // ── Auction Events ────────────────────────────────────
     socket.on('auction-started', (data) => {
         currentGameState = data.gameState;
+        GameModals.hideBuyModal();
         AuctionSystem.showAuction(data, data.players);
         Notifications.show(`🔨 Auction: ${data.auction.tileName}!`, 'hype', 3000);
+        syncTurnTimerUI(data.gameState);
     });
     socket.on('auction-bid', (data) => { AuctionSystem.onBid(data); });
     socket.on('auction-tick', (data) => { AuctionSystem.onTick(data); });
@@ -235,6 +289,7 @@
             GameBoard.updateTileOwner(data.tileIndex, winnerColor);
         }
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
+        syncTurnTimerUI(data.gameState);
     });
 
     // ── Trade Events ──────────────────────────────────────
@@ -254,6 +309,7 @@
             }
         });
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
+        syncTurnTimerUI(data.gameState);
     });
     socket.on('trade-rejected', () => { Notifications.show('Trade rejected', 'error', 2000); });
 
@@ -265,6 +321,7 @@
         if (data.playerId === socket.id) {
             Notifications.show(`🏗️ Upgraded ${data.tileName}!`, 'success', 2000);
         }
+        syncTurnTimerUI(data.gameState);
     });
 
     socket.on('property-downgraded', (data) => {
@@ -272,6 +329,7 @@
         if (data.houses > 0) GameBoard.addHouse(data.tileIndex, data.houses, scene);
         else GameBoard.removeHouses(data.tileIndex, scene);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
+        syncTurnTimerUI(data.gameState);
     });
 
     socket.on('property-mortgaged', (data) => {
@@ -281,12 +339,14 @@
         if (data.playerId === socket.id) {
             Notifications.show(`🏦 Mortgaged ${data.tileName} (+$${data.mortgageValue})`, 'info', 2500);
         }
+        syncTurnTimerUI(data.gameState);
     });
 
     socket.on('property-unmortgaged', (data) => {
         currentGameState = data.gameState;
         GameBoard.setMortgaged(data.tileIndex, false);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
+        syncTurnTimerUI(data.gameState);
     });
 
     socket.on('property-sold', (data) => {
@@ -295,6 +355,24 @@
         GameBoard.setMortgaged(data.tileIndex, false);
         GameBoard.updateTileOwner(data.tileIndex, null); // clear owner color
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
+        syncTurnTimerUI(data.gameState);
+    });
+
+    socket.on('turn-timer-start', (data) => {
+        if (!currentGameState) currentGameState = { turnTimer: data };
+        else currentGameState.turnTimer = data;
+        GameUI.updateTurnTimer(data);
+    });
+
+    socket.on('turn-timer-tick', (data) => {
+        if (!currentGameState) currentGameState = { turnTimer: data };
+        else currentGameState.turnTimer = data;
+        GameUI.updateTurnTimer(data);
+    });
+
+    socket.on('turn-timer-stop', () => {
+        if (currentGameState) currentGameState.turnTimer = null;
+        GameUI.updateTurnTimer(null);
     });
 
     // ── Game State Sync ───────────────────────────────────
@@ -305,7 +383,7 @@
             GameUI.showGameUI();
             GameUI.updateLeaderboard(state.players, state.properties);
             const currentP = state.players[state.currentPlayerIndex];
-            GameUI.updateTurnIndicator(currentP.id, currentP.character, state.players);
+            GameUI.updateTurnIndicator(currentP.id, currentP.character, state.players, state);
             state.players.forEach(p => {
                 if (!GameTokens.getToken(p.character)) GameTokens.createToken(p.character, scene);
             });
@@ -319,6 +397,8 @@
                     if (ownerPlayer) GameBoard.updateTileOwner(prop.index, ownerPlayer.color);
                 }
             });
+            if (state.turnPhase !== 'buying') GameModals.hideBuyModal();
+            syncTurnTimerUI(state);
         }
     });
 
@@ -407,63 +487,83 @@
         const actionsEl = document.getElementById('pd-actions');
         actionsEl.innerHTML = '';
         const me = currentGameState.players.find(p => p.id === mySocketId);
+        const hasFullSet = ownsFullColorGroup(mySocketId, tile);
+        const groupLocked = colorGroupHasBuildings(tile);
 
         if (prop && prop.owner === mySocketId && tile.type === 'property') {
             const uCost = Math.floor(tile.price * 0.5);
             const dRefund = Math.floor(tile.price * 0.25);
 
             if (!prop.isMortgaged && prop.houses < 5) {
-                const btn = document.createElement('button');
-                btn.className = 'pdm-action-btn upgrade';
-                btn.innerHTML = `⬆ Upgrade<br><small>$${uCost}</small>`;
-                btn.onclick = () => { socket.emit('upgrade-property', { tileIndex }); hidePropertyDetailsModal(); };
+                const btn = hasFullSet
+                    ? createActionButton('upgrade', `⬆ Upgrade<br><small>$${uCost}</small>`, () => {
+                        socket.emit('upgrade-property', { tileIndex });
+                        hidePropertyDetailsModal();
+                    })
+                    : createDisabledActionButton(
+                        'upgrade',
+                        '⬆ Upgrade<br><small>Need full color set</small>',
+                        'Own every property in this color group before building.'
+                    );
                 actionsEl.appendChild(btn);
             }
             if (prop.houses > 0) {
-                const btn = document.createElement('button');
-                btn.className = 'pdm-action-btn downgrade';
-                btn.innerHTML = `⬇ Downgrade<br><small>+$${dRefund}</small>`;
-                btn.onclick = () => { socket.emit('downgrade-property', { tileIndex }); hidePropertyDetailsModal(); };
+                const btn = createActionButton('downgrade', `⬇ Downgrade<br><small>+$${dRefund}</small>`, () => {
+                    socket.emit('downgrade-property', { tileIndex });
+                    hidePropertyDetailsModal();
+                });
                 actionsEl.appendChild(btn);
             }
             if (!prop.isMortgaged && prop.houses === 0) {
-                const btn = document.createElement('button');
-                btn.className = 'pdm-action-btn mortgage';
-                btn.innerHTML = `🏦 Mortgage<br><small>+$${Math.floor(tile.price / 2)}</small>`;
-                btn.onclick = () => { socket.emit('mortgage-property', { tileIndex }); hidePropertyDetailsModal(); };
+                const btn = groupLocked
+                    ? createDisabledActionButton(
+                        'mortgage',
+                        '🏦 Mortgage<br><small>Set has buildings</small>',
+                        'Sell all buildings in this color set before mortgaging.'
+                    )
+                    : createActionButton('mortgage', `🏦 Mortgage<br><small>+$${Math.floor(tile.price / 2)}</small>`, () => {
+                        socket.emit('mortgage-property', { tileIndex });
+                        hidePropertyDetailsModal();
+                    });
                 actionsEl.appendChild(btn);
             }
             if (prop.isMortgaged) {
-                const btn = document.createElement('button');
-                btn.className = 'pdm-action-btn mortgage';
-                btn.innerHTML = `🔓 Unmortgage<br><small>$${Math.floor(tile.price * 0.55)}</small>`;
-                btn.onclick = () => { socket.emit('unmortgage-property', { tileIndex }); hidePropertyDetailsModal(); };
+                const btn = createActionButton('mortgage', `🔓 Unmortgage<br><small>$${Math.floor(tile.price * 0.55)}</small>`, () => {
+                    socket.emit('unmortgage-property', { tileIndex });
+                    hidePropertyDetailsModal();
+                });
                 actionsEl.appendChild(btn);
             }
-            const sellBtn = document.createElement('button');
-            sellBtn.className = 'pdm-action-btn sell';
-            sellBtn.innerHTML = `💰 Sell<br><small>to Bank</small>`;
-            sellBtn.onclick = () => { socket.emit('sell-property', { tileIndex }); hidePropertyDetailsModal(); };
+            const sellBtn = groupLocked
+                ? createDisabledActionButton(
+                    'sell',
+                    '💰 Sell<br><small>Set has buildings</small>',
+                    'Sell all buildings in this color set before selling this property.'
+                )
+                : createActionButton('sell', '💰 Sell<br><small>to Bank</small>', () => {
+                    socket.emit('sell-property', { tileIndex });
+                    hidePropertyDetailsModal();
+                });
             actionsEl.appendChild(sellBtn);
 
         } else if (prop && prop.owner === mySocketId) {
             if (!prop.isMortgaged) {
-                const btn = document.createElement('button');
-                btn.className = 'pdm-action-btn mortgage';
-                btn.innerHTML = `🏦 Mortgage<br><small>+$${Math.floor(tile.price / 2)}</small>`;
-                btn.onclick = () => { socket.emit('mortgage-property', { tileIndex }); hidePropertyDetailsModal(); };
+                const btn = createActionButton('mortgage', `🏦 Mortgage<br><small>+$${Math.floor(tile.price / 2)}</small>`, () => {
+                    socket.emit('mortgage-property', { tileIndex });
+                    hidePropertyDetailsModal();
+                });
                 actionsEl.appendChild(btn);
             } else {
-                const btn = document.createElement('button');
-                btn.className = 'pdm-action-btn mortgage';
-                btn.innerHTML = `🔓 Unmortgage<br><small>$${Math.floor(tile.price * 0.55)}</small>`;
-                btn.onclick = () => { socket.emit('unmortgage-property', { tileIndex }); hidePropertyDetailsModal(); };
+                const btn = createActionButton('mortgage', `🔓 Unmortgage<br><small>$${Math.floor(tile.price * 0.55)}</small>`, () => {
+                    socket.emit('unmortgage-property', { tileIndex });
+                    hidePropertyDetailsModal();
+                });
                 actionsEl.appendChild(btn);
             }
-            const sellBtn = document.createElement('button');
-            sellBtn.className = 'pdm-action-btn sell';
-            sellBtn.innerHTML = `💰 Sell<br><small>to Bank</small>`;
-            sellBtn.onclick = () => { socket.emit('sell-property', { tileIndex }); hidePropertyDetailsModal(); };
+            const sellBtn = createActionButton('sell', '💰 Sell<br><small>to Bank</small>', () => {
+                socket.emit('sell-property', { tileIndex });
+                hidePropertyDetailsModal();
+            });
             actionsEl.appendChild(sellBtn);
         }
 

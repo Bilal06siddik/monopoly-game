@@ -86,6 +86,7 @@ class GameState {
         this.doublesCount = 0;
         this.turnPhase = 'waiting'; // waiting | rolling | moving | buying | done
         this.taxPool = 0;
+        this.turnTimer = null;
     }
 
     addPlayer(id, character, color) {
@@ -179,7 +180,8 @@ class GameState {
             currentPlayerId: this.getCurrentPlayer()?.id,
             isGameStarted: this.isGameStarted,
             turnPhase: this.turnPhase,
-            taxPool: this.taxPool
+            taxPool: this.taxPool,
+            turnTimer: this.turnTimer
         };
     }
 }

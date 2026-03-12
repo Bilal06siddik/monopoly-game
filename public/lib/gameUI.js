@@ -107,6 +107,23 @@ const GameUI = (() => {
         mySocketId = id;
     }
 
+    function updateTurnTimer(timerState) {
+        const el = document.getElementById('turn-timer');
+        if (!el) return;
+
+        if (!timerState) {
+            el.classList.add('hidden');
+            el.classList.remove('warning');
+            el.textContent = '';
+            return;
+        }
+
+        const label = timerState.phase === 'buying' ? 'Buy Window' : 'Turn Timer';
+        el.textContent = `${label}: ${timerState.remainingSeconds}s`;
+        el.classList.remove('hidden');
+        el.classList.toggle('warning', timerState.remainingSeconds <= 10);
+    }
+
     // ── Jail UI ───────────────────────────────────────────
     function renderJailUI(gameState) {
         if (!gameState) return;
@@ -191,6 +208,7 @@ const GameUI = (() => {
 
         // Show/hide jail UI
         renderJailUI(gameState);
+        updateTurnTimer(gameState?.turnTimer || null);
     }
 
     // ── Leaderboard Panel (Right Side) ────────────────────
@@ -273,6 +291,12 @@ const GameUI = (() => {
     // ── Own Auction — Two-step Flow ────────────────────────
     let selectedAuctionTileIndex = null;
 
+    function isGroupLocked(prop) {
+        return prop?.type === 'property'
+            && Boolean(prop.colorGroup)
+            && currentProperties.some(p => p.type === 'property' && p.colorGroup === prop.colorGroup && p.houses > 0);
+    }
+
     function showOwnAuctionSelector() {
         const myProps = currentProperties.filter(p => p.owner === mySocketId);
         if (myProps.length === 0) {
@@ -288,14 +312,25 @@ const GameUI = (() => {
             const btn = document.createElement('button');
             btn.className = 'oa-prop-btn';
             const houseTxt = prop.houses > 0 ? ` ${'🏠'.repeat(Math.min(prop.houses, 4))}${prop.houses >= 5 ? '🏨' : ''}` : '';
-            btn.innerHTML = `<span>${prop.name}${houseTxt}</span><span class="oa-price">$${Math.floor(prop.price / 2)}+</span>`;
-            btn.addEventListener('click', () => {
-                selectedAuctionTileIndex = prop.index;
-                // Move to config modal
-                modal.classList.remove('show');
-                modal.classList.add('hidden');
-                showOwnAuctionConfig(prop);
-            });
+            const locked = isGroupLocked(prop);
+            btn.innerHTML = locked
+                ? `<span>${prop.name}${houseTxt}<br><small>Sell color-set buildings first</small></span><span class="oa-price">Locked</span>`
+                : `<span>${prop.name}${houseTxt}</span><span class="oa-price">$${Math.floor(prop.price / 2)}+</span>`;
+
+            if (locked) {
+                btn.disabled = true;
+                btn.style.opacity = '0.45';
+                btn.style.cursor = 'not-allowed';
+                btn.title = 'Sell all buildings in this color group before auctioning this property.';
+            } else {
+                btn.addEventListener('click', () => {
+                    selectedAuctionTileIndex = prop.index;
+                    // Move to config modal
+                    modal.classList.remove('show');
+                    modal.classList.add('hidden');
+                    showOwnAuctionConfig(prop);
+                });
+            }
             list.appendChild(btn);
         });
 
@@ -354,6 +389,6 @@ const GameUI = (() => {
     return {
         init, showGameUI, hideGameUI,
         updateTurnIndicator, updatePlayerBar, updateLeaderboard,
-        showDiceResult, updateMySocketId, renderJailUI
+        showDiceResult, updateMySocketId, renderJailUI, updateTurnTimer
     };
 })();

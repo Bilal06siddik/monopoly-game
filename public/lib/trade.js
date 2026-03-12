@@ -37,6 +37,12 @@ const TradeSystem = (() => {
         return '🏠'.repeat(prop.houses);
     }
 
+    function isTransferLocked(prop) {
+        return prop?.type === 'property'
+            && Boolean(prop.colorGroup)
+            && currentProperties.some(p => p.type === 'property' && p.colorGroup === prop.colorGroup && p.houses > 0);
+    }
+
     // ── Open Trade Modal ───────────────────────────────────
     function openTradeModal(targetId) {
         const modal = document.getElementById('trade-modal');
@@ -73,16 +79,26 @@ const TradeSystem = (() => {
                 btn.className = 'trade-prop-btn';
                 btn.dataset.tileIndex = prop.index;
                 const upg = upgradeLabel(prop);
-                btn.innerHTML = `<span>${prop.name}</span><span class="trade-prop-upgrade-icon">${upg}</span>`;
-                btn.addEventListener('click', () => {
-                    if (mySelectedProps.has(prop.index)) {
-                        mySelectedProps.delete(prop.index);
-                        btn.classList.remove('selected');
-                    } else {
-                        mySelectedProps.add(prop.index);
-                        btn.classList.add('selected');
-                    }
-                });
+                const locked = isTransferLocked(prop);
+                btn.innerHTML = locked
+                    ? `<span>${prop.name}<br><small>Set has buildings</small></span><span class="trade-prop-upgrade-icon">${upg || 'Locked'}</span>`
+                    : `<span>${prop.name}</span><span class="trade-prop-upgrade-icon">${upg}</span>`;
+                if (locked) {
+                    btn.disabled = true;
+                    btn.style.opacity = '0.45';
+                    btn.style.cursor = 'not-allowed';
+                    btn.title = 'Sell all buildings in this color group before trading this property.';
+                } else {
+                    btn.addEventListener('click', () => {
+                        if (mySelectedProps.has(prop.index)) {
+                            mySelectedProps.delete(prop.index);
+                            btn.classList.remove('selected');
+                        } else {
+                            mySelectedProps.add(prop.index);
+                            btn.classList.add('selected');
+                        }
+                    });
+                }
                 myPropsEl.appendChild(btn);
             });
         }
@@ -106,16 +122,26 @@ const TradeSystem = (() => {
                 btn.className = 'trade-prop-btn';
                 btn.dataset.tileIndex = prop.index;
                 const upg = upgradeLabel(prop);
-                btn.innerHTML = `<span>${prop.name}</span><span class="trade-prop-upgrade-icon">${upg}</span>`;
-                btn.addEventListener('click', () => {
-                    if (theirSelectedProps.has(prop.index)) {
-                        theirSelectedProps.delete(prop.index);
-                        btn.classList.remove('selected');
-                    } else {
-                        theirSelectedProps.add(prop.index);
-                        btn.classList.add('selected');
-                    }
-                });
+                const locked = isTransferLocked(prop);
+                btn.innerHTML = locked
+                    ? `<span>${prop.name}<br><small>Set has buildings</small></span><span class="trade-prop-upgrade-icon">${upg || 'Locked'}</span>`
+                    : `<span>${prop.name}</span><span class="trade-prop-upgrade-icon">${upg}</span>`;
+                if (locked) {
+                    btn.disabled = true;
+                    btn.style.opacity = '0.45';
+                    btn.style.cursor = 'not-allowed';
+                    btn.title = 'Sell all buildings in this color group before trading this property.';
+                } else {
+                    btn.addEventListener('click', () => {
+                        if (theirSelectedProps.has(prop.index)) {
+                            theirSelectedProps.delete(prop.index);
+                            btn.classList.remove('selected');
+                        } else {
+                            theirSelectedProps.add(prop.index);
+                            btn.classList.add('selected');
+                        }
+                    });
+                }
                 targPropsEl.appendChild(btn);
             });
         }
