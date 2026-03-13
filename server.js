@@ -21,12 +21,12 @@ app.use('/shared', express.static(path.join(__dirname, 'shared')));
 
 const CHARACTERS = ['bilo', 'osss', 'bdlbaky', 'fawzy', 'hamza', 'missiry'];
 const CHARACTER_COLORS = {
-  bilo:     '#6c5ce7',
-  osss:     '#e17055',
-  bdlbaky:  '#00b894',
-  fawzy:    '#fdcb6e',
-  hamza:    '#00d4ff',
-  missiry:  '#ff2d78'
+  bilo:     '#8e44ad', // Deep Purple
+  osss:     '#f1c40f', // Gold
+  bdlbaky:  '#2ecc71', // Emerald Green
+  fawzy:    '#e74c3c', // Crimson Red
+  hamza:    '#3498db', // Ocean Blue
+  missiry:  '#e61a8d'  // Hot Pink
 };
 
 const TURN_TIMER_SECONDS = 45;

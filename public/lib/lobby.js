@@ -1,20 +1,18 @@
 // ═══════════════════════════════════════════════════════════
-//  LOBBY — Arcade Machine Character Selection + Socket.io
+//  LOBBY — TCG Title Deed Cards + Socket.io
 // ═══════════════════════════════════════════════════════════
 
 const Lobby = (() => {
-    // ── Character Configuration ─────────────────────────────
-    // Names MUST match the filenames in public/characters/ (case-sensitive on Linux)
+    // Exactly 6 Players
     const CHARACTER_COLORS = {
-        'bilo':    '#6c5ce7',
-        'osss':    '#e17055',
-        'bdlbaky': '#00b894',
-        'fawzy':   '#fdcb6e',
-        'hamza':   '#00d4ff',
-        'missiry': '#ff2d78'
+        'bilo':    '#8e44ad', // Deep Purple
+        'osss':    '#f1c40f', // Gold
+        'bdlbaky': '#2ecc71', // Emerald Green
+        'fawzy':   '#e74c3c', // Crimson Red
+        'hamza':   '#3498db', // Ocean Blue
+        'missiry': '#e61a8d'  // Hot Pink
     };
 
-    // Display name overrides (prettier than raw filename)
     const CHARACTER_DISPLAY = {
         'bilo':    'BILO',
         'osss':    'OS',
@@ -24,43 +22,43 @@ const Lobby = (() => {
         'missiry': 'MISSIRY'
     };
 
-    // Per-character stats — funny/flavour
+    // User-provided TCG Data
     const CHARACTER_STATS = {
-        'bilo': {
-            tradingStyle:  'Refuses to sell anything. Ever.',
-            toxicityLevel: 85,
-            catchphrase:   '"That\'s my property, habibi."',
-            playstyle:     'Hoards railroads & mortgages nothing'
+        'bilo': { 
+            trait: 'Shark Investor', 
+            toxicityLevel: '80%', 
+            toxBar: '████████░░',
+            quote: '"I literally coded this board."' 
         },
-        'osss': {
-            tradingStyle:  'Shark investor — buys low, auctions high',
-            toxicityLevel: 60,
-            catchphrase:   '"I\'ll auction everything. Even your soul."',
-            playstyle:     'Somehow always rolls doubles'
+        'osss': { 
+            trait: 'Transport Monopoly', 
+            toxicityLevel: '90%', 
+            toxBar: '█████████░',
+            quote: '"Hat el ajar ya basha."' 
         },
-        'bdlbaky': {
-            tradingStyle:  'Negotiates for 20 mins then says no',
-            toxicityLevel: 75,
-            catchphrase:   '"Wait, let me think about it..."',
-            playstyle:     'Owns all utilities, somehow'
+        'bdlbaky': { 
+            trait: 'Zero Liquidity Hoarder', 
+            toxicityLevel: '100%', 
+            toxBar: '██████████',
+            quote: '"Ya gama3a ana ba-khsar!"' 
         },
-        'fawzy': {
-            tradingStyle:  'Impulse buyer — no plan, no regrets',
-            toxicityLevel: 50,
-            catchphrase:   '"I\'ll buy that. Why not."',
-            playstyle:     'Lands on Go To Jail every round'
+        'fawzy': { 
+            trait: 'Dice Manipulator', 
+            toxicityLevel: '30%', 
+            toxBar: '███░░░░░░░',
+            quote: '"Oops, double 6 again?"' 
         },
-        'hamza': {
-            tradingStyle:  'Silent strategist — says nothing, takes everything',
-            toxicityLevel: 40,
-            catchphrase:   '*just smiles and collects rent*',
-            playstyle:     'Has a monopoly by turn 3'
+        'hamza': { 
+            trait: 'Clueless Negotiator', 
+            toxicityLevel: '0%', 
+            toxBar: '░░░░░░░░░░',
+            quote: '"Hwa ana 3alaya el door?"' 
         },
-        'missiry': {
-            tradingStyle:  'Pure random chaos — no strategy detected',
-            toxicityLevel: 95,
-            catchphrase:   '"YOLO." *buys the last railroad*',
-            playstyle:     'Rolls & prays. Somehow wins.'
+        'missiry': { 
+            trait: 'Harmlessly Chaotic', 
+            toxicityLevel: '40%', 
+            toxBar: '████░░░░░░',
+            quote: '"Ha-falsakou kolokou!"' 
         }
     };
 
@@ -68,16 +66,13 @@ const Lobby = (() => {
     let selectedCharacter = null;
     let lobbyState        = null;
 
-    // ── Public API ──────────────────────────────────────────
     function init(socketInstance) {
         socket = socketInstance;
         bindEvents();
         bindButtons();
         setupErrorDismiss();
-        setupStatsOverlayDismiss();
     }
 
-    // ── Socket Events ───────────────────────────────────────
     function bindEvents() {
         socket.on('lobby-update', (state) => {
             lobbyState = state;
@@ -87,10 +82,7 @@ const Lobby = (() => {
 
         socket.on('character-confirmed', (data) => {
             selectedCharacter = data.character;
-            Notifications.show(
-                `You are <strong>${CHARACTER_DISPLAY[data.character] || data.character}</strong>!`,
-                'success'
-            );
+            Notifications.show(`Deck Secured: <strong>${CHARACTER_DISPLAY[data.character] || data.character}</strong>`, 'success');
             if (lobbyState) renderCharacters(lobbyState);
         });
 
@@ -104,74 +96,91 @@ const Lobby = (() => {
         });
     }
 
-    // ── Render Arcade Machines ──────────────────────────────
     function renderCharacters(state) {
         const grid = document.getElementById('character-grid');
         grid.innerHTML = '';
 
-        state.characters.forEach((char) => {
+        // Safely filter out anyone not in our 6 (in case server has leftover state during transition)
+        const validCharacters = state.characters.filter(char => CHARACTER_COLORS[char.name]);
+
+        validCharacters.forEach((char) => {
             const isMine  = selectedCharacter === char.name;
             const isTaken = char.taken && !isMine;
-            const color   = CHARACTER_COLORS[char.name] || '#6080ff';
-            const stats   = CHARACTER_STATS[char.name]  || {};
-            const display = CHARACTER_DISPLAY[char.name] || char.name.toUpperCase();
+            const color   = CHARACTER_COLORS[char.name];
+            const stats   = CHARACTER_STATS[char.name];
+            const display = CHARACTER_DISPLAY[char.name];
+            const imgSrc  = `./characters/${char.name}.png`;
 
-            const machine = document.createElement('div');
-            machine.className = 'arcade-machine' +
-                (isMine  ? ' selected' : '') +
-                (isTaken ? ' taken'    : '');
-            machine.id = `char-${char.name}`;
-            machine.style.setProperty('--machine-color', color);
+            const wrapper = document.createElement('div');
+            wrapper.className = 'tcg-card-wrapper' + (isMine ? ' selected' : '') + (isTaken ? ' taken' : '');
+            wrapper.style.setProperty('--char-color', color);
+            
+            wrapper.innerHTML = `
+                <div class="tcg-card-inner">
+                    
+                    <!-- FRONT OF CARD -->
+                    <div class="tcg-card-front">
+                        <div class="tcg-card-header">
+                            <span class="tcg-card-name">${display}</span>
+                        </div>
+                        
+                        <div class="tcg-artwork-box">
+                            <div class="tcg-info-btn" title="View Stats">i</div>
+                            <img class="tcg-avatar" src="${imgSrc}" onerror="this.onerror=null; this.src='./characters/${char.name}.svg';" alt="${display}" />
+                        </div>
 
-            // Taken badge
-            let takenBadgeHTML = '';
-            if (isTaken) {
-                const label = char.takenByBot ? 'BOT' : 'TAKEN';
-                takenBadgeHTML = `<div class="taken-badge">${label}</div>`;
-            }
-
-            machine.innerHTML = `
-                <div class="arcade-cabinet-body">
-                    ${takenBadgeHTML}
-
-                    <!-- MARQUEE -->
-                    <div class="arcade-marquee">
-                        <span class="neon-text">${display}</span>
-                    </div>
-
-                    <!-- CRT SCREEN -->
-                    <div class="arcade-screen">
-                        <div class="arcade-avatar-wrap">
-                            <img
-                                class="arcade-avatar"
-                                src="./characters/${char.name}.png"
-                                alt="${display}"
-                                onerror="this.onerror=null; this.src='./characters/${char.name}.jpg';"
-                            />
-                            <button class="carousel-arrow left"  title="Previous skin">◀</button>
-                            <button class="carousel-arrow right" title="Next skin">▶</button>
+                        <div class="tcg-card-footer">
+                            <button class="tcg-select-btn">${isMine ? 'SELECTED' : isTaken ? 'TAKEN' : 'SELECT'}</button>
                         </div>
                     </div>
 
-                    <!-- CONTROL PANEL -->
-                    <div class="arcade-panel">
-                        <div class="panel-deco">
-                            <div class="deco-joystick"></div>
-                            <div class="deco-btn red"></div>
-                            <div class="deco-btn yellow"></div>
-                            <div class="deco-btn blue"></div>
+                    <!-- BACK OF CARD (STATS) -->
+                    <div class="tcg-card-back">
+                        <div class="tcg-back-header">
+                            <h3 class="tcg-back-title">DETAILS</h3>
+                            <button class="tcg-back-btn">RETURN ↩</button>
                         </div>
-                        <button class="arcade-btn" data-char="${char.name}">
-                            ▶ PLAYER INFO
-                        </button>
+
+                        <div class="tcg-stats-content">
+                            <div class="tcg-data-block">
+                                <span class="data-label">TRAIT</span>
+                                <span class="data-val">${stats.trait}</span>
+                            </div>
+
+                            <div class="tcg-data-block">
+                                <span class="data-label">TOXICITY LEVEL</span>
+                                <div class="toxicity-bar"><div class="tox-fill" style="width: ${stats.toxicityLevel}"></div></div>
+                                <div class="tox-labels"><span>ZEN</span><span>TOXIC</span></div>
+                            </div>
+
+                            <div class="tcg-data-block">
+                                <span class="data-label">QUOTE</span>
+                                <span class="data-quote">${stats.quote}</span>
+                            </div>
+                        </div>
                     </div>
+
                 </div>
             `;
 
-            // ── Click handlers ──
-            machine.addEventListener('click', (e) => {
-                if (e.target.closest('.arcade-btn') ||
-                    e.target.closest('.carousel-arrow')) return;
+            // Click Handlers
+            
+            // Flip to Back
+            wrapper.querySelector('.tcg-info-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                wrapper.classList.add('flipped');
+            });
+
+            // Flip to Front
+            wrapper.querySelector('.tcg-back-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                wrapper.classList.remove('flipped');
+            });
+
+            // Select Card
+            wrapper.querySelector('.tcg-select-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (wrapper.classList.contains('flipped')) return; 
                 if (isTaken) return;
 
                 if (isMine) {
@@ -182,114 +191,44 @@ const Lobby = (() => {
                 }
             });
 
-            machine.querySelector('.carousel-arrow.left').addEventListener('click', (e) => {
-                e.stopPropagation();
-                animateCarousel(machine, 'left');
-            });
-            machine.querySelector('.carousel-arrow.right').addEventListener('click', (e) => {
-                e.stopPropagation();
-                animateCarousel(machine, 'right');
+            // Full card click fallback
+            wrapper.addEventListener('click', (e) => {
+                if (!e.target.closest('.tcg-info-btn') && !e.target.closest('.tcg-back-btn')) {
+                    if (!wrapper.classList.contains('flipped') && !isTaken) {
+                        if (isMine) {
+                            socket.emit('deselect-character');
+                            selectedCharacter = null;
+                        } else {
+                            socket.emit('select-character', char.name);
+                        }
+                    }
+                }
             });
 
-            machine.querySelector('.arcade-btn').addEventListener('click', (e) => {
-                e.stopPropagation();
-                openStatsPanel(char.name, display, color, stats);
-            });
-
-            grid.appendChild(machine);
+            grid.appendChild(wrapper);
         });
     }
 
-    // ── Carousel Animation (future-ready) ───────────────────
-    function animateCarousel(machine, direction) {
-        const avatar = machine.querySelector('.arcade-avatar');
-        if (!avatar) return;
-
-        const slideOut = direction === 'right' ? '-50px' : '50px';
-        const slideIn  = direction === 'right' ?  '50px' : '-50px';
-
-        avatar.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
-        avatar.style.transform  = `translateX(${slideOut})`;
-        avatar.style.opacity    = '0';
-
-        setTimeout(() => {
-            avatar.style.transition = 'none';
-            avatar.style.transform  = `translateX(${slideIn})`;
-            setTimeout(() => {
-                avatar.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
-                avatar.style.transform  = 'translateX(0)';
-                avatar.style.opacity    = '1';
-            }, 20);
-        }, 180);
-    }
-
-    // ── Stats Panel ─────────────────────────────────────────
-    function openStatsPanel(charName, displayName, color, stats) {
-        const overlay = document.getElementById('arcade-stats-overlay');
-        const panel   = document.getElementById('arcade-stats-panel');
-
-        overlay.style.setProperty('--stats-color', color);
-        panel.style.setProperty('--stats-color', color);
-
-        document.getElementById('stats-char-name').textContent = displayName;
-
-        const avatarEl = document.getElementById('stats-char-avatar');
-        avatarEl.src = `./characters/${charName}.png`;
-        avatarEl.onerror = function() {
-            this.onerror = null;
-            this.src = `./characters/${charName}.jpg`;
-        };
-
-        document.getElementById('stats-trading').textContent    = stats.tradingStyle  || '???';
-        document.getElementById('stats-catchphrase').textContent = stats.catchphrase  || '...';
-        document.getElementById('stats-playstyle').textContent  = stats.playstyle     || '???';
-
-        const toxicity = stats.toxicityLevel ?? 50;
-        document.getElementById('stats-toxicity-val').textContent = toxicity + '%';
-        const bar = document.getElementById('stats-toxicity-bar');
-        bar.style.width = '0%';
-        setTimeout(() => { bar.style.width = toxicity + '%'; }, 80);
-
-        overlay.classList.add('open');
-    }
-
-    function closeStatsPanel() {
-        document.getElementById('arcade-stats-overlay').classList.remove('open');
-    }
-
-    function setupStatsOverlayDismiss() {
-        const overlay = document.getElementById('arcade-stats-overlay');
-        if (!overlay) return;
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) closeStatsPanel();
-        });
-        const closeBtn = document.getElementById('stats-close-btn');
-        if (closeBtn) closeBtn.addEventListener('click', closeStatsPanel);
-    }
-
-    // ── Status Bar ──────────────────────────────────────────
     function updateStatus(state) {
         const statusEl     = document.getElementById('lobby-status');
         const readyPlayers = state.players.filter(p => p.character);
         const count        = readyPlayers.length;
-        const total        = state.characters.length;
+        const total        = Object.keys(CHARACTER_COLORS).length; // Now 6
         const botCount     = readyPlayers.filter(p => p.isBot).length;
         const humanCount   = count - botCount;
 
         if (count === 0) {
-            statusEl.innerHTML = '<span class="dot-pulse"></span> Waiting for players...';
+            statusEl.textContent = 'AWAITING PLAYERS...';
         } else {
-            const botText = botCount > 0 ? ` • ${botCount} bot${botCount > 1 ? 's' : ''}` : '';
-            statusEl.innerHTML =
-                `<span class="dot-pulse"></span> ${count}/${total} ready ` +
-                `(${humanCount} human${humanCount === 1 ? '' : 's'})${botText}`;
+            const botText = botCount > 0 ? ` • ${botCount} BOTS` : '';
+            statusEl.textContent = `${count}/${total} SELECTED (${humanCount} HUMANS)${botText}`;
         }
 
         const startBtn = document.getElementById('start-game-btn');
         if (startBtn) {
             if (count >= 2) {
                 startBtn.classList.remove('disabled');
-                startBtn.textContent = '▶ START GAME';
+                startBtn.textContent = 'START MATCH';
             } else {
                 startBtn.classList.add('disabled');
                 startBtn.textContent = 'NEED 2+ PLAYERS';
@@ -303,7 +242,6 @@ const Lobby = (() => {
         }
     }
 
-    // ── Buttons ─────────────────────────────────────────────
     function bindButtons() {
         const addBotBtn = document.getElementById('add-bot-btn');
         if (addBotBtn) addBotBtn.addEventListener('click', () => socket.emit('add-random-bot'));
@@ -317,7 +255,6 @@ const Lobby = (() => {
         }
     }
 
-    // ── Error ────────────────────────────────────────────────
     function showError(message) {
         const overlay = document.getElementById('error-overlay');
         const msgEl   = document.getElementById('error-message');
@@ -335,10 +272,8 @@ const Lobby = (() => {
         });
     }
 
-    // ── Lifecycle ────────────────────────────────────────────
     function hideLobby() {
         document.getElementById('lobby-screen').classList.add('hidden');
-        closeStatsPanel();
     }
 
     function getSelectedCharacter() { return selectedCharacter; }
