@@ -213,6 +213,19 @@ const GameTokens = (() => {
         return tokens[character];
     }
 
+    function setTokenPosition(character, tileIndex) {
+        const token = tokens[character];
+        if (!token) return;
+
+        const pos = getTilePos(tileIndex);
+        if (!pos) return;
+
+        token.currentTile = tileIndex;
+        token.animating = false;
+        token.mesh.position.set(pos.x, TOKEN_HEIGHT / 2 + 0.12, pos.z);
+        token.mesh.rotation.y = 0;
+    }
+
     function getAllTokens() {
         return tokens;
     }
@@ -241,5 +254,5 @@ const GameTokens = (() => {
         }
     }
 
-    return { init, createToken, animateMove, getToken, getAllTokens, removeToken };
+    return { init, createToken, animateMove, getToken, setTokenPosition, getAllTokens, removeToken };
 })();

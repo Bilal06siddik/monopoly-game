@@ -22,6 +22,63 @@
        GAME HUD — Main game interface
        ══════════════════════════════════════════════════════ -->
   <div id="game-hud" class="hidden">
+    <button id="dev-panel-toggle" class="dev-panel-toggle hidden" title="Open developer tools">DEV</button>
+
+    <div id="dev-panel" class="dev-panel hidden">
+      <div class="dev-panel-header">
+        <div>
+          <div class="dev-panel-title">Dev Panel</div>
+          <div class="dev-panel-subtitle">Local test shortcuts</div>
+        </div>
+        <button id="dev-panel-close" class="dev-panel-close" title="Close developer tools">x</button>
+      </div>
+
+      <div class="dev-panel-section">
+        <label class="dev-panel-label" for="dev-player-select">Player</label>
+        <select id="dev-player-select" class="dev-panel-select"></select>
+        <div id="dev-player-summary" class="dev-panel-meta"></div>
+        <div class="dev-panel-row">
+          <input id="dev-money-input" class="dev-panel-input" type="number" step="50" value="1500" />
+          <button id="dev-set-money-btn" class="dev-panel-btn">Set Money</button>
+        </div>
+        <div class="dev-panel-grid">
+          <button id="dev-set-turn-btn" class="dev-panel-btn">Make Turn</button>
+          <button id="dev-toggle-jail-btn" class="dev-panel-btn subtle">Toggle Jail</button>
+        </div>
+      </div>
+
+      <div class="dev-panel-section">
+        <label class="dev-panel-label" for="dev-tile-select">Tile</label>
+        <select id="dev-tile-select" class="dev-panel-select"></select>
+        <div id="dev-tile-summary" class="dev-panel-meta"></div>
+        <div class="dev-panel-grid">
+          <button id="dev-teleport-btn" class="dev-panel-btn">Teleport</button>
+          <button id="dev-give-tile-btn" class="dev-panel-btn">Give Tile</button>
+          <button id="dev-clear-tile-btn" class="dev-panel-btn subtle">Clear Tile</button>
+          <button id="dev-toggle-mortgage-btn" class="dev-panel-btn subtle">Toggle Mortgage</button>
+        </div>
+        <div class="dev-panel-row">
+          <select id="dev-house-count" class="dev-panel-select compact">
+            <option value="0">0 buildings</option>
+            <option value="1">1 house</option>
+            <option value="2">2 houses</option>
+            <option value="3">3 houses</option>
+            <option value="4">4 houses</option>
+            <option value="5">Hotel</option>
+          </select>
+          <button id="dev-set-houses-btn" class="dev-panel-btn">Set Buildings</button>
+        </div>
+      </div>
+
+      <div class="dev-panel-section">
+        <label class="dev-panel-label" for="dev-color-group-select">Group</label>
+        <select id="dev-color-group-select" class="dev-panel-select"></select>
+        <button id="dev-claim-group-btn" class="dev-panel-btn wide">Claim Full Group</button>
+      </div>
+
+      <div id="dev-panel-status" class="dev-panel-status">Start a game to use dev tools.</div>
+    </div>
+
     <!-- Top Bar -->
     <div class="top-bar">
       <div id="turn-indicator" class="turn-indicator"></div>
@@ -384,6 +441,7 @@
   <script src="lib/historyLog.js"></script>
   <script src="lib/trade.js"></script>
   <script src="lib/auction.js"></script>
+  <script src="lib/devPanel.js"></script>
   <script src="main.js"></script>
 </body>
 

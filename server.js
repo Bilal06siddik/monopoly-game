@@ -184,6 +184,79 @@ function getGroupAssetLockMessage(tile, action) {
   return `Sell all buildings in the ${tile.colorGroup} set before ${action}`;
 }
 
+function isLoopbackAddress(address = '') {
+  return address === '::1' || address === '127.0.0.1' || address === '::ffff:127.0.0.1';
+}
+
+function isDevSocket(socket) {
+  const host = socket.handshake.headers.host || '';
+  const referer = socket.handshake.headers.referer || '';
+  return process.env.NODE_ENV !== 'production' && (
+    isLoopbackAddress(socket.handshake.address) ||
+    host === 'localhost' ||
+    host.startsWith('localhost:') ||
+    host === '127.0.0.1' ||
+    host.startsWith('127.0.0.1:') ||
+    referer.includes('localhost') ||
+    referer.includes('127.0.0.1') ||
+    referer.includes('dev=1')
+  );
+}
+
+function clampInt(value, min, max) {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) return null;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function syncPlayerPropertyLists() {
+  if (!gameState) return;
+
+  gameState.players.forEach(player => {
+    player.properties = [];
+  });
+
+  gameState.properties.forEach(tile => {
+    if (!tile.owner) return;
+    const owner = gameState.getPlayerById(tile.owner);
+    if (!owner) {
+      tile.owner = null;
+      tile.houses = 0;
+      tile.isMortgaged = false;
+      return;
+    }
+    owner.properties.push(tile.index);
+  });
+}
+
+function getPurchasableTile(tileIndex) {
+  if (!gameState) return null;
+  const index = clampInt(tileIndex, 0, gameState.properties.length - 1);
+  if (index === null) return null;
+  const tile = gameState.properties[index];
+  if (!tile || !['property', 'railroad', 'utility'].includes(tile.type)) return null;
+  return tile;
+}
+
+function emitGameStateSync({ restartTurnTimer = false } = {}) {
+  if (!gameState) return;
+
+  syncPlayerPropertyLists();
+
+  if (restartTurnTimer) {
+    clearPendingMoveResolution();
+    gameState.doublesCount = 0;
+    if (gameState.turnPhase === 'waiting' || gameState.turnPhase === 'buying') {
+      startTurnTimer(gameState.turnPhase);
+    } else {
+      stopTurnTimer();
+    }
+  }
+
+  syncTurnTimerState(turnTimerState);
+  io.emit('game-state-sync', gameState.getState());
+}
+
 // ── Rent Calculation ────────────────────────────────────────
 function calculateRent(property, diceTotal) {
   if (!property || !property.owner || property.isMortgaged) return 0;
@@ -706,6 +779,209 @@ io.on('connection', (socket) => {
   // ── Pass Property → Start Auction ───────────────────────
   socket.on('pass-property', () => {
     handlePassProperty(socket.id);
+  });
+
+  socket.on('dev-command', (data = {}) => {
+    if (!isDevSocket(socket)) {
+      socket.emit('game-error', { message: 'Developer tools are only available from localhost.' });
+      return;
+    }
+
+    if (!gameState || !gameState.isGameStarted) {
+      socket.emit('game-error', { message: 'Start a game before using developer tools.' });
+      return;
+    }
+
+    if (auctionState) {
+      socket.emit('game-error', { message: 'Finish the current auction before using developer tools.' });
+      return;
+    }
+
+    if (gameState.turnPhase === 'rolling' || gameState.turnPhase === 'moving') {
+      socket.emit('game-error', { message: 'Wait for movement to finish before using developer tools.' });
+      return;
+    }
+
+    let restartTurnTimer = false;
+
+    switch (data.type) {
+      case 'set-money': {
+        const player = gameState.getPlayerById(data.playerId);
+        const amount = Number.parseInt(data.amount, 10);
+        if (!player || Number.isNaN(amount)) {
+          socket.emit('game-error', { message: 'Invalid player or money value.' });
+          return;
+        }
+
+        player.money = amount;
+        logEvent(`🛠️ DEV set ${player.character}'s cash to $${amount}.`, 'system');
+        break;
+      }
+
+      case 'set-current-turn': {
+        const playerIndex = gameState.players.findIndex(player => player.id === data.playerId);
+        if (playerIndex < 0 || !gameState.players[playerIndex].isActive) {
+          socket.emit('game-error', { message: 'Choose an active player for the turn.' });
+          return;
+        }
+
+        gameState.currentPlayerIndex = playerIndex;
+        gameState.turnPhase = 'waiting';
+        restartTurnTimer = true;
+        logEvent(`🛠️ DEV handed the turn to ${gameState.players[playerIndex].character}.`, 'system');
+        break;
+      }
+
+      case 'set-position': {
+        const player = gameState.getPlayerById(data.playerId);
+        const tileIndex = clampInt(data.tileIndex, 0, gameState.properties.length - 1);
+        if (!player || tileIndex === null) {
+          socket.emit('game-error', { message: 'Invalid player or tile selection.' });
+          return;
+        }
+
+        player.position = tileIndex;
+        if (player.inJail && tileIndex !== 10) {
+          player.inJail = false;
+          player.jailTurns = 0;
+        }
+
+        if (gameState.getCurrentPlayer()?.id === player.id) {
+          gameState.turnPhase = 'waiting';
+          restartTurnTimer = true;
+        }
+
+        logEvent(`🛠️ DEV moved ${player.character} to ${gameState.properties[tileIndex].name}.`, 'system');
+        break;
+      }
+
+      case 'set-owner': {
+        const player = gameState.getPlayerById(data.playerId);
+        const tile = getPurchasableTile(data.tileIndex);
+        if (!player || !tile) {
+          socket.emit('game-error', { message: 'Choose a player and a purchasable tile.' });
+          return;
+        }
+
+        tile.owner = player.id;
+        if (gameState.turnPhase === 'buying') {
+          gameState.turnPhase = 'waiting';
+          restartTurnTimer = true;
+        }
+
+        logEvent(`🛠️ DEV gave ${tile.name} to ${player.character}.`, 'system');
+        break;
+      }
+
+      case 'clear-owner': {
+        const tile = getPurchasableTile(data.tileIndex);
+        if (!tile) {
+          socket.emit('game-error', { message: 'Choose a purchasable tile to reset.' });
+          return;
+        }
+
+        tile.owner = null;
+        tile.houses = 0;
+        tile.isMortgaged = false;
+        if (gameState.turnPhase === 'buying') {
+          gameState.turnPhase = 'waiting';
+          restartTurnTimer = true;
+        }
+
+        logEvent(`🛠️ DEV returned ${tile.name} to the bank.`, 'system');
+        break;
+      }
+
+      case 'set-houses': {
+        const tile = getPurchasableTile(data.tileIndex);
+        const houses = clampInt(data.houses, 0, 5);
+        if (!tile || tile.type !== 'property' || houses === null) {
+          socket.emit('game-error', { message: 'Choose a street property and a building level from 0 to 5.' });
+          return;
+        }
+        if (!tile.owner && houses > 0) {
+          socket.emit('game-error', { message: 'Give the property an owner before adding buildings.' });
+          return;
+        }
+
+        tile.houses = houses;
+        if (houses > 0) tile.isMortgaged = false;
+        if (gameState.turnPhase === 'buying') {
+          gameState.turnPhase = 'waiting';
+          restartTurnTimer = true;
+        }
+
+        logEvent(`🛠️ DEV set ${tile.name} to ${houses >= 5 ? 'a hotel' : `${houses} building(s)`}.`, 'system');
+        break;
+      }
+
+      case 'toggle-mortgage': {
+        const tile = getPurchasableTile(data.tileIndex);
+        if (!tile || !tile.owner) {
+          socket.emit('game-error', { message: 'Choose an owned purchasable tile to mortgage.' });
+          return;
+        }
+
+        tile.isMortgaged = !tile.isMortgaged;
+        if (tile.isMortgaged) {
+          tile.houses = 0;
+        }
+        if (gameState.turnPhase === 'buying') {
+          gameState.turnPhase = 'waiting';
+          restartTurnTimer = true;
+        }
+
+        logEvent(`🛠️ DEV ${tile.isMortgaged ? 'mortgaged' : 'unmortgaged'} ${tile.name}.`, 'system');
+        break;
+      }
+
+      case 'claim-color-group': {
+        const player = gameState.getPlayerById(data.playerId);
+        const groupTiles = gameState.properties.filter(tile => tile.colorGroup === data.colorGroup);
+        if (!player || !groupTiles.length) {
+          socket.emit('game-error', { message: 'Choose a player and a valid group.' });
+          return;
+        }
+
+        groupTiles.forEach(tile => {
+          tile.owner = player.id;
+          tile.isMortgaged = false;
+        });
+        if (gameState.turnPhase === 'buying') {
+          gameState.turnPhase = 'waiting';
+          restartTurnTimer = true;
+        }
+
+        logEvent(`🛠️ DEV gave the ${data.colorGroup} group to ${player.character}.`, 'system');
+        break;
+      }
+
+      case 'toggle-jail': {
+        const player = gameState.getPlayerById(data.playerId);
+        if (!player || !player.isActive) {
+          socket.emit('game-error', { message: 'Choose an active player to edit jail status.' });
+          return;
+        }
+
+        player.inJail = !player.inJail;
+        player.jailTurns = 0;
+        if (player.inJail) player.position = 10;
+
+        if (gameState.getCurrentPlayer()?.id === player.id) {
+          gameState.turnPhase = 'waiting';
+          restartTurnTimer = true;
+        }
+
+        logEvent(`🛠️ DEV ${player.inJail ? 'sent' : 'released'} ${player.character} ${player.inJail ? 'to' : 'from'} jail.`, 'system');
+        break;
+      }
+
+      default:
+        socket.emit('game-error', { message: 'Unknown developer command.' });
+        return;
+    }
+
+    emitGameStateSync({ restartTurnTimer });
   });
 
   // ── Own Auction (sell own property) ─────────────────────

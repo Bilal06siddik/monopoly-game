@@ -26,8 +26,49 @@
         return p ? p.color : '#fff';
     }
 
+    function setCurrentGameState(state) {
+        currentGameState = state;
+        if (typeof DevPanel !== 'undefined' && DevPanel.updateState) {
+            DevPanel.updateState(state);
+        }
+    }
+
     function syncTurnTimerUI(state = currentGameState) {
         GameUI.updateTurnTimer(state?.turnTimer || null);
+    }
+
+    function syncWorldFromState(state) {
+        if (!state) return;
+
+        state.players.forEach(player => {
+            if (!player.isActive) return;
+            if (!GameTokens.getToken(player.character)) {
+                GameTokens.createToken(player.character, scene);
+            }
+            GameTokens.setTokenPosition(player.character, player.position);
+        });
+
+        state.properties.forEach(prop => {
+            GameBoard.removeHouses(prop.index, scene);
+
+            const isPurchasable = prop.type === 'property' || prop.type === 'railroad' || prop.type === 'utility';
+            if (!isPurchasable) return;
+
+            GameBoard.setMortgaged(prop.index, false);
+
+            if (prop.owner && !prop.isMortgaged) {
+                const owner = state.players.find(player => player.id === prop.owner);
+                GameBoard.updateTileOwner(prop.index, owner?.color || null);
+            }
+
+            if (prop.isMortgaged) {
+                GameBoard.setMortgaged(prop.index, true);
+            }
+
+            if (prop.houses > 0) {
+                GameBoard.addHouse(prop.index, prop.houses, scene);
+            }
+        });
     }
 
     function getColorGroupProperties(colorGroup) {
@@ -84,6 +125,7 @@
     HistoryLog.init();
     TradeSystem.init(socket);
     AuctionSystem.init(socket);
+    if (typeof DevPanel !== 'undefined') DevPanel.init(socket);
 
     // ── Init Raycaster for clickable board ─────────────────
     GameBoard.initRaycaster(camera, renderer);
@@ -103,7 +145,7 @@
     // ── Game Started ──────────────────────────────────────
     socket.on('gameStarted', (state) => {
         try {
-            currentGameState = state;
+            setCurrentGameState(state);
             console.log('🎮 Game started! Processing UI transition...', state);
             
             console.log('- Hiding lobby...');
@@ -112,8 +154,8 @@
             console.log('- Showing Game UI...');
             GameUI.showGameUI();
             
-            console.log('- Creating tokens...');
-            state.players.forEach(p => GameTokens.createToken(p.character, scene));
+            console.log('- Syncing board state...');
+            syncWorldFromState(state);
             
             console.log('- Updating leaderboard...');
             GameUI.updateLeaderboard(state.players, state.properties);
@@ -135,7 +177,7 @@
 
     // ── Dice Rolled ───────────────────────────────────────
     socket.on('dice-rolled', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameUI.showDiceResult(data.die1, data.die2, data.character, data.isDoubles);
         if (data.isDoubles) Notifications.notifyDoubles();
 
@@ -154,7 +196,7 @@
 
     // ── Buy Prompt ────────────────────────────────────────
     socket.on('buy-prompt', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameModals.showBuyModal(data);
         syncTurnTimerUI(data.gameState);
     });
@@ -165,7 +207,7 @@
 
     // ── Property Bought ───────────────────────────────────
     socket.on('property-bought', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         if (data.playerId === socket.id) {
             Notifications.show(`🏠 Bought ${data.tileName}!`, 'success', 2500);
         }
@@ -178,7 +220,7 @@
 
     // ── Rent Paid ─────────────────────────────────────────
     socket.on('rent-paid', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameModals.showRentPaid(data, data.payerId === socket.id);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
         syncTurnTimerUI(data.gameState);
@@ -186,7 +228,7 @@
 
     // ── Tax Paid ──────────────────────────────────────────
     socket.on('tax-paid', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameModals.showTaxPaid(data, data.playerId === socket.id);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
         syncTurnTimerUI(data.gameState);
@@ -194,7 +236,7 @@
 
     // ── Card Drawn ────────────────────────────────────────
     socket.on('card-drawn', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameModals.showActionCard(data.card);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
         syncTurnTimerUI(data.gameState);
@@ -202,7 +244,7 @@
 
     // ── Bankruptcy ────────────────────────────────────────
     socket.on('player-bankrupt', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameModals.showBankruptcy(data, data.playerId === socket.id);
         GameTokens.removeToken(data.character, scene);
         // Clear all tile ownership colors for this player's old properties
@@ -215,7 +257,13 @@
 
     // ── Game Over ─────────────────────────────────────────
     socket.on('game-over', (data) => {
-        if (currentGameState) currentGameState.turnTimer = null;
+        if (data.gameState) setCurrentGameState(data.gameState);
+        if (currentGameState) {
+            currentGameState.turnTimer = null;
+            if (typeof DevPanel !== 'undefined' && DevPanel.updateState) {
+                DevPanel.updateState(currentGameState);
+            }
+        }
         GameUI.updateTurnTimer(null);
         const isMe = data.winner.id === socket.id;
         Notifications.show(
@@ -226,7 +274,7 @@
 
     // ── Turn Changed ──────────────────────────────────────
     socket.on('turn-changed', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameModals.hideBuyModal();
         GameUI.updateTurnIndicator(data.currentPlayerId, data.currentCharacter, data.gameState.players, data.gameState);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
@@ -235,7 +283,7 @@
 
     // ── Jail Events ──────────────────────────────────────────
     socket.on('sent-to-jail', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         if (data.playerId === socket.id) {
             Notifications.show('🚔 You were sent to Jail!', 'error', 4000);
         } else {
@@ -247,14 +295,14 @@
     });
 
     socket.on('jail-state-changed', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
         GameUI.updateTurnIndicator(data.gameState.currentPlayerId, null, data.gameState.players, data.gameState);
         syncTurnTimerUI(data.gameState);
     });
 
     socket.on('bailout-collected', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         if (data.playerId === socket.id) {
             Notifications.show(`💰 You collected $${data.amount} from the Bailout fund!`, 'success', 4000);
         } else {
@@ -266,7 +314,7 @@
 
     // ── Auction Events ────────────────────────────────────
     socket.on('auction-started', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameModals.hideBuyModal();
         AuctionSystem.showAuction(data, data.players);
         Notifications.show(`🔨 Auction: ${data.auction.tileName}!`, 'hype', 3000);
@@ -275,7 +323,7 @@
     socket.on('auction-bid', (data) => { AuctionSystem.onBid(data); });
     socket.on('auction-tick', (data) => { AuctionSystem.onTick(data); });
     socket.on('auction-ended', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         AuctionSystem.hideAuction();
         if (data.winnerId) {
             const isMe = data.winnerId === socket.id;
@@ -299,7 +347,7 @@
     });
     socket.on('trade-sent', () => { Notifications.show('Trade sent!', 'success', 2000); });
     socket.on('trade-completed', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         Notifications.show(`✅ Trade completed!`, 'success', 3000);
         // Re-apply all ownership colors from updated state
         data.gameState.properties.forEach(prop => {
@@ -315,7 +363,7 @@
 
     // ── Upgrade / Downgrade / Mortgage / Sell Events ──────
     socket.on('property-upgraded', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameBoard.addHouse(data.tileIndex, data.houses, scene);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
         if (data.playerId === socket.id) {
@@ -325,7 +373,7 @@
     });
 
     socket.on('property-downgraded', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         if (data.houses > 0) GameBoard.addHouse(data.tileIndex, data.houses, scene);
         else GameBoard.removeHouses(data.tileIndex, scene);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
@@ -333,7 +381,7 @@
     });
 
     socket.on('property-mortgaged', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameBoard.setMortgaged(data.tileIndex, true);
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
         if (data.playerId === socket.id) {
@@ -343,14 +391,15 @@
     });
 
     socket.on('property-unmortgaged', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameBoard.setMortgaged(data.tileIndex, false);
+        GameBoard.updateTileOwner(data.tileIndex, getPlayerColor(data.playerId));
         GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
         syncTurnTimerUI(data.gameState);
     });
 
     socket.on('property-sold', (data) => {
-        currentGameState = data.gameState;
+        setCurrentGameState(data.gameState);
         GameBoard.removeHouses(data.tileIndex, scene);
         GameBoard.setMortgaged(data.tileIndex, false);
         GameBoard.updateTileOwner(data.tileIndex, null); // clear owner color
@@ -377,26 +426,14 @@
 
     // ── Game State Sync ───────────────────────────────────
     socket.on('game-state-sync', (state) => {
-        currentGameState = state;
+        setCurrentGameState(state);
         if (state.isGameStarted) {
             Lobby.hideLobby();
             GameUI.showGameUI();
+            syncWorldFromState(state);
             GameUI.updateLeaderboard(state.players, state.properties);
             const currentP = state.players[state.currentPlayerIndex];
             GameUI.updateTurnIndicator(currentP.id, currentP.character, state.players, state);
-            state.players.forEach(p => {
-                if (!GameTokens.getToken(p.character)) GameTokens.createToken(p.character, scene);
-            });
-            // Sync houses/mortgages on reconnect
-            state.properties.forEach(prop => {
-                if (prop.houses > 0) GameBoard.addHouse(prop.index, prop.houses, scene);
-                if (prop.isMortgaged) GameBoard.setMortgaged(prop.index, true);
-                // Sync ownership colors
-                if (prop.owner) {
-                    const ownerPlayer = state.players.find(p => p.id === prop.owner);
-                    if (ownerPlayer) GameBoard.updateTileOwner(prop.index, ownerPlayer.color);
-                }
-            });
             if (state.turnPhase !== 'buying') GameModals.hideBuyModal();
             syncTurnTimerUI(state);
         }

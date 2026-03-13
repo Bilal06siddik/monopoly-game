@@ -511,6 +511,198 @@ body {
   transform: translateY(-2px);
 }
 
+/* ── Dev Panel (Local Testing) ──────────────────────────── */
+.dev-panel-toggle {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  padding: 10px 14px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  color: var(--accent-cyan);
+  background: rgba(0, 210, 211, 0.14);
+  border: 1px solid rgba(0, 210, 211, 0.32);
+  border-radius: 999px;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.dev-panel-toggle:hover,
+.dev-panel-toggle.active {
+  background: rgba(0, 210, 211, 0.22);
+  border-color: rgba(0, 210, 211, 0.5);
+  transform: translateY(-1px);
+}
+
+.dev-panel {
+  position: absolute;
+  top: 62px;
+  left: 16px;
+  width: min(340px, calc(100vw - 32px));
+  max-height: calc(100vh - 90px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  background: rgba(10, 12, 26, 0.96);
+  border: 1px solid rgba(0, 210, 211, 0.18);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(16px);
+  overflow-y: auto;
+  animation: slide-in-left 0.28s ease;
+}
+
+.dev-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dev-panel-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.dev-panel-subtitle {
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 0.4px;
+}
+
+.dev-panel-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.dev-panel-close:hover {
+  background: rgba(255, 107, 107, 0.18);
+  color: var(--accent-red);
+}
+
+.dev-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+}
+
+.dev-panel-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.dev-panel-meta {
+  min-height: 30px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.dev-panel-select,
+.dev-panel-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(108, 92, 231, 0.18);
+  background: rgba(15, 18, 38, 0.92);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 13px;
+  outline: none;
+}
+
+.dev-panel-select:focus,
+.dev-panel-input:focus {
+  border-color: rgba(0, 210, 211, 0.45);
+  box-shadow: 0 0 0 3px rgba(0, 210, 211, 0.08);
+}
+
+.dev-panel-select.compact {
+  max-width: 132px;
+}
+
+.dev-panel-row {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.dev-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dev-panel-btn {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 210, 211, 0.25);
+  background: rgba(0, 210, 211, 0.12);
+  color: var(--accent-cyan);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, opacity 0.18s ease;
+}
+
+.dev-panel-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: rgba(0, 210, 211, 0.18);
+  border-color: rgba(0, 210, 211, 0.38);
+}
+
+.dev-panel-btn.subtle {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+}
+
+.dev-panel-btn.subtle:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dev-panel-btn.wide {
+  width: 100%;
+}
+
+.dev-panel-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.dev-panel-status {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
 /* ═══════════════════════════════════════════════════════════
    LEADERBOARD PANEL (Right Side)
    ═══════════════════════════════════════════════════════════ */
