@@ -261,6 +261,23 @@ const TradeSystem = (() => {
         if (countSpan) countSpan.textContent = String(inboxTrades.size);
     }
 
+    function isOutgoingTrade(offer) {
+        return offer?.fromId === myPlayerId;
+    }
+
+    function getTradePropertyName(index) {
+        return currentProperties.find(item => item.index === index)?.name || `Property #${index}`;
+    }
+
+    function formatTradeItems(cash, propertyIndexes = []) {
+        const items = [];
+        if (cash > 0) items.push(`<span style="color:var(--accent-gold)">$${cash}</span>`);
+        propertyIndexes.forEach(index => {
+            items.push(`<span style="color:var(--accent-green)">${getTradePropertyName(index)}</span>`);
+        });
+        return items.length > 0 ? items.join(' ') : 'Nothing';
+    }
+
     function removeTradeCard(cardId) {
         const card = document.getElementById(cardId);
         if (card) card.remove();
@@ -268,7 +285,7 @@ const TradeSystem = (() => {
         updateTradeCount();
     }
 
-    function renderTradeCard(offer) {
+    function renderTradeCard(offer, options = {}) {
         const tradesContent = document.getElementById('trades-content');
         if (!tradesContent) return;
 
@@ -279,66 +296,74 @@ const TradeSystem = (() => {
         inboxTrades.set(offer.id, offer);
 
         const card = document.createElement('div');
-        card.className = 'trade-card';
+        const outgoing = isOutgoingTrade(offer);
+        card.className = `trade-card${outgoing ? ' outgoing' : ''}`;
         card.id = cardId;
 
         const avatarMap = { Bilo: '🎩', Os: '🏎️', Ziko: '🐕', Maro: '⚓' };
-        const avatar = avatarMap[offer.fromCharacter] || '👤';
-
-        let offerString = '';
-        if (offer.offerCash > 0) offerString += `<span style="color:var(--accent-gold)">$${offer.offerCash}</span> `;
-        (offer.offerProperties || []).forEach(index => {
-            const property = currentProperties.find(item => item.index === index);
-            if (property) offerString += `<span style="color:var(--accent-green)">${property.name}</span> `;
-        });
-        if (!offerString) offerString = 'Nothing';
-
-        let requestString = '';
-        if (offer.requestCash > 0) requestString += `<span style="color:var(--accent-gold)">$${offer.requestCash}</span> `;
-        (offer.requestProperties || []).forEach(index => {
-            const property = currentProperties.find(item => item.index === index);
-            if (property) requestString += `<span style="color:var(--accent-green)">${property.name}</span> `;
-        });
-        if (!requestString) requestString = 'Nothing';
+        const counterpartCharacter = outgoing ? offer.toCharacter : offer.fromCharacter;
+        const avatar = avatarMap[counterpartCharacter] || '👤';
+        const offerString = formatTradeItems(offer.offerCash, offer.offerProperties);
+        const requestString = formatTradeItems(offer.requestCash, offer.requestProperties);
+        const title = `${offer.isCounterOffer ? 'Counter-offer' : 'Offer'} ${outgoing ? `to ${offer.toCharacter}` : `from ${offer.fromCharacter}`}`;
+        const statusMarkup = outgoing
+            ? '<span class="tc-status outgoing">Waiting</span>'
+            : '<span class="tc-status incoming">Incoming</span>';
 
         card.innerHTML = `
             <div class="tc-header">
-                <span class="pdm-event-avatar" style="width:24px;height:24px;font-size:12px;border:none;">${avatar}</span>
-                <span>${offer.isCounterOffer ? 'Counter-offer' : 'Offer'} from ${offer.fromCharacter}</span>
+                <div class="tc-header-main">
+                    <span class="pdm-event-avatar" style="width:24px;height:24px;font-size:12px;border:none;">${avatar}</span>
+                    <span>${title}</span>
+                </div>
+                ${statusMarkup}
             </div>
             <div class="tc-body">
-                <div class="tc-offer"><strong>They offer:</strong> ${offerString}</div>
-                <div class="tc-request"><strong>They want:</strong> ${requestString}</div>
+                <div class="tc-offer"><strong>${outgoing ? 'You offer:' : 'They offer:'}</strong> ${offerString}</div>
+                <div class="tc-request"><strong>${outgoing ? 'You want:' : 'They want:'}</strong> ${requestString}</div>
             </div>
-            <div class="tc-footer">
-                <button class="tc-btn accept">Accept</button>
-                <button class="tc-btn decline">Decline</button>
-                <button class="tc-btn negotiate">Counter</button>
+            <div class="tc-footer${outgoing ? ' outgoing' : ''}">
+                ${outgoing
+                    ? `<div class="tc-pending-note">Waiting for ${offer.toCharacter} to accept, reject, or counter.</div>`
+                    : `
+                        <button class="tc-btn accept">Accept</button>
+                        <button class="tc-btn decline">Decline</button>
+                        <button class="tc-btn negotiate">Counter</button>
+                    `
+                }
             </div>
         `;
 
-        card.querySelector('.accept').addEventListener('click', () => {
-            removeTradeCard(cardId);
-            socket.emit('trade-accept', { tradeId: offer.id });
-        });
-        card.querySelector('.decline').addEventListener('click', () => {
-            removeTradeCard(cardId);
-            socket.emit('trade-reject', { tradeId: offer.id });
-        });
-        card.querySelector('.negotiate').addEventListener('click', () => {
-            openTradeModal(offer.fromId, {
-                counterTradeId: offer.id,
-                prefillOffer: offer
+        if (!outgoing) {
+            card.querySelector('.accept').addEventListener('click', () => {
+                removeTradeCard(cardId);
+                socket.emit('trade-accept', { tradeId: offer.id });
             });
-        });
+            card.querySelector('.decline').addEventListener('click', () => {
+                removeTradeCard(cardId);
+                socket.emit('trade-reject', { tradeId: offer.id });
+            });
+            card.querySelector('.negotiate').addEventListener('click', () => {
+                openTradeModal(offer.fromId, {
+                    counterTradeId: offer.id,
+                    prefillOffer: offer
+                });
+            });
+        }
 
         tradesContent.prepend(card);
         updateTradeCount();
-        document.getElementById('tab-trades')?.click();
+        if (options.focusTab) {
+            document.getElementById('tab-trades')?.click();
+        }
     }
 
     function showIncomingTrade(offer) {
-        renderTradeCard(offer);
+        renderTradeCard(offer, { focusTab: true });
+    }
+
+    function showSentTrade(offer) {
+        renderTradeCard(offer, { focusTab: true });
     }
 
     function replaceTrades(trades = []) {
@@ -375,6 +400,7 @@ const TradeSystem = (() => {
         openTradeModal,
         closeTradeModal,
         showIncomingTrade,
+        showSentTrade,
         replaceTrades,
         handleTradeInvalidated,
         handleTradeValidation,

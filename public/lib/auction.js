@@ -8,6 +8,8 @@ const AuctionSystem = (() => {
     let currentAuction = null;
     let currentPlayers = [];
 
+    const DEFAULT_AUCTION_SECONDS = 15;
+    const DEFAULT_BID_RESET_SECONDS = 5;
     const BID_INCREMENTS = [2, 5, 10, 25, 50, 100];
 
     function init(socketInstance) {
@@ -108,9 +110,18 @@ const AuctionSystem = (() => {
         });
     }
 
+    function getTimerMaxSeconds() {
+        if (!currentAuction) return DEFAULT_AUCTION_SECONDS;
+        if (currentAuction.timerMaxSeconds > 0) return currentAuction.timerMaxSeconds;
+        if (currentAuction.currentBidderId) {
+            return currentAuction.bidResetSeconds || DEFAULT_BID_RESET_SECONDS;
+        }
+        return DEFAULT_AUCTION_SECONDS;
+    }
+
     function updateTimerBar(time) {
         const bar = document.getElementById('auc-timer-bar');
-        const pct = (time / 15) * 100;
+        const pct = Math.max(0, Math.min(100, (time / getTimerMaxSeconds()) * 100));
         bar.style.width = `${pct}%`;
 
         if (time <= 3) bar.style.background = 'var(--accent-red, #ff4444)';
@@ -128,6 +139,7 @@ const AuctionSystem = (() => {
         updateBidDisplay();
         updateBidButtons();
         updatePlayerList();
+        updateTimerBar(currentAuction.timeRemaining);
     }
 
     function onTick(data) {

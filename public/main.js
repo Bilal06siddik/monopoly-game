@@ -9,19 +9,17 @@
     GameBoard.build(scene, renderer);
     GameDice.init(scene);
     GameTokens.init(scene, GameBoard.getTileWorldPosition);
-    GameScene.animate();
 
     const SESSION_TOKEN_KEY = 'monopoly-session-token';
+    const DEFAULT_VIEW_MODE = 'isometric';
     const sessionToken = getOrCreateSessionToken();
     const socket = io({ auth: { sessionToken } });
     let myPlayerId = null;
     let currentGameState = null;
+    let focusedTileIndex = null;
     const cameraViewBtn = document.getElementById('camera-view-btn');
-
-    // Player color cache (character -> color)
-    const CHAR_COLORS = {
-        'Bilo': '#6c5ce7', 'Os': '#e17055', 'Ziko': '#00b894', 'Maro': '#fdcb6e'
-    };
+    const cameraTopdownBtn = document.getElementById('camera-topdown-btn');
+    const cameraResetBtn = document.getElementById('camera-reset-btn');
 
     function getOrCreateSessionToken() {
         let token = sessionStorage.getItem(SESSION_TOKEN_KEY);
@@ -33,10 +31,23 @@
         return token;
     }
 
-    function getPlayerColor(playerId) {
-        if (!currentGameState) return '#fff';
-        const p = currentGameState.players.find(p => p.id === playerId);
-        return p ? p.color : '#fff';
+    function setFocusedTile(tileIndex) {
+        focusedTileIndex = typeof tileIndex === 'number' ? tileIndex : null;
+        GameBoard.setFocusedTile(focusedTileIndex);
+    }
+
+    function syncBoardTextProfile() {
+        const viewMode = GameScene.getViewMode();
+        if (viewMode === 'third-person') {
+            GameBoard.setTextProfile('third-person');
+            return;
+        }
+
+        GameBoard.setTextProfile(viewMode === 'top-down' ? 'top-down' : 'isometric');
+    }
+
+    function renderRuntimeUI() {
+        syncBoardTextProfile();
     }
 
     function setCurrentGameState(state) {
@@ -57,18 +68,36 @@
     function syncCameraViewState() {
         const tokenGroup = getCurrentPlayerTokenGroup();
         GameScene.setFollowTarget(tokenGroup);
-
-        if (!cameraViewBtn) return;
-
         const canFollow = Boolean(tokenGroup);
-        const isThirdPerson = GameScene.getViewMode() === 'third-person';
-        cameraViewBtn.disabled = !canFollow;
-        cameraViewBtn.classList.toggle('active', isThirdPerson);
-        cameraViewBtn.setAttribute('aria-pressed', String(isThirdPerson));
-        cameraViewBtn.textContent = isThirdPerson ? '🧭 Board View' : '🎥 Third Person';
-        cameraViewBtn.title = canFollow
-            ? (isThirdPerson ? 'Return to the full board view' : 'Follow your token in third person')
-            : 'Join a game to enable third-person view';
+        const viewMode = GameScene.getViewMode();
+        document.body.dataset.viewMode = viewMode;
+        const isThirdPerson = viewMode === 'third-person';
+        const isTopDown = viewMode === 'top-down';
+        const isIsometric = viewMode === 'isometric';
+        if (cameraViewBtn) {
+            cameraViewBtn.disabled = !canFollow;
+            cameraViewBtn.classList.toggle('active', isThirdPerson);
+            cameraViewBtn.setAttribute('aria-pressed', String(isThirdPerson));
+            cameraViewBtn.textContent = isThirdPerson ? '🧭 Isometric' : '🎥 Third Person';
+            cameraViewBtn.title = canFollow
+                ? (isThirdPerson ? 'Return to the locked isometric board view' : 'Follow your token in third person')
+                : 'Join a game to enable third-person view';
+        }
+        if (cameraTopdownBtn) {
+            cameraTopdownBtn.classList.toggle('active', isTopDown);
+            cameraTopdownBtn.setAttribute('aria-pressed', String(isTopDown));
+            cameraTopdownBtn.textContent = isTopDown ? '🧭 Isometric' : '⬆ Top Down';
+            cameraTopdownBtn.title = isTopDown
+                ? 'Return to the locked isometric board view'
+                : 'Switch to a flat top-down board view with GO in the top-right corner';
+        }
+        if (cameraResetBtn) {
+            cameraResetBtn.classList.toggle('active', isIsometric && !isThirdPerson && !isTopDown);
+            cameraResetBtn.title = isTopDown || isThirdPerson
+                ? 'Return to the canonical isometric framing'
+                : 'Recenter the isometric framing and reset zoom';
+        }
+        syncBoardTextProfile();
     }
 
     function syncTurnTimerUI(state = currentGameState) {
@@ -77,6 +106,8 @@
 
     function syncWorldFromState(state) {
         if (!state) return;
+
+        GameBoard.updateBailoutAmount(state.taxPool || 0);
 
         const activeCharacters = new Set(state.players.filter(player => player.isActive).map(player => player.character));
         Object.keys(GameTokens.getAllTokens()).forEach(character => {
@@ -88,8 +119,9 @@
         state.players.forEach(player => {
             if (!player.isActive) return;
             if (!GameTokens.getToken(player.character)) {
-                GameTokens.createToken(player.character, scene);
+                GameTokens.createToken(player.character, scene, player.color);
             }
+            GameTokens.setTokenColor(player.character, player.color);
             GameTokens.setTokenPosition(player.character, player.position);
         });
 
@@ -101,12 +133,10 @@
             const isPurchasable = prop.type === 'property' || prop.type === 'railroad' || prop.type === 'utility';
             if (!isPurchasable) return;
 
-            GameBoard.setMortgaged(prop.index, false);
-
-            if (prop.owner && !prop.isMortgaged) {
-                const owner = state.players.find(player => player.id === prop.owner);
-                GameBoard.updateTileOwner(prop.index, owner?.color || null);
-            }
+            const owner = prop.owner
+                ? state.players.find(player => player.id === prop.owner)
+                : null;
+            GameBoard.updateTileOwner(prop.index, owner?.color || null, prop);
 
             if (prop.isMortgaged) {
                 GameBoard.setMortgaged(prop.index, true);
@@ -152,7 +182,7 @@
     }
 
     function syncPendingTrades(state) {
-        if (state?.pendingTrades) {
+        if (Array.isArray(state?.pendingTrades)) {
             TradeSystem.replaceTrades(state.pendingTrades);
         }
     }
@@ -308,16 +338,45 @@
     TradeSystem.init(socket);
     AuctionSystem.init(socket);
     if (typeof DevPanel !== 'undefined') DevPanel.init(socket);
+    GameBoard.setTextProfile(DEFAULT_VIEW_MODE);
+    GameScene.onViewModeChange(() => {
+        syncCameraViewState();
+    });
 
     if (cameraViewBtn) {
         cameraViewBtn.addEventListener('click', () => {
-            const nextMode = GameScene.getViewMode() === 'third-person' ? 'board' : 'third-person';
+            const nextMode = GameScene.getViewMode() === 'third-person' ? DEFAULT_VIEW_MODE : 'third-person';
             if (GameScene.setViewMode(nextMode)) {
                 syncCameraViewState();
             }
         });
         syncCameraViewState();
     }
+
+    cameraTopdownBtn?.addEventListener('click', () => {
+        const nextMode = GameScene.getViewMode() === 'top-down' ? DEFAULT_VIEW_MODE : 'top-down';
+        if (GameScene.setViewMode(nextMode)) {
+            syncCameraViewState();
+        }
+    });
+
+    cameraResetBtn?.addEventListener('click', () => {
+        GameScene.resetBoardView();
+        syncCameraViewState();
+    });
+
+    document.addEventListener('keydown', (event) => {
+        const activeTag = document.activeElement?.tagName;
+        const typing = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || document.activeElement?.isContentEditable;
+        if (typing) return;
+
+        const key = event.key.toLowerCase();
+        if (key === 'r') {
+            event.preventDefault();
+            GameScene.resetBoardView();
+            syncCameraViewState();
+        }
+    });
 
     // ── Init Raycaster for clickable board ─────────────────
     GameBoard.initRaycaster(camera, renderer);
@@ -326,8 +385,10 @@
         // Don't open modal during dice roll or modal open
         const anyModal = document.querySelector('.modal-overlay.show');
         if (anyModal) return;
+        setFocusedTile(tileIndex);
         showPropertyDetailsModal(tileIndex);
     });
+    GameScene.animate(renderRuntimeUI);
 
     // ── History Log ───────────────────────────────────────
     socket.on('history-event', (data) => {
@@ -482,6 +543,9 @@
                 code: 'countered'
             });
         }
+        if (data?.trade) {
+            TradeSystem.showSentTrade(data.trade);
+        }
         Notifications.show('Trade sent!', 'success', 2000);
     });
     socket.on('trade-completed', (data) => {
@@ -489,7 +553,10 @@
         applyState(data.gameState, { syncHistory: false, syncTrades: true, syncAuction: false, syncBuyPrompt: false });
         Notifications.show('✅ Trade completed!', 'success', 3000);
     });
-    socket.on('trade-rejected', () => {
+    socket.on('trade-rejected', (data) => {
+        if (data?.tradeId) {
+            TradeSystem.dismissTrade(data.tradeId);
+        }
         Notifications.show('Trade rejected', 'error', 2000);
     });
     socket.on('trade-invalidated', (data) => {
@@ -854,6 +921,7 @@
         const modal = document.getElementById('prop-details-modal');
         modal.classList.remove('show');
         modal.classList.add('hidden');
+        setFocusedTile(null);
     }
 
     function hideSummaryModal() {

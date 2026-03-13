@@ -7,6 +7,7 @@ const GameDice = (() => {
     let isRolling = false;
     let rollAnimation = null;
     const DICE_SIZE = 0.7;
+    const BASE_Y = DICE_SIZE / 2 + 0.15;
 
     // ── Create pip textures for each face (1-6) ───────────
     function createFaceTexture(pips) {
@@ -75,7 +76,7 @@ const GameDice = (() => {
 
         const geo = new THREE.BoxGeometry(DICE_SIZE, DICE_SIZE, DICE_SIZE);
         const mesh = new THREE.Mesh(geo, materials);
-        mesh.position.set(offsetX, DICE_SIZE / 2 + 0.15, 0);
+        mesh.position.set(offsetX, BASE_Y, 0);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
 
@@ -94,60 +95,82 @@ const GameDice = (() => {
         if (isRolling) return;
         isRolling = true;
 
-        const duration = 1800;  // ms
+        const duration = 1500;
+        const settleDuration = 420;
+        const spinDuration = duration - settleDuration;
         const startTime = performance.now();
+        let previousTime = startTime;
+        let settleStart1 = null;
+        let settleStart2 = null;
 
-        // Random spin amounts (multiple full rotations + target)
-        const spins1 = {
-            x: (3 + Math.random() * 3) * Math.PI * 2 + FACE_ROTATIONS[value1].x,
-            z: (2 + Math.random() * 2) * Math.PI * 2 + FACE_ROTATIONS[value1].z
+        const spinState1 = {
+            velocityX: (18 + Math.random() * 5) * (Math.random() > 0.5 ? 1 : -1),
+            velocityY: (11 + Math.random() * 4) * (Math.random() > 0.5 ? 1 : -1),
+            velocityZ: (15 + Math.random() * 5) * (Math.random() > 0.5 ? 1 : -1)
         };
-        const spins2 = {
-            x: (3 + Math.random() * 3) * Math.PI * 2 + FACE_ROTATIONS[value2].x,
-            z: (2 + Math.random() * 2) * Math.PI * 2 + FACE_ROTATIONS[value2].z
+        const spinState2 = {
+            velocityX: (17 + Math.random() * 5) * (Math.random() > 0.5 ? 1 : -1),
+            velocityY: (12 + Math.random() * 4) * (Math.random() > 0.5 ? 1 : -1),
+            velocityZ: (16 + Math.random() * 5) * (Math.random() > 0.5 ? 1 : -1)
         };
 
-        // Store start rotations
-        const start1 = { x: die1Mesh.rotation.x, y: die1Mesh.rotation.y, z: die1Mesh.rotation.z };
-        const start2 = { x: die2Mesh.rotation.x, y: die2Mesh.rotation.y, z: die2Mesh.rotation.z };
-
-        // Start positions (bounce up)
-        const baseY = DICE_SIZE / 2 + 0.15;
+        const targetQuat1 = new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(FACE_ROTATIONS[value1].x, 0, FACE_ROTATIONS[value1].z, 'XYZ')
+        );
+        const targetQuat2 = new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(FACE_ROTATIONS[value2].x, 0, FACE_ROTATIONS[value2].z, 'XYZ')
+        );
 
         if (rollAnimation) cancelAnimationFrame(rollAnimation);
 
         function animateRoll() {
             const now = performance.now();
             const elapsed = now - startTime;
-            let t = Math.min(elapsed / duration, 1);
+            const deltaSeconds = Math.min((now - previousTime) / 1000, 0.05);
+            previousTime = now;
+            const progress = Math.min(elapsed / duration, 1);
 
-            // Easing: ease-out cubic
-            const ease = 1 - Math.pow(1 - t, 3);
+            if (elapsed < spinDuration) {
+                const spinProgress = elapsed / spinDuration;
+                const damping = 0.992 - (spinProgress * 0.02);
 
-            // Bounce height: goes up then back down
-            const bounce = Math.sin(t * Math.PI) * 2.5 * (1 - t);
+                spinState1.velocityX *= damping;
+                spinState1.velocityY *= damping;
+                spinState1.velocityZ *= damping;
+                spinState2.velocityX *= damping;
+                spinState2.velocityY *= damping;
+                spinState2.velocityZ *= damping;
 
-            // Rotate dice
-            die1Mesh.rotation.x = start1.x + spins1.x * ease;
-            die1Mesh.rotation.z = start1.z + spins1.z * ease;
-            die1Mesh.position.y = baseY + bounce;
+                die1Mesh.rotation.x += spinState1.velocityX * deltaSeconds;
+                die1Mesh.rotation.y += spinState1.velocityY * deltaSeconds;
+                die1Mesh.rotation.z += spinState1.velocityZ * deltaSeconds;
+                die2Mesh.rotation.x += spinState2.velocityX * deltaSeconds;
+                die2Mesh.rotation.y += spinState2.velocityY * deltaSeconds;
+                die2Mesh.rotation.z += spinState2.velocityZ * deltaSeconds;
+            } else {
+                if (!settleStart1) {
+                    settleStart1 = die1Mesh.quaternion.clone();
+                    settleStart2 = die2Mesh.quaternion.clone();
+                }
 
-            die2Mesh.rotation.x = start2.x + spins2.x * ease;
-            die2Mesh.rotation.z = start2.z + spins2.z * ease;
-            die2Mesh.position.y = baseY + bounce * 0.8;
+                const settleProgress = Math.min((elapsed - spinDuration) / settleDuration, 1);
+                const ease = 1 - Math.pow(1 - settleProgress, 3);
 
-            // Slight wobble on y rotation
-            die1Mesh.rotation.y = Math.sin(t * 8) * 0.3 * (1 - t);
-            die2Mesh.rotation.y = Math.cos(t * 8) * 0.3 * (1 - t);
+                THREE.Quaternion.slerp(settleStart1, targetQuat1, die1Mesh.quaternion, ease);
+                THREE.Quaternion.slerp(settleStart2, targetQuat2, die2Mesh.quaternion, ease);
+            }
 
-            if (t < 1) {
+            const bounce = Math.sin(progress * Math.PI) * (1.1 - (progress * 0.75));
+            die1Mesh.position.y = BASE_Y + Math.max(0, bounce);
+            die2Mesh.position.y = BASE_Y + Math.max(0, bounce * 0.86);
+
+            if (progress < 1) {
                 rollAnimation = requestAnimationFrame(animateRoll);
             } else {
-                // Snap to exact final rotation
-                die1Mesh.rotation.set(FACE_ROTATIONS[value1].x, 0, FACE_ROTATIONS[value1].z);
-                die2Mesh.rotation.set(FACE_ROTATIONS[value2].x, 0, FACE_ROTATIONS[value2].z);
-                die1Mesh.position.y = baseY;
-                die2Mesh.position.y = baseY;
+                die1Mesh.quaternion.copy(targetQuat1);
+                die2Mesh.quaternion.copy(targetQuat2);
+                die1Mesh.position.y = BASE_Y;
+                die2Mesh.position.y = BASE_Y;
                 isRolling = false;
                 if (onComplete) onComplete();
             }

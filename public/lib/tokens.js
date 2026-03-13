@@ -7,13 +7,6 @@ const GameTokens = (() => {
     const tokens = {};
     let getTilePos = null;
 
-    const CHARACTER_HEX_COLORS = {
-        Bilo: 0x6f7eff,
-        Os: 0xec8a5b,
-        Ziko: 0x32b881,
-        Maro: 0xf1c85b
-    };
-
     const TOKEN_BASE_Y = 0.16;
 
     function init(scene, tilePositionFn) {
@@ -43,6 +36,18 @@ const GameTokens = (() => {
         return geometry;
     }
 
+    function normalizeColor(color) {
+        const fallback = new THREE.Color(0x9aa4b2);
+        if (!color) return fallback;
+        if (color instanceof THREE.Color) return color.clone();
+
+        try {
+            return new THREE.Color(color);
+        } catch {
+            return fallback;
+        }
+    }
+
     function createBadgeTexture(character, color) {
         const size = 256;
         const canvas = document.createElement('canvas');
@@ -50,7 +55,8 @@ const GameTokens = (() => {
         canvas.height = size;
         const ctx = canvas.getContext('2d');
         const label = character.slice(0, 2).toUpperCase();
-        const colorHex = `#${color.toString(16).padStart(6, '0')}`;
+        const resolvedColor = normalizeColor(color);
+        const colorHex = `#${resolvedColor.getHexString()}`;
 
         ctx.clearRect(0, 0, size, size);
 
@@ -83,20 +89,37 @@ const GameTokens = (() => {
         return texture;
     }
 
-    function createToken(character, scene) {
-        const color = CHARACTER_HEX_COLORS[character] || 0x9aa4b2;
+    function setTokenColor(character, color) {
+        const token = tokens[character];
+        if (!token) return;
+
+        const resolvedColor = normalizeColor(color);
+        token.color = `#${resolvedColor.getHexString()}`;
+        token.body.material.color.copy(resolvedColor);
+        token.body.material.emissive.copy(resolvedColor);
+        token.ring.material.emissive.copy(resolvedColor);
+
+        if (token.badge.material.map) {
+            token.badge.material.map.dispose();
+        }
+        token.badge.material.map = createBadgeTexture(character, resolvedColor);
+        token.badge.material.needsUpdate = true;
+    }
+
+    function createToken(character, scene, color = null) {
+        const resolvedColor = normalizeColor(color);
         const group = new THREE.Group();
 
         const pawnMaterial = new THREE.MeshStandardMaterial({
-            color,
-            emissive: color,
+            color: resolvedColor,
+            emissive: resolvedColor,
             emissiveIntensity: 0.16,
             roughness: 0.28,
             metalness: 0.52
         });
         const ringMaterial = new THREE.MeshStandardMaterial({
             color: 0xf6f7fb,
-            emissive: color,
+            emissive: resolvedColor,
             emissiveIntensity: 0.08,
             roughness: 0.32,
             metalness: 0.68
@@ -115,7 +138,7 @@ const GameTokens = (() => {
         group.add(ring);
 
         const badge = new THREE.Sprite(new THREE.SpriteMaterial({
-            map: createBadgeTexture(character, color),
+            map: createBadgeTexture(character, resolvedColor),
             transparent: true,
             depthWrite: false
         }));
@@ -129,7 +152,11 @@ const GameTokens = (() => {
 
         tokens[character] = {
             character,
+            color: `#${resolvedColor.getHexString()}`,
             group,
+            body,
+            ring,
+            badge,
             currentTile: 0,
             animating: false
         };
@@ -313,6 +340,7 @@ const GameTokens = (() => {
         animateMove,
         layoutTokens,
         getToken,
+        setTokenColor,
         setTokenPosition,
         getAllTokens,
         removeToken

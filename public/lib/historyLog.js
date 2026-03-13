@@ -4,10 +4,20 @@
 
 const HistoryLog = (() => {
     const MAX_EVENTS = 50;
+    const COLLAPSED_COUNT = 3;
     const events = [];
+    let isExpanded = false;
 
     function init() {
-        // Container already exists in HTML
+        const expandBtn = document.getElementById('history-expand-btn');
+        if (expandBtn) {
+            expandBtn.addEventListener('click', () => {
+                isExpanded = !isExpanded;
+                syncExpandState();
+                render();
+            });
+            syncExpandState();
+        }
     }
 
     function render() {
@@ -15,13 +25,24 @@ const HistoryLog = (() => {
         if (!container) return;
 
         container.innerHTML = '';
-        events.forEach(({ text, type }) => {
+        const visibleEvents = isExpanded ? events : events.slice(-COLLAPSED_COUNT);
+        visibleEvents.forEach(({ text, type }) => {
             const el = document.createElement('div');
             el.className = `history-item history-${type}`;
             el.innerHTML = `<span class="hl-text">${text}</span>`;
             container.appendChild(el);
         });
         container.scrollTop = container.scrollHeight;
+    }
+
+    function syncExpandState() {
+        const panel = document.querySelector('.history-log');
+        const expandBtn = document.getElementById('history-expand-btn');
+        panel?.classList.toggle('expanded', isExpanded);
+        if (expandBtn) {
+            expandBtn.textContent = isExpanded ? 'Collapse' : 'Expand';
+            expandBtn.setAttribute('aria-expanded', String(isExpanded));
+        }
     }
 
     function addEvent(text, type = 'info') {

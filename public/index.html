@@ -83,7 +83,6 @@
     <!-- Top Bar -->
     <div class="top-bar">
       <div id="turn-indicator" class="turn-indicator"></div>
-      <button id="camera-view-btn" class="camera-view-btn" type="button" aria-pressed="false">🎥 Third Person</button>
       <div id="turn-timer" class="turn-timer hidden"></div>
       <div id="dice-result" class="dice-result hidden"></div>
     </div>
@@ -94,8 +93,16 @@
       <div id="leaderboard-panel" class="leaderboard-panel"></div>
     </div>
 
-    <!-- Bottom Left: Own Auction Button -->
-    <button id="own-auction-btn" class="own-auction-btn">🔨 Own Auction</button>
+    <div class="view-dock">
+      <button id="camera-topdown-btn" class="camera-action-btn" type="button" aria-pressed="false">⬆ Top Down</button>
+      <button id="camera-view-btn" class="camera-view-btn" type="button" aria-pressed="false">🎥 Third Person</button>
+      <button id="camera-reset-btn" class="camera-action-btn" type="button">◎ Reset View</button>
+    </div>
+
+    <div class="action-dock">
+      <button id="own-auction-btn" class="own-auction-btn hud-action-btn">🔨 Own Auction</button>
+      <button id="roll-dice-btn" class="roll-dice-btn hud-action-btn disabled">🎲 Roll Dice</button>
+    </div>
 
     <!-- Bottom Center: Jail Actions (shown when in jail) -->
     <div id="jail-actions" class="jail-actions hidden">
@@ -103,14 +110,14 @@
       <button id="jail-pardon-btn" class="jail-btn pardon disabled">🃏 Use pardon card</button>
     </div>
 
-    <!-- Bottom Center: Roll Dice -->
-    <button id="roll-dice-btn" class="roll-dice-btn disabled">🎲 Roll Dice</button>
-
     <!-- Bottom Right: Trades & History Panel -->
     <div class="history-log">
-      <div class="panel-tabs">
-        <div id="tab-history" class="panel-tab active">📜 History</div>
-        <div id="tab-trades" class="panel-tab">🤝 Trades (<span id="trades-count">0</span>)</div>
+      <div class="history-log-toolbar">
+        <div class="panel-tabs">
+          <div id="tab-history" class="panel-tab active">📜 History</div>
+          <div id="tab-trades" class="panel-tab">🤝 Trades (<span id="trades-count">0</span>)</div>
+        </div>
+        <button id="history-expand-btn" class="panel-toggle-btn" type="button" aria-expanded="false">Expand</button>
       </div>
       <div id="history-content" class="panel-content active">
         <div id="history-log-list" class="hl-list"></div>
