@@ -19,12 +19,14 @@ const io = new Server(server, { cors: { origin: '*' } });
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/shared', express.static(path.join(__dirname, 'shared')));
 
-const CHARACTERS = ['Bilo', 'Os', 'Ziko', 'Maro'];
+const CHARACTERS = ['bilo', 'osss', 'bdlbaky', 'fawzy', 'hamza', 'missiry'];
 const CHARACTER_COLORS = {
-  Bilo: '#6c5ce7',
-  Os: '#e17055',
-  Ziko: '#00b894',
-  Maro: '#fdcb6e'
+  bilo:     '#6c5ce7',
+  osss:     '#e17055',
+  bdlbaky:  '#00b894',
+  fawzy:    '#fdcb6e',
+  hamza:    '#00d4ff',
+  missiry:  '#ff2d78'
 };
 
 const TURN_TIMER_SECONDS = 45;

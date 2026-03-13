@@ -8,9 +8,10 @@
   <meta name="description"
     content="Play Monopoly online with friends in a stunning 3D isometric board. Real-time multiplayer powered by Socket.io." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Press+Start+2P&display=swap" rel="stylesheet" />
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="lib/lobby-arcade.css" />
 </head>
 
 <body>
@@ -418,25 +419,80 @@
   </div>
 
   <!-- ══════════════════════════════════════════════════════
-       LOBBY
+       LOBBY — Retro Arcade Room
        ══════════════════════════════════════════════════════ -->
   <div id="lobby-screen">
-    <div class="lobby-panel">
-      <div class="lobby-header">
-        <div class="lobby-logo">🎲</div>
-        <h1>MONOPOLY</h1>
-        <p class="lobby-subtitle">Choose your character to join</p>
+    <div class="arcade-room">
+
+      <!-- Header -->
+      <div class="arcade-room-header">
+        <h1 class="arcade-title">INSERT COIN</h1>
+        <p class="arcade-subtitle">▶ choose your player ◀</p>
       </div>
-      <div id="character-grid" class="character-grid"></div>
-      <div id="lobby-status" class="lobby-status">
-        <span class="dot-pulse"></span> Waiting for players...
-      </div>
-      <div class="lobby-actions">
-        <button id="start-game-btn" class="start-game-btn disabled">Need 2+ players</button>
-        <div class="lobby-secondary-actions">
-          <button id="add-bot-btn" class="secondary-lobby-btn">+ Random Bot</button>
-          <button id="clear-bots-btn" class="secondary-lobby-btn subtle">Clear Bots</button>
+
+      <!-- Arcade Machines Row (dynamically filled by lobby.js) -->
+      <div id="character-grid" class="arcade-machines-row"></div>
+
+      <!-- Footer -->
+      <div class="arcade-lobby-footer">
+        <div id="lobby-status">
+          <span class="dot-pulse"></span> Waiting for players...
         </div>
+        <div class="lobby-actions">
+          <button id="start-game-btn" class="start-game-btn disabled">NEED 2+ PLAYERS</button>
+          <div class="lobby-secondary-actions">
+            <button id="add-bot-btn" class="secondary-lobby-btn">+ RANDOM BOT</button>
+            <button id="clear-bots-btn" class="secondary-lobby-btn subtle">CLEAR BOTS</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       ARCADE STATS OVERLAY (slide-up panel)
+       ══════════════════════════════════════════════════════ -->
+  <div id="arcade-stats-overlay" class="arcade-stats-overlay">
+    <div id="arcade-stats-panel" class="arcade-stats-panel">
+
+      <!-- Header -->
+      <div class="stats-panel-header">
+        <img id="stats-char-avatar" class="stats-panel-avatar" src="" alt="Character" />
+        <div class="stats-panel-title" id="stats-char-name">PLAYER</div>
+        <button id="stats-close-btn" class="stats-panel-close">✕ CLOSE</button>
+      </div>
+
+      <!-- Body -->
+      <div class="stats-panel-body">
+
+        <!-- Trading Style -->
+        <div class="stats-row">
+          <div class="stats-label">💹 Trading Style</div>
+          <div class="stats-value" id="stats-trading">???</div>
+        </div>
+
+        <!-- Toxicity Level -->
+        <div class="stats-row">
+          <div class="stats-label">☢️ Toxicity Level — <span id="stats-toxicity-val">0%</span></div>
+          <div class="toxicity-bar-track">
+            <div class="toxicity-bar-fill" id="stats-toxicity-bar"></div>
+          </div>
+          <div class="toxicity-bar-label">LOW ◀───────────────────────────────► HIGH</div>
+        </div>
+
+        <!-- Catchphrase -->
+        <div class="stats-row">
+          <div class="stats-label">💬 Signature Catchphrase</div>
+          <div class="stats-value" id="stats-catchphrase">...</div>
+        </div>
+
+        <!-- Playstyle -->
+        <div class="stats-row">
+          <div class="stats-label">🎮 Playstyle</div>
+          <div class="stats-value" id="stats-playstyle">???</div>
+        </div>
+
       </div>
     </div>
   </div>
