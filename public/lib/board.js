@@ -1,83 +1,146 @@
 // ═══════════════════════════════════════════════════════════
-//  BOARD — 3D Monopoly board with textured tiles, raycaster,
-//          house/skyscraper meshes, and mortgage support
+//  BOARD — 3D Monopoly board with brighter tile materials,
+//          compact house/hotel models, and mortgage support
 // ═══════════════════════════════════════════════════════════
 
 const GameBoard = (() => {
-
-    // ── Board Dimensions ─────────────────────────────────
-    const TILE_W = 1.4;
-    const TILE_D = 2.0;
-    const TILE_H = 0.2;
-    const CORNER_SIZE = 2.0;
+    const TILE_W = 1.5;
+    const TILE_D = 2.05;
+    const TILE_H = 0.22;
+    const CORNER_SIZE = 2.1;
     const GAP = 0.06;
+    const BUILDING_INSET = 0.4;
 
     const tilePositions = {};
-    const tileMeshes = {};     // index → mesh
-    const houseMeshes = {};    // index → [mesh, mesh, ...]
+    const tileMeshes = {};
+    const houseMeshes = {};
     let boardGroup = null;
-    let edgeLen, half, startOffset;
+    let edgeLen;
+    let half;
+    let startOffset;
+    let maxTextureAnisotropy = 1;
 
-    // Color map for render
     const COLOR_MAP = {
-        'brown': '#8B4513', 'lightblue': '#87CEEB', 'pink': '#DA70D6',
-        'orange': '#FFA500', 'red': '#FF0000', 'yellow': '#FFFF00',
-        'green': '#00AA00', 'darkblue': '#0000CC', 'railroad': '#555',
-        'utility': '#888'
+        brown: '#8c5a3c',
+        lightblue: '#8ccbf3',
+        pink: '#d984c4',
+        orange: '#e7a24f',
+        red: '#d55f57',
+        yellow: '#e8ce63',
+        green: '#56ab71',
+        darkblue: '#4964d7',
+        railroad: '#6b7285',
+        utility: '#8f97a7'
     };
 
-    function build(scene) {
+    function build(scene, rendererRef = null) {
         boardGroup = new THREE.Group();
+        boardGroup.position.y = 0.05;
+        maxTextureAnisotropy = rendererRef?.capabilities?.getMaxAnisotropy?.() || 1;
 
         edgeLen = CORNER_SIZE + 9 * (TILE_W + GAP) + CORNER_SIZE;
         half = edgeLen / 2;
         startOffset = CORNER_SIZE + GAP;
 
-        BOARD_DATA.forEach((tile, i) => {
+        const boardBase = new THREE.Mesh(
+            new THREE.BoxGeometry(edgeLen + 1, 0.36, edgeLen + 1),
+            new THREE.MeshStandardMaterial({
+                color: 0x09111f,
+                roughness: 0.88,
+                metalness: 0.08
+            })
+        );
+        boardBase.position.y = -0.34;
+        boardBase.castShadow = true;
+        boardBase.receiveShadow = true;
+        boardGroup.add(boardBase);
+
+        const boardTrim = new THREE.Mesh(
+            new THREE.BoxGeometry(edgeLen + 0.42, 0.08, edgeLen + 0.42),
+            new THREE.MeshStandardMaterial({
+                color: 0x1d2b4b,
+                emissive: 0x0b1220,
+                emissiveIntensity: 0.42,
+                roughness: 0.54,
+                metalness: 0.34
+            })
+        );
+        boardTrim.position.y = -0.18;
+        boardGroup.add(boardTrim);
+
+        BOARD_DATA.forEach((tile, index) => {
             const isCorner = tile.type === 'corner';
-            let mesh;
+            const geometry = isCorner
+                ? new THREE.BoxGeometry(CORNER_SIZE, TILE_H, CORNER_SIZE)
+                : new THREE.BoxGeometry(TILE_W, TILE_H, TILE_D);
+            const materials = isCorner
+                ? createCornerMaterials(tile)
+                : createTileMaterials(tile, null);
+            const mesh = new THREE.Mesh(geometry, materials);
 
-            if (isCorner) {
-                const geo = new THREE.BoxGeometry(CORNER_SIZE, TILE_H, CORNER_SIZE);
-                const mat = createCornerMaterial(tile, CORNER_SIZE);
-                mesh = new THREE.Mesh(geo, mat);
-            } else {
-                const geo = new THREE.BoxGeometry(TILE_W, TILE_H, TILE_D);
-                const mats = createTileMaterials(tile, i);
-                mesh = new THREE.Mesh(geo, mats);
-            }
+            const position = calculateTilePosition(index);
+            mesh.position.copy(position);
+            tilePositions[index] = { x: position.x, y: 0, z: position.z };
 
-            const pos = calculateTilePosition(i);
-            mesh.position.copy(pos);
-            tilePositions[i] = { x: pos.x, y: 0, z: pos.z };
-
-            // Rotate for side columns
-            if (i >= 11 && i <= 19) mesh.rotation.y = Math.PI / 2;
-            else if (i >= 31 && i <= 39) mesh.rotation.y = -Math.PI / 2;
+            if (index >= 11 && index <= 19) mesh.rotation.y = Math.PI / 2;
+            else if (index >= 31 && index <= 39) mesh.rotation.y = -Math.PI / 2;
 
             mesh.castShadow = true;
             mesh.receiveShadow = true;
-            mesh.userData = { tileIndex: i, tileName: tile.name, tileType: tile.type, tileColor: tile.color };
+            mesh.userData = {
+                tileIndex: index,
+                tileName: tile.name,
+                tileType: tile.type,
+                tileColor: tile.colorGroup || tile.type
+            };
 
             boardGroup.add(mesh);
-            tileMeshes[i] = mesh;
+            tileMeshes[index] = mesh;
         });
 
-        // Center surface
-        const innerSize = edgeLen - 2 * TILE_D - 0.4;
-        const centerGeo = new THREE.BoxGeometry(innerSize, TILE_H * 0.5, innerSize);
-        const centerMat = new THREE.MeshStandardMaterial({ color: 0x111122, roughness: 0.8, metalness: 0.2 });
-        const center = new THREE.Mesh(centerGeo, centerMat);
-        center.position.y = -TILE_H * 0.25;
-        center.receiveShadow = true;
-        boardGroup.add(center);
+        const innerSize = edgeLen - (2 * TILE_D) - 0.35;
+        const centerBase = new THREE.Mesh(
+            new THREE.BoxGeometry(innerSize, 0.14, innerSize),
+            new THREE.MeshStandardMaterial({
+                color: 0x0d1629,
+                roughness: 0.84,
+                metalness: 0.08
+            })
+        );
+        centerBase.position.y = -0.05;
+        centerBase.receiveShadow = true;
+        boardGroup.add(centerBase);
 
-        // Decorative rings
-        [{ r1: 2.5, r2: 3.0, o: 0.15 }, { r1: 1.5, r2: 1.7, o: 0.1 }].forEach(({ r1, r2, o }) => {
-            const ringMat = new THREE.MeshBasicMaterial({ color: 0x6c5ce7, side: THREE.DoubleSide, transparent: true, opacity: o });
-            const ring = new THREE.Mesh(new THREE.RingGeometry(r1, r2, 64), ringMat);
+        const centerFelt = new THREE.Mesh(
+            new THREE.PlaneGeometry(innerSize - 0.6, innerSize - 0.6),
+            new THREE.MeshStandardMaterial({
+                color: 0x111f3a,
+                emissive: 0x081222,
+                emissiveIntensity: 0.42,
+                roughness: 0.94,
+                metalness: 0.03
+            })
+        );
+        centerFelt.rotation.x = -Math.PI / 2;
+        centerFelt.position.y = 0.03;
+        centerFelt.receiveShadow = true;
+        boardGroup.add(centerFelt);
+
+        [
+            { inner: 2.5, outer: 2.82, color: 0x4f8fff, opacity: 0.1 },
+            { inner: 1.4, outer: 1.62, color: 0xb38cff, opacity: 0.09 }
+        ].forEach(({ inner, outer, color, opacity }) => {
+            const ring = new THREE.Mesh(
+                new THREE.RingGeometry(inner, outer, 64),
+                new THREE.MeshBasicMaterial({
+                    color,
+                    side: THREE.DoubleSide,
+                    transparent: true,
+                    opacity
+                })
+            );
             ring.rotation.x = -Math.PI / 2;
-            ring.position.y = 0.12;
+            ring.position.y = 0.04;
             boardGroup.add(ring);
         });
 
@@ -85,92 +148,199 @@ const GameBoard = (() => {
         return boardGroup;
     }
 
-    // ── Canvas Texture for Tiles ────────────────────────────
-    function createTileTexture(tile, width, height, rotation, ownerColor = null) {
+    function createTileTexture(tile, width, height, ownerColor = null) {
         const canvas = document.createElement('canvas');
-        const scale = 4; // higher = crisper text
+        const scale = 4;
         canvas.width = width * scale;
         canvas.height = height * scale;
-        const ctx = canvas.getContext('2d');
 
-        // Background
-        ctx.fillStyle = '#12122a';
+        const ctx = canvas.getContext('2d');
+        const footerHeight = Math.round(canvas.height * 0.22);
+        const bandHeight = Math.round(canvas.height * 0.22);
+        const colorHex = COLOR_MAP[tile.colorGroup] || COLOR_MAP[tile.type] || '#bac4d6';
+        const isPurchasable = ['property', 'railroad', 'utility'].includes(tile.type);
+
+        const tileGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        tileGradient.addColorStop(0, '#1b2438');
+        tileGradient.addColorStop(1, '#0f1626');
+        ctx.fillStyle = tileGradient;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // Thin border
-        ctx.strokeStyle = 'rgba(108, 92, 231, 0.3)';
+        ctx.fillStyle = 'rgba(114, 145, 216, 0.08)';
+        ctx.fillRect(0, canvas.height * 0.52, canvas.width, canvas.height * 0.18);
+
+        ctx.strokeStyle = '#6576a6';
+        ctx.lineWidth = 8;
+        ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
         ctx.lineWidth = 2;
-        ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
+        ctx.strokeRect(14, 14, canvas.width - 28, canvas.height - 28);
 
-        const colorHex = COLOR_MAP[tile.colorGroup] || COLOR_MAP[tile.type] || null;
+        if (isPurchasable) {
+            const bandGradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+            bandGradient.addColorStop(0, shadeColor(colorHex, 18));
+            bandGradient.addColorStop(1, shadeColor(colorHex, -14));
+            ctx.fillStyle = bandGradient;
+            ctx.fillRect(0, 0, canvas.width, bandHeight);
 
-        // Color band at top
-        if (colorHex && (tile.type === 'property' || tile.type === 'railroad' || tile.type === 'utility')) {
-            const bandH = canvas.height * 0.22;
-            ctx.fillStyle = colorHex;
-            ctx.fillRect(0, 0, canvas.width, bandH);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+            ctx.fillRect(0, 0, canvas.width, 10);
 
-            // Subtle glow line
-            const grad = ctx.createLinearGradient(0, bandH - 4, 0, bandH + 4);
-            grad.addColorStop(0, colorHex);
-            grad.addColorStop(1, 'transparent');
-            ctx.fillStyle = grad;
-            ctx.fillRect(0, bandH, canvas.width, 8);
+            ctx.fillStyle = 'rgba(6, 10, 18, 0.34)';
+            ctx.fillRect(0, bandHeight - 10, canvas.width, 10);
         }
 
-        // Property name - wrap text
-        ctx.fillStyle = '#e8e8f0';
+        if (ownerColor) {
+            ctx.fillStyle = ownerColor;
+            ctx.globalAlpha = 0.88;
+            ctx.fillRect(0, canvas.height - footerHeight, canvas.width, footerHeight);
+            ctx.globalAlpha = 1;
+        } else {
+            const footerGradient = ctx.createLinearGradient(0, canvas.height - footerHeight, 0, canvas.height);
+            footerGradient.addColorStop(0, '#182235');
+            footerGradient.addColorStop(1, '#0b1220');
+            ctx.fillStyle = footerGradient;
+            ctx.fillRect(0, canvas.height - footerHeight, canvas.width, footerHeight);
+        }
+
+        const iconText = getTileIconText(tile);
+        if (iconText) {
+            ctx.fillStyle = 'rgba(179, 202, 255, 0.12)';
+            ctx.beginPath();
+            addRoundedRectPath(
+                ctx,
+                canvas.width * 0.18,
+                canvas.height * 0.27,
+                canvas.width * 0.64,
+                canvas.height * 0.16,
+                28
+            );
+            ctx.fill();
+
+            ctx.fillStyle = '#d9e6ff';
+            ctx.font = `700 ${Math.floor(canvas.width * 0.13)}px 'Segoe UI', Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(iconText, canvas.width / 2, canvas.height * 0.35);
+        }
+
+        ctx.fillStyle = '#f4f7ff';
         ctx.textAlign = 'center';
-        const nameSize = Math.floor(canvas.width * 0.13);
-        ctx.font = `bold ${nameSize}px 'Segoe UI', Arial, sans-serif`;
+        ctx.textBaseline = 'middle';
+        const fontSize = Math.floor(canvas.width * 0.112);
+        ctx.font = `700 ${fontSize}px 'Segoe UI', Arial, sans-serif`;
 
-        const name = tile.name;
-        const maxWidth = canvas.width * 0.85;
-        const lines = wrapText(ctx, name, maxWidth);
-        const lineHeight = nameSize * 1.2;
-        const startY = canvas.height * 0.42;
-
-        lines.forEach((line, idx) => {
-            ctx.fillText(line, canvas.width / 2, startY + idx * lineHeight);
+        const nameLines = wrapText(ctx, tile.name.toUpperCase(), canvas.width * 0.78);
+        const lineHeight = fontSize * 1.14;
+        const startY = iconText ? canvas.height * 0.5 : canvas.height * 0.43;
+        nameLines.slice(0, 3).forEach((line, lineIndex) => {
+            ctx.fillText(line, canvas.width / 2, startY + (lineIndex * lineHeight));
         });
 
-    // Special icons for non-property tiles
-        if (tile.type === 'chance') {
-            ctx.font = `${Math.floor(canvas.width * 0.25)}px serif`;
-            ctx.fillText('❓', canvas.width / 2, canvas.height * 0.45);
-        } else if (tile.type === 'chest') {
-            ctx.font = `${Math.floor(canvas.width * 0.25)}px serif`;
-            ctx.fillText('💰', canvas.width / 2, canvas.height * 0.45);
-        } else if (tile.type === 'tax') {
-            ctx.font = `${Math.floor(canvas.width * 0.2)}px serif`;
-            ctx.fillText('💸', canvas.width / 2, canvas.height * 0.45);
+        if (tile.price > 0) {
+            const priceSize = Math.floor(canvas.width * 0.128);
+            ctx.font = `800 ${priceSize}px 'Segoe UI', Arial, sans-serif`;
+            ctx.fillStyle = ownerColor ? '#ffffff' : '#ffd87f';
+            ctx.fillText(`$${tile.price}`, canvas.width / 2, canvas.height - (footerHeight * 0.5));
         }
 
-    // Owner color section at the bottom (overrides price area)
-        if (ownerColor) {
-            const ownerBandH = canvas.height * 0.28;
-            const ownerY = canvas.height - ownerBandH;
-            ctx.fillStyle = ownerColor;
-            ctx.globalAlpha = 0.75;
-            ctx.fillRect(0, ownerY, canvas.width, ownerBandH);
-            ctx.globalAlpha = 1;
-            // Price text on top of color band, white
-            if (tile.price > 0) {
-                const priceSize = Math.floor(canvas.width * 0.12);
-                ctx.font = `700 ${priceSize}px 'Segoe UI', Arial, sans-serif`;
-                ctx.fillStyle = '#ffffff';
-                ctx.fillText(`$${tile.price}`, canvas.width / 2, canvas.height * 0.88);
-            }
-        } else if (tile.price > 0) {
-            const priceSize = Math.floor(canvas.width * 0.12);
-            ctx.font = `700 ${priceSize}px 'Segoe UI', Arial, sans-serif`;
-            ctx.fillStyle = '#fdcb6e';
-            ctx.fillText(`$${tile.price}`, canvas.width / 2, canvas.height * 0.88);
-        }
+        return finalizeTexture(new THREE.CanvasTexture(canvas));
+    }
 
-        const texture = new THREE.CanvasTexture(canvas);
+    function createCornerTexture(tile) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1024;
+        canvas.height = 1024;
+        const ctx = canvas.getContext('2d');
+
+        const cornerColor = `#${tile.color.toString(16).padStart(6, '0')}`;
+        const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+        gradient.addColorStop(0, '#162138');
+        gradient.addColorStop(1, '#0b1220');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = `${cornerColor}33`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.strokeStyle = '#6678a8';
+        ctx.lineWidth = 18;
+        ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(30, 30, canvas.width - 60, canvas.height - 60);
+
+        ctx.fillStyle = cornerColor;
+        ctx.globalAlpha = 0.88;
+        ctx.beginPath();
+        addRoundedRectPath(
+            ctx,
+            canvas.width * 0.18,
+            canvas.height * 0.12,
+            canvas.width * 0.64,
+            canvas.height * 0.18,
+            40
+        );
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = `800 ${Math.floor(canvas.width * 0.1)}px 'Segoe UI', Arial, sans-serif`;
+        ctx.fillText(getCornerBadge(tile), canvas.width / 2, canvas.height * 0.21);
+
+        ctx.fillStyle = '#f4f7ff';
+        ctx.font = `800 ${Math.floor(canvas.width * 0.095)}px 'Segoe UI', Arial, sans-serif`;
+        const lines = wrapText(ctx, tile.name.toUpperCase(), canvas.width * 0.72);
+        const lineHeight = canvas.width * 0.11;
+        const startY = canvas.height * 0.56;
+        lines.slice(0, 3).forEach((line, lineIndex) => {
+            ctx.fillText(line, canvas.width / 2, startY + (lineIndex * lineHeight));
+        });
+
+        return finalizeTexture(new THREE.CanvasTexture(canvas));
+    }
+
+    function createTileMaterials(tile, ownerColor = null) {
+        const topTexture = createTileTexture(tile, 150, 205, ownerColor);
+        const topMaterial = new THREE.MeshStandardMaterial({
+            map: topTexture,
+            roughness: 0.5,
+            metalness: 0.08
+        });
+        const sideMaterial = new THREE.MeshStandardMaterial({
+            color: 0x273651,
+            roughness: 0.72,
+            metalness: 0.14
+        });
+        return [sideMaterial, sideMaterial, topMaterial, sideMaterial, sideMaterial, sideMaterial];
+    }
+
+    function createCornerMaterials(tile) {
+        const topTexture = createCornerTexture(tile);
+        const topMaterial = new THREE.MeshStandardMaterial({
+            map: topTexture,
+            roughness: 0.48,
+            metalness: 0.1
+        });
+        const sideMaterial = new THREE.MeshStandardMaterial({
+            color: 0x22314b,
+            roughness: 0.72,
+            metalness: 0.14
+        });
+        return [sideMaterial, sideMaterial, topMaterial, sideMaterial, sideMaterial, sideMaterial];
+    }
+
+    function finalizeTexture(texture) {
+        texture.anisotropy = maxTextureAnisotropy;
+        texture.generateMipmaps = false;
         texture.minFilter = THREE.LinearFilter;
         texture.magFilter = THREE.LinearFilter;
+        texture.encoding = THREE.sRGBEncoding;
+        texture.needsUpdate = true;
         return texture;
     }
 
@@ -178,6 +348,7 @@ const GameBoard = (() => {
         const words = text.split(' ');
         const lines = [];
         let currentLine = '';
+
         words.forEach(word => {
             const testLine = currentLine ? `${currentLine} ${word}` : word;
             if (ctx.measureText(testLine).width > maxWidth && currentLine) {
@@ -187,85 +358,74 @@ const GameBoard = (() => {
                 currentLine = testLine;
             }
         });
+
         if (currentLine) lines.push(currentLine);
         return lines;
     }
 
-    function createTileMaterials(tile, index) {
-        // Top face gets the texture, other 5 faces get dark material
-        const topTexture = createTileTexture(tile, 140, 200, 0);
-        const topMat = new THREE.MeshStandardMaterial({
-            map: topTexture,
-            roughness: 0.5,
-            metalness: 0.1
-        });
-        const sideMat = new THREE.MeshStandardMaterial({
-            color: 0x0a0a1a,
-            roughness: 0.7,
-            metalness: 0.1
-        });
-        // BoxGeometry face order: +X, -X, +Y (top), -Y (bottom), +Z, -Z
-        return [sideMat, sideMat, topMat, sideMat, sideMat, sideMat];
+    function shadeColor(hex, percent) {
+        const value = hex.replace('#', '');
+        const num = Number.parseInt(value, 16);
+        const amount = Math.round(2.55 * percent);
+        const r = Math.max(0, Math.min(255, (num >> 16) + amount));
+        const g = Math.max(0, Math.min(255, ((num >> 8) & 0xff) + amount));
+        const b = Math.max(0, Math.min(255, (num & 0xff) + amount));
+        return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
     }
 
-    function createCornerMaterial(tile, size) {
-        const canvas = document.createElement('canvas');
-        const s = 4;
-        canvas.width = size * s * 50;
-        canvas.height = size * s * 50;
-        const ctx = canvas.getContext('2d');
-
-        // Background with subtle color
-        const c = '#' + tile.color.toString(16).padStart(6, '0');
-        ctx.fillStyle = '#12122a';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        // Subtle tint
-        ctx.fillStyle = c;
-        ctx.globalAlpha = 0.15;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.globalAlpha = 1;
-
-        // Corner name
-        ctx.fillStyle = '#e8e8f0';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.font = `bold ${Math.floor(canvas.width * 0.12)}px 'Segoe UI', Arial, sans-serif`;
-        ctx.fillText(tile.name.toUpperCase(), canvas.width / 2, canvas.height / 2);
-
-        const texture = new THREE.CanvasTexture(canvas);
-        texture.minFilter = THREE.LinearFilter;
-
-        return new THREE.MeshStandardMaterial({
-            map: texture,
-            roughness: 0.5,
-            metalness: 0.15
-        });
+    function addRoundedRectPath(ctx, x, y, width, height, radius) {
+        const safeRadius = Math.min(radius, width / 2, height / 2);
+        ctx.moveTo(x + safeRadius, y);
+        ctx.lineTo(x + width - safeRadius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+        ctx.lineTo(x + width, y + height - safeRadius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+        ctx.lineTo(x + safeRadius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+        ctx.lineTo(x, y + safeRadius);
+        ctx.quadraticCurveTo(x, y, x + safeRadius, y);
+        ctx.closePath();
     }
 
-    // ── Raycaster for Click Detection ───────────────────────
+    function getTileIconText(tile) {
+        if (tile.type === 'chance') return 'CHANCE';
+        if (tile.type === 'chest') return 'CHEST';
+        if (tile.type === 'tax') return 'TAX';
+        if (tile.type === 'railroad') return 'RR';
+        if (tile.type === 'utility') return 'UTILITY';
+        return '';
+    }
+
+    function getCornerBadge(tile) {
+        const name = tile.name.toLowerCase();
+        if (name.includes('bailout')) return 'BAILOUT';
+        if (name.includes('go to') || name.includes('police')) return 'GO TO';
+        if (name.includes('parking')) return 'FREE';
+        if (name.includes('jail') || name.includes('visit')) return 'JAIL';
+        if (name.includes('go')) return 'GO';
+        return 'BOARD';
+    }
+
     let raycaster = null;
-    let mouse = new THREE.Vector2();
+    const mouse = new THREE.Vector2();
     let onTileClickCallback = null;
 
     function initRaycaster(camera, renderer) {
         raycaster = new THREE.Raycaster();
 
-        renderer.domElement.addEventListener('click', (event) => {
+        renderer.domElement.addEventListener('click', event => {
             const rect = renderer.domElement.getBoundingClientRect();
             mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
             mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
             raycaster.setFromCamera(mouse, camera);
-            const meshList = Object.values(tileMeshes);
-            const intersects = raycaster.intersectObjects(meshList);
+            const intersects = raycaster.intersectObjects(Object.values(tileMeshes));
 
-            if (intersects.length > 0) {
-                const hit = intersects[0].object;
-                const tileIndex = hit.userData.tileIndex;
-                if (tileIndex !== undefined && onTileClickCallback) {
-                    onTileClickCallback(tileIndex);
-                }
+            if (!intersects.length) return;
+            const hit = intersects[0].object;
+            const tileIndex = hit.userData.tileIndex;
+            if (tileIndex !== undefined && onTileClickCallback) {
+                onTileClickCallback(tileIndex);
             }
         });
     }
@@ -274,123 +434,107 @@ const GameBoard = (() => {
         onTileClickCallback = callback;
     }
 
-    // ── House / Hotel Meshes ────────────────────────────────
-    function addBlock(group, width, height, depth, y, material) {
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
-        mesh.position.y = y + (height / 2);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        group.add(mesh);
-        return y + height;
-    }
+    function createHouseUnit() {
+        const group = new THREE.Group();
 
-    function addRoof(group, radius, height, y, material) {
-        const roof = new THREE.Mesh(new THREE.ConeGeometry(radius, height, 4), material);
+        const baseMaterial = new THREE.MeshStandardMaterial({
+            color: 0xe7eef7,
+            roughness: 0.74,
+            metalness: 0.07
+        });
+        const wallMaterial = new THREE.MeshStandardMaterial({
+            color: 0x3fa96a,
+            roughness: 0.46,
+            metalness: 0.14
+        });
+        const roofMaterial = new THREE.MeshStandardMaterial({
+            color: 0x234935,
+            roughness: 0.4,
+            metalness: 0.1
+        });
+        const accentMaterial = new THREE.MeshStandardMaterial({
+            color: 0xfff5e5,
+            roughness: 0.72,
+            metalness: 0.04
+        });
+
+        const foundation = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.06, 0.24), baseMaterial);
+        foundation.position.y = 0.03;
+        foundation.castShadow = true;
+        foundation.receiveShadow = true;
+        group.add(foundation);
+
+        const body = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.2, 0.18), wallMaterial);
+        body.position.y = 0.19;
+        body.castShadow = true;
+        body.receiveShadow = true;
+        group.add(body);
+
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.15, 4), roofMaterial);
+        roof.position.y = 0.36;
         roof.rotation.y = Math.PI / 4;
-        roof.position.y = y + (height / 2);
         roof.castShadow = true;
         roof.receiveShadow = true;
         group.add(roof);
-        return y + height;
-    }
 
-    function createHouseModel(level) {
-        const group = new THREE.Group();
-        const bodyMat = new THREE.MeshStandardMaterial({
-            color: 0x5dd39e,
-            emissive: 0x0a7a58,
-            emissiveIntensity: 0.18,
-            roughness: 0.35,
-            metalness: 0.28
-        });
-        const trimMat = new THREE.MeshStandardMaterial({
-            color: 0xdff8eb,
-            emissive: 0x295545,
-            emissiveIntensity: 0.08,
-            roughness: 0.45,
-            metalness: 0.12
-        });
-        const roofMat = new THREE.MeshStandardMaterial({
-            color: 0x1b4332,
-            emissive: 0x0d2018,
-            emissiveIntensity: 0.12,
-            roughness: 0.5,
-            metalness: 0.1
-        });
+        const door = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.08, 0.01), accentMaterial);
+        door.position.set(0, 0.14, 0.096);
+        group.add(door);
 
-        let y = 0;
-        const levelShapes = {
-            1: [
-                { w: 0.34, h: 0.22, d: 0.34, mat: bodyMat },
-                { roof: true, r: 0.28, h: 0.12, mat: roofMat }
-            ],
-            2: [
-                { w: 0.42, h: 0.26, d: 0.42, mat: bodyMat },
-                { w: 0.30, h: 0.12, d: 0.30, mat: trimMat },
-                { roof: true, r: 0.24, h: 0.14, mat: roofMat }
-            ],
-            3: [
-                { w: 0.50, h: 0.30, d: 0.50, mat: bodyMat },
-                { w: 0.36, h: 0.16, d: 0.36, mat: trimMat },
-                { w: 0.28, h: 0.12, d: 0.28, mat: bodyMat },
-                { roof: true, r: 0.23, h: 0.16, mat: roofMat }
-            ],
-            4: [
-                { w: 0.58, h: 0.34, d: 0.58, mat: bodyMat },
-                { w: 0.44, h: 0.18, d: 0.44, mat: trimMat },
-                { w: 0.32, h: 0.16, d: 0.32, mat: bodyMat },
-                { w: 0.22, h: 0.10, d: 0.22, mat: trimMat },
-                { roof: true, r: 0.21, h: 0.18, mat: roofMat }
-            ]
-        };
-
-        (levelShapes[level] || []).forEach(shape => {
-            y = shape.roof
-                ? addRoof(group, shape.r, shape.h, y, shape.mat)
-                : addBlock(group, shape.w, shape.h, shape.d, y, shape.mat);
-        });
+        const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.11, 0.038), accentMaterial);
+        chimney.position.set(0.06, 0.34, -0.03);
+        chimney.castShadow = true;
+        chimney.receiveShadow = true;
+        group.add(chimney);
 
         return group;
     }
 
-    function createHotelModel() {
+    function createHotelUnit() {
         const group = new THREE.Group();
-        const baseMat = new THREE.MeshStandardMaterial({
-            color: 0x87d3ff,
-            emissive: 0x1b4b72,
-            emissiveIntensity: 0.2,
-            roughness: 0.26,
-            metalness: 0.58
+
+        const baseMaterial = new THREE.MeshStandardMaterial({
+            color: 0xe5e9ef,
+            roughness: 0.74,
+            metalness: 0.05
         });
-        const accentMat = new THREE.MeshStandardMaterial({
-            color: 0xeaf7ff,
-            emissive: 0x36566d,
-            emissiveIntensity: 0.14,
-            roughness: 0.34,
-            metalness: 0.22
+        const bodyMaterial = new THREE.MeshStandardMaterial({
+            color: 0xc4534d,
+            roughness: 0.46,
+            metalness: 0.14
         });
-        const roofMat = new THREE.MeshStandardMaterial({
-            color: 0x294861,
-            emissive: 0x152432,
-            emissiveIntensity: 0.12,
-            roughness: 0.42,
-            metalness: 0.25
+        const roofMaterial = new THREE.MeshStandardMaterial({
+            color: 0x4e2322,
+            roughness: 0.5,
+            metalness: 0.08
+        });
+        const accentMaterial = new THREE.MeshStandardMaterial({
+            color: 0xfff2d9,
+            roughness: 0.7,
+            metalness: 0.04
         });
 
-        let y = 0;
-        y = addBlock(group, 0.70, 0.24, 0.70, y, accentMat);
-        y = addBlock(group, 0.54, 0.42, 0.54, y, baseMat);
-        y = addBlock(group, 0.40, 0.34, 0.40, y, accentMat);
-        y = addBlock(group, 0.28, 0.26, 0.28, y, baseMat);
-        addRoof(group, 0.23, 0.22, y, roofMat);
+        const foundation = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.07, 0.3), baseMaterial);
+        foundation.position.y = 0.035;
+        foundation.castShadow = true;
+        foundation.receiveShadow = true;
+        group.add(foundation);
 
-        const wingLeft = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.26, 0.34), accentMat);
-        wingLeft.position.set(-0.28, 0.37, 0);
-        wingLeft.castShadow = true;
-        wingLeft.receiveShadow = true;
-        const wingRight = wingLeft.clone();
-        wingRight.position.x = 0.28;
-        group.add(wingLeft, wingRight);
+        const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.24, 0.24), bodyMaterial);
+        body.position.y = 0.23;
+        body.castShadow = true;
+        body.receiveShadow = true;
+        group.add(body);
+
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.08, 0.28), roofMaterial);
+        roof.position.y = 0.39;
+        roof.castShadow = true;
+        roof.receiveShadow = true;
+        group.add(roof);
+
+        const sign = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.06, 0.02), accentMaterial);
+        sign.position.set(0, 0.25, 0.13);
+        group.add(sign);
 
         return group;
     }
@@ -398,135 +542,212 @@ const GameBoard = (() => {
     function addHouse(tileIndex, houseCount, scene) {
         removeHouses(tileIndex, scene);
 
-        const pos = tilePositions[tileIndex];
-        if (!pos || houseCount <= 0) return;
+        const position = tilePositions[tileIndex];
+        if (!position || houseCount <= 0) return;
 
-        houseMeshes[tileIndex] = [];
-        const building = houseCount >= 5 ? createHotelModel() : createHouseModel(houseCount);
-        building.position.set(pos.x, (TILE_H / 2) + 0.02, pos.z);
-        scene.add(building);
-        houseMeshes[tileIndex].push(building);
+        const cluster = new THREE.Group();
+        const { inward, rotationY } = getBuildingOrientation(tileIndex);
+        cluster.position.set(
+            position.x + (inward.x * BUILDING_INSET),
+            (TILE_H / 2) + 0.04,
+            position.z + (inward.z * BUILDING_INSET)
+        );
+        cluster.rotation.y = rotationY;
+
+        if (houseCount >= 5) {
+            cluster.add(createHotelUnit());
+        } else {
+            const spacing = 0.29;
+            const start = -((houseCount - 1) * spacing) / 2;
+            for (let index = 0; index < houseCount; index++) {
+                const house = createHouseUnit();
+                house.position.x = start + (index * spacing);
+                cluster.add(house);
+            }
+        }
+
+        const parent = boardGroup || scene;
+        parent.add(cluster);
+        houseMeshes[tileIndex] = [cluster];
     }
 
     function removeHouses(tileIndex, scene) {
-        if (houseMeshes[tileIndex]) {
-            houseMeshes[tileIndex].forEach(m => scene.remove(m));
-            houseMeshes[tileIndex] = [];
-        }
+        if (!houseMeshes[tileIndex]) return;
+        const parent = boardGroup || scene;
+        houseMeshes[tileIndex].forEach(mesh => {
+            parent.remove(mesh);
+            disposeObject(mesh);
+        });
+        houseMeshes[tileIndex] = [];
     }
 
-    // ── Mortgage Visual ─────────────────────────────────────
-    function setMortgaged(tileIndex, isMortgaged) {
-        const mesh = tileMeshes[tileIndex];
-        if (!mesh) return;
-
-        const tile = BOARD_DATA[tileIndex];
-        if (isMortgaged) {
-            // Darken the tile - create grayscale texture
-            const topTexture = createMortgagedTexture(tile, 140, 200);
-            const topMat = new THREE.MeshStandardMaterial({
-                map: topTexture, roughness: 0.7, metalness: 0.05
-            });
-            const sideMat = new THREE.MeshStandardMaterial({ color: 0x050510, roughness: 0.8 });
-            mesh.material = [sideMat, sideMat, topMat, sideMat, sideMat, sideMat];
-        } else {
-            // Restore normal texture
-            mesh.material = createTileMaterials(tile, tileIndex);
+    function getBuildingOrientation(index) {
+        if (index >= 1 && index <= 9) {
+            return { inward: { x: 0, z: -1 }, rotationY: 0 };
         }
+        if (index >= 11 && index <= 19) {
+            return { inward: { x: 1, z: 0 }, rotationY: Math.PI / 2 };
+        }
+        if (index >= 21 && index <= 29) {
+            return { inward: { x: 0, z: 1 }, rotationY: 0 };
+        }
+        if (index >= 31 && index <= 39) {
+            return { inward: { x: -1, z: 0 }, rotationY: Math.PI / 2 };
+        }
+        return { inward: { x: 0, z: 0 }, rotationY: 0 };
     }
 
-    // ── Update Tile Owner Color ─────────────────────────────
     function updateTileOwner(tileIndex, ownerColor) {
-        const mesh = tileMeshes[tileIndex];
-        if (!mesh) return;
-        const tile = BOARD_DATA[tileIndex];
-        const topTexture = createTileTexture(tile, 140, 200, 0, ownerColor);
-        const topMat = new THREE.MeshStandardMaterial({
-            map: topTexture, roughness: 0.5, metalness: 0.1
-        });
-        const sideMat = new THREE.MeshStandardMaterial({
-            color: 0x0a0a1a, roughness: 0.7, metalness: 0.1
-        });
-        mesh.material = [sideMat, sideMat, topMat, sideMat, sideMat, sideMat];
+        replaceTileMaterial(tileIndex, createTileMaterials(BOARD_DATA[tileIndex], ownerColor));
     }
 
-    function createMortgagedTexture(tile, w, h) {
+    function setMortgaged(tileIndex, isMortgaged) {
+        const tile = BOARD_DATA[tileIndex];
+        if (!tile) return;
+
+        if (isMortgaged) {
+            const topTexture = createMortgagedTexture(tile);
+            const topMaterial = new THREE.MeshStandardMaterial({
+                map: topTexture,
+                roughness: 0.68,
+                metalness: 0.04
+            });
+            const sideMaterial = new THREE.MeshStandardMaterial({
+                color: 0x4f5a71,
+                roughness: 0.82,
+                metalness: 0.06
+            });
+            replaceTileMaterial(tileIndex, [sideMaterial, sideMaterial, topMaterial, sideMaterial, sideMaterial, sideMaterial]);
+            return;
+        }
+
+        replaceTileMaterial(tileIndex, createTileMaterials(tile, null));
+    }
+
+    function createMortgagedTexture(tile) {
         const canvas = document.createElement('canvas');
-        const s = 4;
-        canvas.width = w * s;
-        canvas.height = h * s;
+        canvas.width = 600;
+        canvas.height = 820;
         const ctx = canvas.getContext('2d');
 
-        // Dark background
-        ctx.fillStyle = '#0a0a12';
+        const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        gradient.addColorStop(0, '#303746');
+        gradient.addColorStop(1, '#181c25');
+        ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // Dim border
-        ctx.strokeStyle = 'rgba(80, 40, 40, 0.4)';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
+        ctx.strokeStyle = '#7a889f';
+        ctx.lineWidth = 10;
+        ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10);
 
-        // Faded name
-        ctx.fillStyle = 'rgba(180, 100, 100, 0.4)';
+        ctx.fillStyle = 'rgba(155, 170, 194, 0.12)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height * 0.22);
+
+        ctx.fillStyle = '#e9eefb';
         ctx.textAlign = 'center';
-        ctx.font = `bold ${Math.floor(canvas.width * 0.12)}px 'Segoe UI', Arial, sans-serif`;
-        const lines = wrapText(ctx, tile.name, canvas.width * 0.85);
-        lines.forEach((line, idx) => {
-            ctx.fillText(line, canvas.width / 2, canvas.height * 0.35 + idx * canvas.width * 0.14);
+        ctx.textBaseline = 'middle';
+        ctx.font = `700 ${Math.floor(canvas.width * 0.09)}px 'Segoe UI', Arial, sans-serif`;
+        wrapText(ctx, tile.name.toUpperCase(), canvas.width * 0.72).slice(0, 3).forEach((line, lineIndex) => {
+            ctx.fillText(line, canvas.width / 2, canvas.height * 0.42 + (lineIndex * canvas.width * 0.1));
         });
 
-        // "MORTGAGED" stamp
-        ctx.fillStyle = 'rgba(255, 60, 60, 0.6)';
-        ctx.font = `bold ${Math.floor(canvas.width * 0.11)}px 'Segoe UI', Arial, sans-serif`;
         ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height * 0.7);
-        ctx.rotate(-0.2);
-        ctx.fillText('MORTGAGED', 0, 0);
+        ctx.translate(canvas.width / 2, canvas.height * 0.72);
+        ctx.rotate(-0.22);
+        ctx.strokeStyle = 'rgba(156, 37, 37, 0.7)';
+        ctx.lineWidth = 12;
+        ctx.strokeRect(-canvas.width * 0.28, -42, canvas.width * 0.56, 84);
+        ctx.fillStyle = 'rgba(156, 37, 37, 0.72)';
+        ctx.font = `800 ${Math.floor(canvas.width * 0.1)}px 'Segoe UI', Arial, sans-serif`;
+        ctx.fillText('MORTGAGED', 0, 6);
         ctx.restore();
 
-        const texture = new THREE.CanvasTexture(canvas);
-        texture.minFilter = THREE.LinearFilter;
-        return texture;
+        return finalizeTexture(new THREE.CanvasTexture(canvas));
     }
 
-    // ── Position Calculation ────────────────────────────────
-    function calculateTilePosition(index) {
-        const pos = new THREE.Vector3(0, 0, 0);
-        if (index === 0) pos.set(half - CORNER_SIZE / 2, 0, half - CORNER_SIZE / 2);
-        else if (index <= 9) {
-            const x = half - startOffset - (index - 1) * (TILE_W + GAP) - TILE_W / 2;
-            pos.set(x, 0, half - CORNER_SIZE / 2);
-        } else if (index === 10) pos.set(-half + CORNER_SIZE / 2, 0, half - CORNER_SIZE / 2);
-        else if (index <= 19) {
-            const localIdx = index - 11;
-            const z = half - startOffset - localIdx * (TILE_W + GAP) - TILE_W / 2;
-            pos.set(-half + CORNER_SIZE / 2, 0, z);
-        } else if (index === 20) pos.set(-half + CORNER_SIZE / 2, 0, -half + CORNER_SIZE / 2);
-        else if (index <= 29) {
-            const localIdx = index - 21;
-            const x = -half + startOffset + localIdx * (TILE_W + GAP) + TILE_W / 2;
-            pos.set(x, 0, -half + CORNER_SIZE / 2);
-        } else if (index === 30) pos.set(half - CORNER_SIZE / 2, 0, -half + CORNER_SIZE / 2);
-        else {
-            const localIdx = index - 31;
-            const z = -half + startOffset + localIdx * (TILE_W + GAP) + TILE_W / 2;
-            pos.set(half - CORNER_SIZE / 2, 0, z);
+    function replaceTileMaterial(tileIndex, materialSet) {
+        const mesh = tileMeshes[tileIndex];
+        if (!mesh) return;
+        disposeMaterialSet(mesh.material);
+        mesh.material = materialSet;
+    }
+
+    function disposeMaterialSet(materialSet) {
+        if (Array.isArray(materialSet)) {
+            materialSet.forEach(disposeMaterial);
+            return;
         }
-        return pos;
+        disposeMaterial(materialSet);
+    }
+
+    function disposeMaterial(material) {
+        if (!material) return;
+        if (material.map) material.map.dispose();
+        material.dispose?.();
+    }
+
+    function disposeObject(object) {
+        object.traverse(child => {
+            child.geometry?.dispose?.();
+            disposeMaterialSet(child.material);
+        });
+    }
+
+    function calculateTilePosition(index) {
+        const position = new THREE.Vector3(0, 0, 0);
+
+        if (index === 0) {
+            position.set(half - (CORNER_SIZE / 2), 0, half - (CORNER_SIZE / 2));
+        } else if (index <= 9) {
+            const x = half - startOffset - ((index - 1) * (TILE_W + GAP)) - (TILE_W / 2);
+            position.set(x, 0, half - (CORNER_SIZE / 2));
+        } else if (index === 10) {
+            position.set(-half + (CORNER_SIZE / 2), 0, half - (CORNER_SIZE / 2));
+        } else if (index <= 19) {
+            const localIndex = index - 11;
+            const z = half - startOffset - (localIndex * (TILE_W + GAP)) - (TILE_W / 2);
+            position.set(-half + (CORNER_SIZE / 2), 0, z);
+        } else if (index === 20) {
+            position.set(-half + (CORNER_SIZE / 2), 0, -half + (CORNER_SIZE / 2));
+        } else if (index <= 29) {
+            const localIndex = index - 21;
+            const x = -half + startOffset + (localIndex * (TILE_W + GAP)) + (TILE_W / 2);
+            position.set(x, 0, -half + (CORNER_SIZE / 2));
+        } else if (index === 30) {
+            position.set(half - (CORNER_SIZE / 2), 0, -half + (CORNER_SIZE / 2));
+        } else {
+            const localIndex = index - 31;
+            const z = -half + startOffset + (localIndex * (TILE_W + GAP)) + (TILE_W / 2);
+            position.set(half - (CORNER_SIZE / 2), 0, z);
+        }
+
+        return position;
     }
 
     function getTileWorldPosition(index) {
         if (tilePositions[index]) return { ...tilePositions[index] };
-        const pos = calculateTilePosition(index);
-        return { x: pos.x, y: 0, z: pos.z };
+        const position = calculateTilePosition(index);
+        return { x: position.x, y: 0, z: position.z };
     }
 
-    function getTileData() { return BOARD_DATA; }
-    function getMesh(index) { return tileMeshes[index]; }
+    function getTileData() {
+        return BOARD_DATA;
+    }
+
+    function getMesh(index) {
+        return tileMeshes[index];
+    }
 
     return {
-        build, getTileData, getTileWorldPosition, getMesh,
-        initRaycaster, onTileClick,
-        addHouse, removeHouses, setMortgaged, updateTileOwner
+        build,
+        getTileData,
+        getTileWorldPosition,
+        getMesh,
+        initRaycaster,
+        onTileClick,
+        addHouse,
+        removeHouses,
+        setMortgaged,
+        updateTileOwner
     };
 })();

@@ -6,7 +6,7 @@
     'use strict';
 
     const { scene, camera, renderer } = GameScene.init();
-    GameBoard.build(scene);
+    GameBoard.build(scene, renderer);
     GameDice.init(scene);
     GameTokens.init(scene, GameBoard.getTileWorldPosition);
     GameScene.animate();
@@ -16,6 +16,7 @@
     const socket = io({ auth: { sessionToken } });
     let myPlayerId = null;
     let currentGameState = null;
+    const cameraViewBtn = document.getElementById('camera-view-btn');
 
     // Player color cache (character -> color)
     const CHAR_COLORS = {
@@ -43,6 +44,31 @@
         if (typeof DevPanel !== 'undefined' && DevPanel.updateState) {
             DevPanel.updateState(state);
         }
+        syncCameraViewState();
+    }
+
+    function getCurrentPlayerTokenGroup() {
+        if (!currentGameState || !myPlayerId) return null;
+        const me = currentGameState.players.find(player => player.id === myPlayerId && player.isActive);
+        if (!me) return null;
+        return GameTokens.getToken(me.character)?.group || null;
+    }
+
+    function syncCameraViewState() {
+        const tokenGroup = getCurrentPlayerTokenGroup();
+        GameScene.setFollowTarget(tokenGroup);
+
+        if (!cameraViewBtn) return;
+
+        const canFollow = Boolean(tokenGroup);
+        const isThirdPerson = GameScene.getViewMode() === 'third-person';
+        cameraViewBtn.disabled = !canFollow;
+        cameraViewBtn.classList.toggle('active', isThirdPerson);
+        cameraViewBtn.setAttribute('aria-pressed', String(isThirdPerson));
+        cameraViewBtn.textContent = isThirdPerson ? '🧭 Board View' : '🎥 Third Person';
+        cameraViewBtn.title = canFollow
+            ? (isThirdPerson ? 'Return to the full board view' : 'Follow your token in third person')
+            : 'Join a game to enable third-person view';
     }
 
     function syncTurnTimerUI(state = currentGameState) {
@@ -67,6 +93,8 @@
             GameTokens.setTokenPosition(player.character, player.position);
         });
 
+        GameTokens.layoutTokens(state.players);
+
         state.properties.forEach(prop => {
             GameBoard.removeHouses(prop.index, scene);
 
@@ -88,6 +116,8 @@
                 GameBoard.addHouse(prop.index, prop.houses, scene);
             }
         });
+
+        syncCameraViewState();
     }
 
     function syncHistoryFromState(state) {
@@ -140,6 +170,10 @@
         if (!state) return;
         setCurrentGameState(state);
         if (syncWorld) syncWorldFromState(state);
+        else {
+            GameTokens.layoutTokens(state.players || []);
+            syncCameraViewState();
+        }
         if (syncHistory) syncHistoryFromState(state);
         if (syncTrades) syncPendingTrades(state);
         if (syncAuction) syncAuctionFromState(state);
@@ -263,6 +297,7 @@
         GameUI.updateMyPlayerId(myPlayerId);
         TradeSystem.updatePlayerId(myPlayerId);
         AuctionSystem.updatePlayerId(myPlayerId);
+        syncCameraViewState();
     });
 
     // ── Init all systems ──────────────────────────────────
@@ -273,6 +308,16 @@
     TradeSystem.init(socket);
     AuctionSystem.init(socket);
     if (typeof DevPanel !== 'undefined') DevPanel.init(socket);
+
+    if (cameraViewBtn) {
+        cameraViewBtn.addEventListener('click', () => {
+            const nextMode = GameScene.getViewMode() === 'third-person' ? 'board' : 'third-person';
+            if (GameScene.setViewMode(nextMode)) {
+                syncCameraViewState();
+            }
+        });
+        syncCameraViewState();
+    }
 
     // ── Init Raycaster for clickable board ─────────────────
     GameBoard.initRaycaster(camera, renderer);

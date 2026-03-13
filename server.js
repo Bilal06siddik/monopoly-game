@@ -899,7 +899,7 @@ function resolveActionCardAndMaybeMove(player) {
 function evaluateTile(player, diceTotal, rentContext = {}) {
   const tile = gameState.properties[player.position];
 
-  if (player.position === 10 && !player.inJail) {
+  if (player.position === 20) {
     const collected = gameState.taxPool;
     if (collected > 0) {
       gameState.taxPool = 0;

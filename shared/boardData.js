@@ -87,7 +87,7 @@ const BOARD_DATA = [
         price: 220, rent: 16, colorGroup: 'orange', color: 0xFFA500
     },
     {
-        index: 20, name: 'Free Parking', type: 'corner',
+        index: 20, name: 'Bailout', type: 'corner',
         price: 0, rent: 0, colorGroup: null, color: 0xff4444
     },
 
