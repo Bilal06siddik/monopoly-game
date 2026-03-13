@@ -220,6 +220,27 @@ const GameBoard = (() => {
             boardGroup.add(ring);
         });
 
+        // --- ADD CENTER LOGO ---
+        const logoLoader = new THREE.TextureLoader();
+        logoLoader.load('/images/bank-el-haz-logo.png', (texture) => {
+            texture.anisotropy = maxTextureAnisotropy;
+            texture.encoding = THREE.sRGBEncoding;
+            
+            const logoSize = innerSize * 0.45;
+            const logoPlane = new THREE.Mesh(
+                new THREE.PlaneGeometry(logoSize, logoSize),
+                new THREE.MeshBasicMaterial({
+                    map: texture,
+                    transparent: true,
+                    opacity: 0.9
+                })
+            );
+            logoPlane.rotation.x = -Math.PI / 2;
+            logoPlane.position.y = 0.045; // Slightly above the rings
+            boardGroup.add(logoPlane);
+        });
+        // -----------------------
+
         scene.add(boardGroup);
         return boardGroup;
     }
