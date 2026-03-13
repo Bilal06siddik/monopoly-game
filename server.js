@@ -29,8 +29,9 @@ const CHARACTER_COLORS = {
   missiry:  '#e61a8d'  // Hot Pink
 };
 
-const TURN_TIMER_SECONDS = 45;
-const AUCTION_TIMER_SECONDS = 15;
+const TURN_TIMER_SECONDS = 60;
+const AUCTION_TIMER_SECONDS = 10;
+const AUCTION_BID_RESET_SECONDS = 5;
 const DICE_ANIMATION_MS = 1800;
 const TOKEN_STEP_MS = 250;
 const MOVE_RESOLUTION_BUFFER_MS = 300;
@@ -80,6 +81,66 @@ function logEvent(text, type = 'info') {
   const event = { text, type, time: Date.now() };
   pushHistoryEvent(event);
   io.emit('history-event', event);
+}
+
+function formatCurrency(amount) {
+  return `$${Math.abs(Math.round(amount || 0))}`;
+}
+
+function logPlayerMoneyDelta(player, delta, reason, type = 'info') {
+  if (!player || !delta) return;
+  const direction = delta > 0 ? 'received' : 'paid';
+  logEvent(`💵 ${player.character} ${direction} ${formatCurrency(delta)} ${reason}`, type);
+}
+
+function snapshotPlayerMoney() {
+  if (!gameState) return new Map();
+  return new Map(gameState.players.map(player => [player.id, player.money]));
+}
+
+function logMoneyDeltasSince(snapshot, reasonByDelta, type = 'info') {
+  if (!gameState || !(snapshot instanceof Map)) return;
+
+  gameState.players.forEach(player => {
+    const before = snapshot.get(player.id);
+    if (typeof before !== 'number') return;
+    const delta = player.money - before;
+    if (!delta) return;
+    const reason = typeof reasonByDelta === 'function' ? reasonByDelta(player, delta) : reasonByDelta;
+    logPlayerMoneyDelta(player, delta, reason, type);
+  });
+}
+
+function describeTradeCashForPlayer(player, trade, counterpart) {
+  if (!player || !trade || !counterpart) return '';
+
+  if (player.id === trade.fromId) {
+    const gave = trade.offerCash;
+    const received = trade.requestCash;
+    if (gave > 0 && received > 0) {
+      return `in cash trade with ${counterpart.character} (gave $${gave}, received $${received})`;
+    }
+    if (gave > 0) {
+      return `to ${counterpart.character} in trade`;
+    }
+    if (received > 0) {
+      return `from ${counterpart.character} in trade`;
+    }
+    return '';
+  }
+
+  const gave = trade.requestCash;
+  const received = trade.offerCash;
+  if (gave > 0 && received > 0) {
+    return `in cash trade with ${counterpart.character} (gave $${gave}, received $${received})`;
+  }
+  if (gave > 0) {
+    return `to ${counterpart.character} in trade`;
+  }
+  if (received > 0) {
+    return `from ${counterpart.character} in trade`;
+  }
+  return '';
 }
 
 function getLobbyEntryBySocketId(socketId) {
@@ -265,7 +326,7 @@ function emitPlayerSession(socket, player) {
 function getViewerTrades(playerId) {
   if (!playerId) return [];
   return [...pendingTrades.values()]
-    .filter(trade => trade.toId === playerId)
+    .filter(trade => trade.toId === playerId || trade.fromId === playerId)
     .map(trade => ({ ...trade }));
 }
 
@@ -584,6 +645,7 @@ function startAuction(tileIndex, startingBid, initiatorId, options = {}) {
   const reason = options.reason || 'pass';
   const returnPhase = options.returnPhase || 'waiting';
   const returnPlayerId = options.returnPlayerId || gameState.getCurrentPlayer()?.id || null;
+  const bidResetSeconds = Math.max(1, Number.parseInt(options.bidResetSeconds, 10) || AUCTION_BID_RESET_SECONDS);
 
   stopTurnTimer(false);
   clearBotTimersByPrefix('turn:');
@@ -601,6 +663,8 @@ function startAuction(tileIndex, startingBid, initiatorId, options = {}) {
     currentBidderId: null,
     currentBidderCharacter: null,
     timeRemaining: AUCTION_TIMER_SECONDS,
+    timerMaxSeconds: AUCTION_TIMER_SECONDS,
+    bidResetSeconds,
     initiatorId,
     reason,
     returnPhase,
@@ -716,9 +780,8 @@ function handlePlaceBid(playerId, amountInput) {
   auctionState.currentBid = amount;
   auctionState.currentBidderId = playerRecord.id;
   auctionState.currentBidderCharacter = playerRecord.character;
-  if (auctionState.timeRemaining < 5) {
-    auctionState.timeRemaining = 5;
-  }
+  auctionState.timeRemaining = auctionState.bidResetSeconds || AUCTION_BID_RESET_SECONDS;
+  auctionState.timerMaxSeconds = auctionState.bidResetSeconds || AUCTION_BID_RESET_SECONDS;
 
   logEvent(`🔨 ${playerRecord.character} bid $${amount} on ${auctionState.tileName}`, 'bid');
   io.emit('auction-bid', {
@@ -855,7 +918,13 @@ function resolveActionCardAndMaybeMove(player) {
   player.stats.cardsDrawn++;
   logEvent(`🃏 ${player.character}: "${card.text}"`, 'card');
 
+  const moneySnapshot = snapshotPlayerMoney();
   const result = CardUtils.resolveActionCard(gameState, player, card);
+  logMoneyDeltasSince(
+    moneySnapshot,
+    currentPlayer => `from action card "${card.text}"`,
+    'card'
+  );
   if (result.moveResult) {
     recordMoveStats(player, result.moveResult);
   }
@@ -907,6 +976,7 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
       gameState.taxPool = 0;
       player.money += collected;
       logEvent(`💰 ${player.character} collected the $${collected} Bailout fund!`, 'buy');
+      logPlayerMoneyDelta(player, collected, 'from the Bailout fund', 'buy');
       io.emit('bailout-collected', {
         playerId: player.id,
         character: player.character,
@@ -1854,6 +1924,8 @@ io.on('connection', socket => {
     const offerer = gameState.getPlayerById(trade.fromId);
     if (!offerer) return;
 
+    const offererMoneyBefore = offerer.money;
+    const accepterMoneyBefore = accepter.money;
     offerer.money -= trade.offerCash;
     offerer.money += trade.requestCash;
     accepter.money += trade.offerCash;
@@ -1879,6 +1951,18 @@ io.on('connection', socket => {
     invalidateStaleTrades();
 
     logEvent(`✅ ${accepter.character} accepted trade with ${offerer.character}!`, 'trade');
+    logPlayerMoneyDelta(
+      offerer,
+      offerer.money - offererMoneyBefore,
+      describeTradeCashForPlayer(offerer, trade, accepter),
+      'trade'
+    );
+    logPlayerMoneyDelta(
+      accepter,
+      accepter.money - accepterMoneyBefore,
+      describeTradeCashForPlayer(accepter, trade, offerer),
+      'trade'
+    );
     io.emit('trade-completed', {
       tradeId: trade.id,
       fromId: offerer.id,
