@@ -83,11 +83,6 @@
             return { ok: false, code: 'max-buildings', message: 'That property already has a hotel.' };
         }
 
-        const { min } = getGroupHouseExtremes(properties, tile.colorGroup);
-        if ((tile.houses || 0) !== min) {
-            return { ok: false, code: 'uneven-building', message: 'Build evenly across the whole color group.' };
-        }
-
         return { ok: true, tile };
     }
 
@@ -101,11 +96,6 @@
         }
         if ((tile.houses || 0) <= 0) {
             return { ok: false, code: 'no-buildings', message: 'That property has no buildings to sell.' };
-        }
-
-        const { max } = getGroupHouseExtremes(properties, tile.colorGroup);
-        if ((tile.houses || 0) !== max) {
-            return { ok: false, code: 'uneven-selling', message: 'Sell buildings evenly across the whole color group.' };
         }
 
         return { ok: true, tile };

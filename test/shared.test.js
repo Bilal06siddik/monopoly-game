@@ -60,7 +60,7 @@ test('building is blocked when any sibling in the set is mortgaged', () => {
     assert.equal(validation.code, 'group-mortgaged');
 });
 
-test('even building and selling validations reject uneven actions', () => {
+test('building and selling validations allow uneven actions', () => {
     const { game, p1 } = createGame();
     [6, 8, 9].forEach(index => {
         game.properties[index].owner = p1.id;
@@ -68,8 +68,7 @@ test('even building and selling validations reject uneven actions', () => {
 
     game.properties[6].houses = 1;
     let validation = Rules.validateUpgrade(game.properties, p1.id, 6);
-    assert.equal(validation.ok, false);
-    assert.equal(validation.code, 'uneven-building');
+    assert.equal(validation.ok, true);
 
     game.properties[8].houses = 1;
     game.properties[9].houses = 1;
@@ -78,8 +77,7 @@ test('even building and selling validations reject uneven actions', () => {
 
     game.properties[6].houses = 2;
     validation = Rules.validateDowngrade(game.properties, p1.id, 8);
-    assert.equal(validation.ok, false);
-    assert.equal(validation.code, 'uneven-selling');
+    assert.equal(validation.ok, true);
 });
 
 test('trade validation rejects empty and stale offers', () => {
