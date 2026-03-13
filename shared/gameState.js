@@ -22,6 +22,7 @@ class Player {
         this.id = id;
         this.character = character;
         this.color = color;
+        this.tokenId = options.tokenId || 'pawn';
         this.sessionToken = sessionToken;
         this.socketId = null;
         this.position = 0;        // tile index 0-39
@@ -43,6 +44,7 @@ class Player {
             id: this.id,
             character: this.character,
             color: this.color,
+            tokenId: this.tokenId,
             position: this.position,
             money: this.money,
             properties: [...this.properties],

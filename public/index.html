@@ -85,6 +85,7 @@
       <div id="hud-room-chip" class="hud-room-chip hidden">
         <span id="hud-room-code">ROOM</span>
         <button id="hud-copy-room-link-btn" class="hud-room-btn" type="button">Copy Invite</button>
+        <button id="hud-end-game-btn" class="hud-room-btn danger hidden" type="button">End Match</button>
         <button id="hud-end-room-btn" class="hud-room-btn danger hidden" type="button">End Room</button>
       </div>
       <div id="turn-indicator" class="turn-indicator"></div>
@@ -475,6 +476,17 @@
       <!-- Dynamically generated TCG cards will go here in a 3x2 grid -->
       <div id="character-grid" class="tcg-cards-grid"></div>
 
+      <section class="token-selection-panel">
+        <div class="token-selection-header">
+          <div>
+            <p class="token-selection-kicker">TOKEN SELECT</p>
+            <h2 class="token-selection-title">Choose your board piece</h2>
+          </div>
+          <p id="token-selection-hint" class="token-selection-hint">Pick a character first to unlock token choices.</p>
+        </div>
+        <div id="token-grid" class="token-grid"></div>
+      </section>
+
       <div class="lobby-footer">
         <div id="lobby-status">Loading...</div>
         
@@ -488,6 +500,11 @@
                 CLEAR BOTS
             </button>
           </div>
+        </div>
+
+        <div id="host-controls" class="host-controls hidden">
+          <div class="host-controls-title">HOST CONTROLS</div>
+          <div id="host-player-list" class="host-player-list"></div>
         </div>
       </div>
     </div>
@@ -505,8 +522,10 @@
   <!-- Scripts -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/shared/boardData.js"></script>
+  <script src="/shared/tokenCatalog.js"></script>
   <script src="/shared/gameState.js"></script>
   <script src="/shared/actionCards.js"></script>
   <script src="/shared/rules.js"></script>

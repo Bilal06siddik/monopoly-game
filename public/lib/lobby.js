@@ -3,6 +3,8 @@
 // ═══════════════════════════════════════════════════════════
 
 const Lobby = (() => {
+    const TOKEN_OPTIONS = window.TokenCatalog?.TOKEN_OPTIONS || [];
+
     // Exactly 6 Players
     const CHARACTER_COLORS = {
         'bilo':    '#8e44ad', // Deep Purple
@@ -64,6 +66,8 @@ const Lobby = (() => {
 
     let socket            = null;
     let selectedCharacter = null;
+    let selectedToken     = null;
+    let myPlayerId        = null;
     let lobbyState        = null;
 
     function init(socketInstance) {
@@ -75,20 +79,40 @@ const Lobby = (() => {
 
     function bindEvents() {
         socket.on('player-session', (data) => {
+            myPlayerId = data.playerId || null;
             selectedCharacter = data.character || null;
-            if (lobbyState) renderCharacters(lobbyState);
+            selectedToken = data.tokenId || null;
+            if (lobbyState) {
+                renderCharacters(lobbyState);
+                renderTokens(lobbyState);
+            }
         });
 
         socket.on('lobby-update', (state) => {
             lobbyState = state;
             renderCharacters(state);
+            renderTokens(state);
             updateStatus(state);
+            renderHostControls(state);
         });
 
         socket.on('character-confirmed', (data) => {
             selectedCharacter = data.character;
+            selectedToken = data.tokenId || selectedToken;
             Notifications.show(`Deck Secured: <strong>${CHARACTER_DISPLAY[data.character] || data.character}</strong>`, 'success');
-            if (lobbyState) renderCharacters(lobbyState);
+            if (lobbyState) {
+                renderCharacters(lobbyState);
+                renderTokens(lobbyState);
+            }
+        });
+
+        socket.on('token-confirmed', (data) => {
+            selectedToken = data.tokenId || null;
+            Notifications.show(`Token Ready: <strong>${getTokenLabel(selectedToken)}</strong>`, 'success');
+            if (lobbyState) {
+                renderCharacters(lobbyState);
+                renderTokens(lobbyState);
+            }
         });
 
         socket.on('character-taken', (data) => {
@@ -99,6 +123,13 @@ const Lobby = (() => {
         socket.on('character-error', (data) => {
             Notifications.notifyError(data.message);
         });
+    }
+
+    function getTokenLabel(tokenId) {
+        const normalizedTokenId = typeof tokenId === 'string' ? tokenId : '';
+        const fromLobbyState = lobbyState?.tokens?.find(token => token.id === normalizedTokenId);
+        const fromCatalog = TOKEN_OPTIONS.find(token => token.id === normalizedTokenId);
+        return fromLobbyState?.label || fromCatalog?.label || normalizedTokenId || 'Unknown Token';
     }
 
     function renderCharacters(state) {
@@ -116,6 +147,9 @@ const Lobby = (() => {
             const display = CHARACTER_DISPLAY[char.name];
             const imgSrc  = `./characters/${char.name}.png`;
             const statusLabel = isMine ? 'SELECTED' : isTaken ? (char.offline ? 'OFFLINE' : 'TAKEN') : 'SELECT';
+            const tokenText = isMine && selectedToken
+                ? `TOKEN • ${getTokenLabel(selectedToken).toUpperCase()}`
+                : '&nbsp;';
 
             const wrapper = document.createElement('div');
             wrapper.className = 'tcg-card-wrapper' + (isMine ? ' selected' : '') + (isTaken ? ' taken' : '');
@@ -136,6 +170,7 @@ const Lobby = (() => {
                         </div>
 
                         <div class="tcg-card-footer">
+                            <div class="tcg-card-token">${tokenText}</div>
                             <button class="tcg-select-btn">${statusLabel}</button>
                         </div>
                     </div>
@@ -192,6 +227,7 @@ const Lobby = (() => {
                 if (isMine) {
                     socket.emit('deselect-character');
                     selectedCharacter = null;
+                    selectedToken = null;
                 } else {
                     socket.emit('select-character', char.name);
                 }
@@ -204,6 +240,7 @@ const Lobby = (() => {
                         if (isMine) {
                             socket.emit('deselect-character');
                             selectedCharacter = null;
+                            selectedToken = null;
                         } else {
                             socket.emit('select-character', char.name);
                         }
@@ -215,6 +252,51 @@ const Lobby = (() => {
         });
     }
 
+    function renderTokens(state) {
+        const grid = document.getElementById('token-grid');
+        const hint = document.getElementById('token-selection-hint');
+        if (!grid || !hint) return;
+
+        const tokens = Array.isArray(state?.tokens) && state.tokens.length
+            ? state.tokens
+            : TOKEN_OPTIONS.map(token => ({
+                id: token.id,
+                label: token.label
+            }));
+        const canSelectToken = Boolean(selectedCharacter);
+
+        hint.textContent = canSelectToken
+            ? 'Choose pawn, battleship, or sports car. Multiple players can use the same token.'
+            : 'Pick a character first to unlock token choices.';
+
+        grid.innerHTML = '';
+
+        tokens.forEach(token => {
+            const isMine = selectedToken === token.id;
+            const statusLabel = isMine ? 'SELECTED' : 'AVAILABLE';
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'token-option-card'
+                + (isMine ? ' selected' : '')
+                + (!canSelectToken ? ' disabled' : '');
+            btn.disabled = !canSelectToken;
+            btn.innerHTML = `
+                <span class="token-option-preview token-${token.id}">
+                    <span class="token-preview-silhouette"></span>
+                </span>
+                <span class="token-option-name">${token.label}</span>
+                <span class="token-option-status">${statusLabel}</span>
+            `;
+
+            btn.addEventListener('click', () => {
+                if (!canSelectToken || isMine) return;
+                socket.emit('select-token', token.id);
+            });
+
+            grid.appendChild(btn);
+        });
+    }
+
     function updateStatus(state) {
         const statusEl     = document.getElementById('lobby-status');
         const readyPlayers = state.players.filter(p => p.character);
@@ -222,6 +304,7 @@ const Lobby = (() => {
         const total        = Object.keys(CHARACTER_COLORS).length; // Now 6
         const botCount     = readyPlayers.filter(p => p.isBot).length;
         const humanCount   = count - botCount;
+        const isHost       = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
 
         if (count === 0) {
             statusEl.textContent = 'AWAITING PLAYERS...';
@@ -232,20 +315,79 @@ const Lobby = (() => {
 
         const startBtn = document.getElementById('start-game-btn');
         if (startBtn) {
-            if (count >= 2) {
-                startBtn.classList.remove('disabled');
+            const disabled = !isHost || count < 2;
+            startBtn.disabled = disabled;
+            startBtn.classList.toggle('disabled', disabled);
+
+            if (!isHost) {
+                startBtn.textContent = count >= 2 ? 'HOST STARTS MATCH' : 'WAITING FOR HOST';
+            } else if (count >= 2) {
                 startBtn.textContent = 'START MATCH';
             } else {
-                startBtn.classList.add('disabled');
                 startBtn.textContent = 'NEED 2+ PLAYERS';
             }
         }
 
+        const addBotBtn = document.getElementById('add-bot-btn');
+        if (addBotBtn) {
+            addBotBtn.disabled = !isHost;
+            addBotBtn.classList.toggle('disabled', !isHost);
+        }
+
         const clearBotsBtn = document.getElementById('clear-bots-btn');
         if (clearBotsBtn) {
-            clearBotsBtn.disabled = botCount === 0;
-            clearBotsBtn.classList.toggle('disabled', botCount === 0);
+            const disabled = !isHost || botCount === 0;
+            clearBotsBtn.disabled = disabled;
+            clearBotsBtn.classList.toggle('disabled', disabled);
         }
+    }
+
+    function renderHostControls(state) {
+        const panel = document.getElementById('host-controls');
+        const list = document.getElementById('host-player-list');
+        if (!panel || !list) return;
+
+        const isHost = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
+        panel.classList.toggle('hidden', !isHost);
+        list.innerHTML = '';
+
+        if (!isHost) return;
+
+        const members = Array.isArray(state?.members) ? state.members : [];
+        const visibleMembers = members.filter(member => !member.isHost);
+
+        if (visibleMembers.length === 0) {
+            list.innerHTML = '<div class="host-player-empty">No other players are in the room yet.</div>';
+            return;
+        }
+
+        visibleMembers.forEach(member => {
+            const row = document.createElement('div');
+            row.className = 'host-player-row';
+
+            const displayName = member.character || member.name || 'Unselected player';
+            const tags = [
+                member.isBot ? 'BOT' : 'PLAYER',
+                member.character ? 'LOCKED IN' : 'UNSELECTED',
+                member.isOnline ? 'ONLINE' : 'OFFLINE'
+            ];
+
+            row.innerHTML = `
+                <div class="host-player-meta">
+                    <div class="host-player-name">${displayName}</div>
+                    <div class="host-player-tags">${tags.map(tag => `<span class="host-player-tag">${tag}</span>`).join('')}</div>
+                </div>
+                <button class="secondary-lobby-btn subtle host-kick-btn" type="button">KICK</button>
+            `;
+
+            row.querySelector('.host-kick-btn').addEventListener('click', () => {
+                const targetLabel = member.character || member.name || 'this player';
+                if (!window.confirm(`Kick ${targetLabel} from the room?`)) return;
+                socket.emit('kick-player', { playerId: member.playerId });
+            });
+
+            list.appendChild(row);
+        });
     }
 
     function bindButtons() {
@@ -282,7 +424,11 @@ const Lobby = (() => {
         document.getElementById('lobby-screen').classList.add('hidden');
     }
 
+    function showLobby() {
+        document.getElementById('lobby-screen').classList.remove('hidden');
+    }
+
     function getSelectedCharacter() { return selectedCharacter; }
 
-    return { init, hideLobby, getSelectedCharacter };
+    return { init, hideLobby, showLobby, getSelectedCharacter };
 })();

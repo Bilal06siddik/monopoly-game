@@ -11,13 +11,33 @@ const Rules = require('./shared/rules');
 const TradeUtils = require('./shared/tradeUtils');
 const SummaryUtils = require('./shared/summary');
 const CardUtils = require('./shared/cardUtils');
+const {
+  TOKEN_OPTIONS,
+  normalizeTokenId,
+  getDefaultTokenForCharacter
+} = require('./shared/tokenCatalog');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
+const UPGRADE_MODEL_FILES = new Set([
+  'small_buildingB.glb',
+  'small_buildingA.glb',
+  'large_buildingD.glb',
+  'skyscraperE.glb',
+  'skyscraperB.glb'
+]);
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/shared', express.static(path.join(__dirname, 'shared')));
+app.get('/models/:file', (req, res) => {
+  const file = typeof req.params.file === 'string' ? req.params.file.trim() : '';
+  if (!UPGRADE_MODEL_FILES.has(file)) {
+    res.sendStatus(404);
+    return;
+  }
+  res.sendFile(path.join(__dirname, file));
+});
 
 const CHARACTERS = ['bilo', 'osss', 'bdlbaky', 'fawzy', 'hamza', 'missiry'];
 const CHARACTER_COLORS = {
@@ -86,6 +106,7 @@ function createRoomState(roomCode, hostSessionToken) {
     hostSessionToken,
     createdAt: Date.now(),
     endedAt: null,
+    kickedSessionTokens: new Set(),
     lobbyPlayers: new Map(),
     pendingTrades: new Map(),
     eventHistory: [],
@@ -186,6 +207,9 @@ function getOrCreateRoomState(roomCode, hostSessionToken = null) {
   } else if (!roomState.hostSessionToken && hostSessionToken) {
     roomState.hostSessionToken = hostSessionToken;
   }
+  if (!roomState.kickedSessionTokens) {
+    roomState.kickedSessionTokens = new Set();
+  }
   return roomState;
 }
 
@@ -282,8 +306,19 @@ function getLobbyEntryByCharacter(character) {
   return null;
 }
 
+function getLobbyEntryByPlayerId(playerId) {
+  for (const entry of lobbyPlayers.values()) {
+    if (entry.playerId === playerId) return entry;
+  }
+  return null;
+}
+
 function getAvailableLobbyCharacters() {
   return CHARACTERS.filter(character => !getLobbyEntryByCharacter(character));
+}
+
+function resolveLobbyToken(character, preferredTokenId = null) {
+  return normalizeTokenId(preferredTokenId) || getDefaultTokenForCharacter(character);
 }
 
 function getLobbyState() {
@@ -294,6 +329,7 @@ function getLobbyState() {
       id: entry.playerId,
       name: entry.name,
       character: entry.character,
+      tokenId: entry.tokenId || null,
       isBot: Boolean(entry.isBot)
     }));
 
@@ -306,6 +342,15 @@ function getLobbyState() {
         || null)
       : null,
     players: playerList,
+    members: [...lobbyPlayers.values()].map(entry => ({
+      playerId: entry.playerId,
+      name: entry.name || null,
+      character: entry.character || null,
+      tokenId: entry.tokenId || null,
+      isBot: Boolean(entry.isBot),
+      isOnline: Boolean(entry.isBot || entry.socketId),
+      isHost: Boolean(roomState?.hostSessionToken && entry.sessionToken === roomState.hostSessionToken)
+    })),
     characters: CHARACTERS.map(character => {
       const holder = getLobbyEntryByCharacter(character);
       return {
@@ -316,7 +361,11 @@ function getLobbyState() {
         takenByBot: Boolean(holder?.isBot),
         takenByName: holder?.name || holder?.character || null
       };
-    })
+    }),
+    tokens: TOKEN_OPTIONS.map(token => ({
+      id: token.id,
+      label: token.label
+    }))
   };
 }
 
@@ -373,6 +422,7 @@ function addRandomBotToLobby() {
     playerId: createPlayerId(),
     socketId: null,
     character,
+    tokenId: resolveLobbyToken(character),
     name: character,
     isBot: true
   };
@@ -456,7 +506,8 @@ function emitPlayerSession(socket, player) {
   socket.emit('player-session', {
     sessionToken: socket.data.sessionToken,
     playerId: player?.id || null,
-    character: player?.character || null
+    character: player?.character || null,
+    tokenId: player?.tokenId || null
   });
 }
 
@@ -500,6 +551,156 @@ function buildGameStatePayload(viewerPlayerId = null) {
   return payload;
 }
 
+function clearRoomGameRuntime({ preserveLobby = true } = {}) {
+  clearPendingMoveResolution();
+  clearAllBotTimers();
+  stopTurnTimer(false);
+  if (auctionTimer) {
+    clearInterval(auctionTimer);
+    auctionTimer = null;
+  }
+
+  gameState = null;
+  actionDeck = [];
+  auctionState = null;
+  pausedTurnTimerState = null;
+  pendingMoveResolution = null;
+  lastDiceTotal = 0;
+  pendingTrades.clear();
+  eventHistory.length = 0;
+
+  if (!preserveLobby) {
+    lobbyPlayers.clear();
+  }
+}
+
+function endGameForRoom(roomState, endedByCharacter = null) {
+  let ended = false;
+
+  withRoomState(roomState, () => {
+    if (!gameState || !gameState.isGameStarted) return;
+
+    ended = true;
+    clearRoomGameRuntime({ preserveLobby: true });
+
+    emitToRoom('game-ended-by-host', {
+      roomCode: roomState.code,
+      endedBy: endedByCharacter,
+      message: endedByCharacter
+        ? `${endedByCharacter} ended the current match. You're back in the lobby.`
+        : 'The host ended the current match. You are back in the lobby.'
+    });
+    emitLobbyUpdate();
+    emitToRoom('game-state-sync', buildGameStatePayload());
+  });
+
+  return ended;
+}
+
+function kickPlayerFromRoom(roomState, targetPlayerId, removedByCharacter = 'The host') {
+  let result = { ok: false, message: 'Player not found.' };
+  let targetSocket = null;
+
+  withRoomState(roomState, () => {
+    const lobbyEntry = getLobbyEntryByPlayerId(targetPlayerId);
+    const player = gameState?.getPlayerById(targetPlayerId) || null;
+    const sessionToken = lobbyEntry?.sessionToken || player?.sessionToken || null;
+    const targetCharacter = player?.character || lobbyEntry?.character || lobbyEntry?.name || 'That player';
+
+    if (!lobbyEntry && !player) {
+      result = { ok: false, message: 'Player not found.' };
+      return;
+    }
+
+    if (sessionToken && roomState.hostSessionToken === sessionToken) {
+      result = { ok: false, message: 'The host cannot be kicked.' };
+      return;
+    }
+
+    if (gameState?.isGameStarted && (auctionState || ['rolling', 'moving'].includes(gameState.turnPhase))) {
+      result = { ok: false, message: 'Wait for the current move or auction to finish before kicking a player.' };
+      return;
+    }
+
+    if (player?.socketId) {
+      targetSocket = io.sockets.sockets.get(player.socketId) || null;
+    } else if (lobbyEntry?.socketId) {
+      targetSocket = io.sockets.sockets.get(lobbyEntry.socketId) || null;
+    }
+
+    if (sessionToken) {
+      roomState.kickedSessionTokens.add(sessionToken);
+    }
+
+    if (lobbyEntry) {
+      lobbyPlayers.delete(lobbyEntry.sessionToken);
+    }
+
+    if (player) {
+      if (pendingMoveResolution?.playerId === player.id) {
+        clearPendingMoveResolution();
+      }
+
+      player.isActive = false;
+      player.isConnected = false;
+      player.money = 0;
+      player.inJail = false;
+      player.jailTurns = 0;
+      player.socketId = null;
+      player.sessionToken = null;
+      if (!gameState.eliminationOrder.includes(player.id)) {
+        gameState.eliminationOrder.push(player.id);
+      }
+
+      gameState.properties.forEach(tile => {
+        if (tile.owner !== player.id) return;
+        tile.owner = null;
+        tile.houses = 0;
+        tile.isMortgaged = false;
+      });
+      player.properties = [];
+
+      removeTradesForPlayer(player.id, {
+        code: 'player-kicked',
+        message: `${targetCharacter} was removed by the host, so this trade can no longer continue.`
+      });
+
+      if (gameState.pauseState?.playerId === player.id) {
+        gameState.pauseState = null;
+        pausedTurnTimerState = null;
+      }
+
+      logEvent(`🚫 ${removedByCharacter} removed ${targetCharacter} from the match.`, 'system');
+
+      const activePlayers = gameState.getActivePlayers();
+      if (activePlayers.length === 1) {
+        concludeGame(activePlayers[0]);
+      } else if (gameState.getCurrentPlayer()?.id === player.id) {
+        advanceTurnGlobal();
+      } else {
+        emitGameStateSync();
+      }
+    }
+
+    emitLobbyUpdate();
+    result = {
+      ok: true,
+      playerId: targetPlayerId,
+      character: targetCharacter
+    };
+  });
+
+  if (result.ok && targetSocket) {
+    targetSocket.emit('player-kicked', {
+      roomCode: roomState.code,
+      message: `${removedByCharacter} removed you from room ${roomState.code}.`
+    });
+    targetSocket.disconnect(true);
+  }
+
+  return result;
+}
+
 function getSocketPlayer(socket) {
   if (!gameState) return null;
   return gameState.getPlayerBySocketId(socket.id) || gameState.getPlayerBySessionToken(socket.data.sessionToken);
@@ -536,6 +737,7 @@ function createLobbyEntry(socket) {
     playerId: createPlayerId(),
     socketId: socket.id,
     character: null,
+    tokenId: null,
     name: null
   };
   lobbyPlayers.set(entry.sessionToken, entry);
@@ -543,9 +745,12 @@ function createLobbyEntry(socket) {
 }
 
 function getOrCreateLobbyEntry(socket) {
-  const existing = lobbyPlayers.get(socket.data.sessionToken);
+    const existing = lobbyPlayers.get(socket.data.sessionToken);
   if (existing) {
     existing.socketId = socket.id;
+    if (existing.character && !existing.tokenId) {
+      existing.tokenId = resolveLobbyToken(existing.character);
+    }
     socket.data.playerId = existing.playerId;
     return existing;
   }
@@ -1698,14 +1903,6 @@ function isRoomHost(socket, roomState) {
 
 function closeRoom(roomState, endedByCharacter = null) {
   withRoomState(roomState, () => {
-    clearPendingMoveResolution();
-    clearAllBotTimers();
-    stopTurnTimer(false);
-    if (auctionTimer) {
-      clearInterval(auctionTimer);
-      auctionTimer = null;
-    }
-
     roomState.endedAt = Date.now();
     emitToRoom('room-ended', {
       roomCode: roomState.code,
@@ -1714,18 +1911,7 @@ function closeRoom(roomState, endedByCharacter = null) {
         ? `${endedByCharacter} ended the room. Create a new invite to play again.`
         : 'This room has ended. Create a new invite to play again.'
     });
-
-    gameState = null;
-    actionDeck = [];
-    auctionState = null;
-    turnTimerState = null;
-    turnTimerInterval = null;
-    pausedTurnTimerState = null;
-    pendingMoveResolution = null;
-    lastDiceTotal = 0;
-    pendingTrades.clear();
-    eventHistory.length = 0;
-    lobbyPlayers.clear();
+    clearRoomGameRuntime({ preserveLobby: false });
     io.in(getSocketRoom(roomState.code)).disconnectSockets(true);
   });
 }
@@ -1744,6 +1930,11 @@ io.on('connection', socket => {
   const roomState = getOrCreateRoomState(socket.data.roomCode, socket.data.sessionToken);
   if (!roomState || roomState.endedAt) {
     socket.emit('room-error', { message: 'That room is no longer available. Create a new room.' });
+    socket.disconnect(true);
+    return;
+  }
+  if (roomState.kickedSessionTokens?.has(socket.data.sessionToken)) {
+    socket.emit('room-error', { message: 'You were removed from this room by the host.' });
     socket.disconnect(true);
     return;
   }
@@ -1785,11 +1976,47 @@ io.on('connection', socket => {
     }
 
     currentEntry.character = characterName;
+    currentEntry.tokenId = resolveLobbyToken(characterName, currentEntry.tokenId);
     currentEntry.name = characterName;
     currentEntry.socketId = socket.id;
     socket.data.playerId = currentEntry.playerId;
-    socket.emit('character-confirmed', { character: characterName });
-    emitPlayerSession(socket, { id: currentEntry.playerId, character: characterName });
+    socket.emit('character-confirmed', {
+      character: characterName,
+      tokenId: currentEntry.tokenId
+    });
+    emitPlayerSession(socket, {
+      id: currentEntry.playerId,
+      character: characterName,
+      tokenId: currentEntry.tokenId
+    });
+    emitLobbyUpdate();
+  });
+
+  bindRoomHandler(socket, roomState, 'select-token', tokenId => {
+    if (gameState && gameState.isGameStarted) {
+      socket.emit('character-error', { message: 'Game already in progress' });
+      return;
+    }
+
+    const normalizedTokenId = normalizeTokenId(tokenId);
+    if (!normalizedTokenId) {
+      socket.emit('character-error', { message: 'Invalid token' });
+      return;
+    }
+
+    const currentEntry = getOrCreateLobbyEntry(socket);
+    if (!currentEntry.character) {
+      socket.emit('character-error', { message: 'Choose a character first' });
+      return;
+    }
+
+    currentEntry.tokenId = normalizedTokenId;
+    socket.emit('token-confirmed', { tokenId: normalizedTokenId });
+    emitPlayerSession(socket, {
+      id: currentEntry.playerId,
+      character: currentEntry.character,
+      tokenId: currentEntry.tokenId
+    });
     emitLobbyUpdate();
   });
 
@@ -1797,11 +2024,17 @@ io.on('connection', socket => {
     const entry = getLobbyEntryBySocketId(socket.id);
     if (!entry) return;
     entry.character = null;
+    entry.tokenId = null;
     entry.name = null;
+    emitPlayerSession(socket, { id: entry.playerId, character: null, tokenId: null });
     emitLobbyUpdate();
   });
 
   bindRoomHandler(socket, roomState, 'add-random-bot', () => {
+    if (!isRoomHost(socket, roomState)) {
+      socket.emit('game-error', { message: 'Only the room host can add bots.' });
+      return;
+    }
     if (gameState && gameState.isGameStarted) {
       socket.emit('game-error', { message: 'Add bots before starting the game.' });
       return;
@@ -1817,6 +2050,10 @@ io.on('connection', socket => {
   });
 
   bindRoomHandler(socket, roomState, 'clear-lobby-bots', () => {
+    if (!isRoomHost(socket, roomState)) {
+      socket.emit('game-error', { message: 'Only the room host can remove bots.' });
+      return;
+    }
     if (gameState && gameState.isGameStarted) {
       socket.emit('game-error', { message: 'You can only clear bots from the lobby.' });
       return;
@@ -1827,6 +2064,10 @@ io.on('connection', socket => {
   });
 
   bindRoomHandler(socket, roomState, 'requestStartGame', () => {
+    if (!isRoomHost(socket, roomState)) {
+      socket.emit('game-error', { message: 'Only the room host can start the match.' });
+      return;
+    }
     const readyPlayers = [...lobbyPlayers.values()].filter(entry => entry.character);
     if (readyPlayers.length < 2) {
       socket.emit('game-error', { message: 'Need at least 2 players to start' });
@@ -1856,7 +2097,11 @@ io.on('connection', socket => {
         entry.character,
         CHARACTER_COLORS[entry.character],
         entry.isBot ? null : entry.sessionToken,
-        { isBot: Boolean(entry.isBot), isConnected: entry.isBot ? true : Boolean(entry.socketId) }
+        {
+          isBot: Boolean(entry.isBot),
+          isConnected: entry.isBot ? true : Boolean(entry.socketId),
+          tokenId: resolveLobbyToken(entry.character, entry.tokenId)
+        }
       );
       playerRecord.socketId = entry.socketId;
       playerRecord.isConnected = entry.isBot ? true : Boolean(entry.socketId);
@@ -1894,6 +2139,39 @@ io.on('connection', socket => {
 
     const hostPlayer = getSocketPlayer(socket) || gameState?.getPlayerBySessionToken(socket.data.sessionToken) || lobbyPlayers.get(socket.data.sessionToken) || null;
     closeRoom(roomState, hostPlayer?.character || 'The host');
+  });
+
+  bindRoomHandler(socket, roomState, 'end-game', () => {
+    if (!isRoomHost(socket, roomState)) {
+      socket.emit('game-error', { message: 'Only the room host can end the current match.' });
+      return;
+    }
+    if (!gameState || !gameState.isGameStarted) {
+      socket.emit('game-error', { message: 'There is no active match to end.' });
+      return;
+    }
+
+    const hostPlayer = getSocketPlayer(socket) || gameState?.getPlayerBySessionToken(socket.data.sessionToken) || lobbyPlayers.get(socket.data.sessionToken) || null;
+    endGameForRoom(roomState, hostPlayer?.character || 'The host');
+  });
+
+  bindRoomHandler(socket, roomState, 'kick-player', data => {
+    if (!isRoomHost(socket, roomState)) {
+      socket.emit('game-error', { message: 'Only the room host can kick players.' });
+      return;
+    }
+
+    const targetPlayerId = typeof data?.playerId === 'string' ? data.playerId : '';
+    if (!targetPlayerId) {
+      socket.emit('game-error', { message: 'Choose a player to kick.' });
+      return;
+    }
+
+    const hostPlayer = getSocketPlayer(socket) || gameState?.getPlayerBySessionToken(socket.data.sessionToken) || lobbyPlayers.get(socket.data.sessionToken) || null;
+    const result = kickPlayerFromRoom(roomState, targetPlayerId, hostPlayer?.character || 'The host');
+    if (!result.ok) {
+      socket.emit('game-error', { message: result.message });
+    }
   });
 
   bindRoomHandler(socket, roomState, 'roll-dice', () => {

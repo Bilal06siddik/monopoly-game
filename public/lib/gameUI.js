@@ -5,6 +5,7 @@
 const GameUI = (() => {
     let socket = null;
     let myPlayerId = null;
+    let currentHostPlayerId = null;
     let currentPlayers = [];
     let currentProperties = [];
 
@@ -97,6 +98,10 @@ const GameUI = (() => {
 
     function updateMyPlayerId(id) {
         myPlayerId = id;
+    }
+
+    function updateHostPlayerId(id) {
+        currentHostPlayerId = id || null;
     }
 
     function updateTurnTimer(timerState) {
@@ -231,7 +236,11 @@ const GameUI = (() => {
             const propertyCount = currentProperties.filter(property => property.owner === player.id).length;
             const botBadge = player.isBot ? `<span class="lb-disconnected">Bot</span>` : '';
             const disconnectedBadge = player.isConnected ? '' : `<span class="lb-disconnected">Offline</span>`;
+            const hostBadge = player.id === currentHostPlayerId ? `<span class="lb-host-badge">Host</span>` : '';
             const jailBadge = player.inJail ? `<span style="font-size:10px;color:#ff6b6b;"> 🔒</span>` : '';
+            const isHostViewer = myPlayerId && currentHostPlayerId && myPlayerId === currentHostPlayerId;
+            const showTrade = player.id !== myPlayerId && player.isActive;
+            const showKick = isHostViewer && player.id !== myPlayerId;
             const element = document.createElement('div');
             element.className = `lb-card${player.id === myPlayerId ? ' is-me' : ''}${!player.isActive ? ' bankrupt' : ''}`;
             element.style.borderLeftColor = player.color;
@@ -249,12 +258,18 @@ const GameUI = (() => {
           <div class="lb-rank">#${index + 1}</div>
           <div class="lb-info">
             <span class="lb-name" style="color:${player.color}">${player.character}${jailBadge}</span>
+            ${hostBadge}
             <span class="lb-money">$${player.money}</span>
             ${propertyCount > 0 ? `<span class="lb-props">🏠 ${propertyCount}</span>` : ''}
             ${botBadge}
             ${disconnectedBadge}
           </div>
-          ${player.id !== myPlayerId && player.isActive ? `<button class="lb-trade-btn" data-player-id="${player.id}">🤝 Trade</button>` : ''}
+          ${showTrade || showKick ? `
+            <div class="lb-actions">
+              ${showTrade ? `<button class="lb-trade-btn" data-player-id="${player.id}">🤝 Trade</button>` : ''}
+              ${showKick ? `<button class="lb-kick-btn" data-player-id="${player.id}" data-player-name="${player.character}">Kick</button>` : ''}
+            </div>
+          ` : ''}
         `;
             }
             panel.appendChild(element);
@@ -263,6 +278,14 @@ const GameUI = (() => {
         panel.querySelectorAll('.lb-trade-btn').forEach(button => {
             button.addEventListener('click', () => {
                 TradeSystem.openTradeModal(button.dataset.playerId);
+            });
+        });
+
+        panel.querySelectorAll('.lb-kick-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                const playerName = button.dataset.playerName || 'this player';
+                if (!window.confirm(`Kick ${playerName} from the room?`)) return;
+                socket.emit('kick-player', { playerId: button.dataset.playerId });
             });
         });
 
@@ -398,6 +421,7 @@ const GameUI = (() => {
         updateLeaderboard,
         showDiceResult,
         updateMyPlayerId,
+        updateHostPlayerId,
         renderJailUI,
         updateTurnTimer
     };

@@ -14,10 +14,21 @@ const GameBoard = (() => {
     const tilePositions = {};
     const tileMeshes = {};
     const houseMeshes = {};
+    const houseRenderTokens = {};
     const tileRenderState = {};
     const cornerTileState = {
         bailoutAmount: 0
     };
+    const upgradeModelConfigs = [
+        { path: '/models/small_buildingB.glb', footprint: 0.82, height: 0.72 },
+        { path: '/models/small_buildingA.glb', footprint: 0.88, height: 0.88 },
+        { path: '/models/large_buildingD.glb', footprint: 0.94, height: 1.18 },
+        { path: '/models/skyscraperE.glb', footprint: 1.08, height: 1.64 },
+        { path: '/models/skyscraperB.glb', footprint: 1.14, height: 1.92 }
+    ];
+    const upgradeModelCache = new Map();
+    const upgradeModelPromises = new Map();
+    let gltfLoader = null;
     let boardGroup = null;
     let edgeLen;
     let half;
@@ -841,12 +852,98 @@ const GameBoard = (() => {
         return group;
     }
 
-    function addHouse(tileIndex, houseCount, scene) {
+    function getGltfLoader() {
+        if (gltfLoader) return gltfLoader;
+        if (typeof THREE.GLTFLoader !== 'function') return null;
+        gltfLoader = new THREE.GLTFLoader();
+        return gltfLoader;
+    }
+
+    function loadUpgradeTemplate(level) {
+        const config = upgradeModelConfigs[level];
+        if (!config) {
+            return Promise.reject(new Error(`Unknown upgrade level: ${level}`));
+        }
+        if (upgradeModelCache.has(level)) {
+            return Promise.resolve(upgradeModelCache.get(level));
+        }
+        if (upgradeModelPromises.has(level)) {
+            return upgradeModelPromises.get(level);
+        }
+
+        const loader = getGltfLoader();
+        if (!loader) {
+            return Promise.reject(new Error('THREE.GLTFLoader is unavailable.'));
+        }
+
+        const promise = new Promise((resolve, reject) => {
+            loader.load(
+                config.path,
+                gltf => {
+                    const template = gltf.scene || gltf.scenes?.[0];
+                    if (!template) {
+                        reject(new Error(`No scene found in ${config.path}`));
+                        return;
+                    }
+                    upgradeModelCache.set(level, template);
+                    resolve(template);
+                },
+                undefined,
+                reject
+            );
+        }).finally(() => {
+            upgradeModelPromises.delete(level);
+        });
+
+        upgradeModelPromises.set(level, promise);
+        return promise;
+    }
+
+    function fitUpgradeModel(instance, config) {
+        const initialBounds = new THREE.Box3().setFromObject(instance);
+        const initialSize = initialBounds.getSize(new THREE.Vector3());
+        const footprint = Math.max(initialSize.x, initialSize.z, 0.001);
+        const height = Math.max(initialSize.y, 0.001);
+        const scale = Math.min(config.footprint / footprint, config.height / height);
+        instance.scale.setScalar(scale);
+
+        const bounds = new THREE.Box3().setFromObject(instance);
+        const center = bounds.getCenter(new THREE.Vector3());
+        const min = bounds.min.clone();
+        instance.position.x -= center.x;
+        instance.position.z -= center.z;
+        instance.position.y -= min.y;
+    }
+
+    async function createUpgradeUnit(level) {
+        const config = upgradeModelConfigs[level];
+        const template = await loadUpgradeTemplate(level);
+        const instance = template.clone(true);
+        instance.traverse(child => {
+            if (!child?.isMesh) return;
+            child.castShadow = true;
+            child.receiveShadow = true;
+            child.userData = {
+                ...child.userData,
+                sharedAsset: true
+            };
+        });
+        instance.userData = {
+            ...instance.userData,
+            sharedAsset: true
+        };
+        fitUpgradeModel(instance, config);
+        return instance;
+    }
+
+    async function addHouse(tileIndex, houseCount, scene) {
         removeHouses(tileIndex, scene);
 
         const position = tilePositions[tileIndex];
         if (!position || houseCount <= 0) return;
 
+        const renderToken = Symbol(`house-${tileIndex}-${houseCount}`);
+        houseRenderTokens[tileIndex] = renderToken;
         const cluster = new THREE.Group();
         const { inward, rotationY } = getBuildingOrientation(tileIndex);
         cluster.position.set(
@@ -856,15 +953,24 @@ const GameBoard = (() => {
         );
         cluster.rotation.y = rotationY;
 
-        if (houseCount >= 5) {
-            cluster.add(createHotelUnit());
-        } else {
-            const spacing = 0.29;
-            const start = -((houseCount - 1) * spacing) / 2;
-            for (let index = 0; index < houseCount; index++) {
-                const house = createHouseUnit();
-                house.position.x = start + (index * spacing);
-                cluster.add(house);
+        try {
+            const upgradeLevel = Math.max(0, Math.min(houseCount, upgradeModelConfigs.length) - 1);
+            const upgradeUnit = await createUpgradeUnit(upgradeLevel);
+            if (houseRenderTokens[tileIndex] !== renderToken) return;
+            cluster.add(upgradeUnit);
+        } catch (error) {
+            console.warn(`Failed to load upgrade model for tile ${tileIndex}. Falling back to legacy buildings.`, error);
+            if (houseRenderTokens[tileIndex] !== renderToken) return;
+            if (houseCount >= 5) {
+                cluster.add(createHotelUnit());
+            } else {
+                const spacing = 0.29;
+                const start = -((houseCount - 1) * spacing) / 2;
+                for (let index = 0; index < houseCount; index++) {
+                    const house = createHouseUnit();
+                    house.position.x = start + (index * spacing);
+                    cluster.add(house);
+                }
             }
         }
 
@@ -874,6 +980,7 @@ const GameBoard = (() => {
     }
 
     function removeHouses(tileIndex, scene) {
+        houseRenderTokens[tileIndex] = null;
         if (!houseMeshes[tileIndex]) return;
         const parent = boardGroup || scene;
         houseMeshes[tileIndex].forEach(mesh => {
@@ -1078,6 +1185,7 @@ const GameBoard = (() => {
 
     function disposeObject(object) {
         object.traverse(child => {
+            if (child.userData?.sharedAsset) return;
             child.geometry?.dispose?.();
             disposeMaterialSet(child.material);
         });

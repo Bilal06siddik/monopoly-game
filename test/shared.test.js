@@ -222,3 +222,12 @@ test('summary generation ranks the winner first and exposes top properties', () 
     assert.equal(summary.topVisitedProperties[0].name, game.properties[1].name);
     assert.equal(summary.topRentProperties[0].rentCollected, 120);
 });
+
+test('players expose their selected token in serialized state', () => {
+    const game = new GameState(BOARD_DATA);
+    const player = game.addPlayer('p1', 'Bilo', '#6c5ce7', 'session-1', { tokenId: 'top-hat' });
+
+    const payload = player.toJSON();
+    assert.equal(payload.tokenId, 'top-hat');
+    assert.equal(game.getState().players[0].tokenId, 'top-hat');
+});

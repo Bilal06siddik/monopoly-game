@@ -24,6 +24,8 @@
   --radius: 14px;
   --radius-sm: 8px;
   --font: 'Outfit', sans-serif;
+  --top-down-top-bar-height: 88px;
+  --top-down-hud-gap: 12px;
 }
 
 *,
@@ -611,7 +613,7 @@ body[data-view-mode="top-down"] .top-controls {
 }
 
 body[data-view-mode="top-down"] .view-dock {
-  top: 108px;
+  top: calc(20px + var(--top-down-top-bar-height) + var(--top-down-hud-gap));
   left: 20px;
   gap: 8px;
 }
@@ -1346,6 +1348,24 @@ body[data-view-mode="top-down"] .leaderboard-wrapper {
   letter-spacing: 1px;
 }
 
+.lb-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lb-host-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0, 210, 211, 0.28);
+  background: rgba(0, 210, 211, 0.12);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
 .lb-trade-btn {
   padding: 6px 10px;
   font-family: var(--font);
@@ -1361,6 +1381,23 @@ body[data-view-mode="top-down"] .leaderboard-wrapper {
 
 .lb-trade-btn:hover {
   background: rgba(108, 92, 231, 0.25);
+}
+
+.lb-kick-btn {
+  padding: 6px 10px;
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  border-radius: 12px;
+  background: rgba(255, 107, 107, 0.12);
+  color: #ffd8d8;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.lb-kick-btn:hover {
+  background: rgba(255, 107, 107, 0.22);
 }
 
 /* ═══════════════════════════════════════════════════════════

@@ -26,6 +26,8 @@
     const roomGate = document.getElementById('room-gate');
     const roomGateStatus = document.getElementById('room-gate-status');
     const roomCodeInput = document.getElementById('room-code-input');
+    const topBar = document.querySelector('.top-bar');
+    let topBarResizeObserver = null;
 
     function getOrCreateSessionToken() {
         let token = sessionStorage.getItem(SESSION_TOKEN_KEY);
@@ -125,11 +127,13 @@
     function syncRoomChrome(state = currentGameState) {
         const roomCode = normalizeRoomCode(state?.roomCode || activeRoomCode);
         const isHost = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
+        const isGameStarted = Boolean(state?.isGameStarted);
         const roomBanner = document.getElementById('room-banner');
         const roomCodeDisplay = document.getElementById('room-code-display');
         const lobbyEndBtn = document.getElementById('end-room-btn');
         const hudRoomChip = document.getElementById('hud-room-chip');
         const hudRoomCode = document.getElementById('hud-room-code');
+        const hudEndGameBtn = document.getElementById('hud-end-game-btn');
         const hudEndBtn = document.getElementById('hud-end-room-btn');
 
         roomBanner?.classList.toggle('hidden', !roomCode);
@@ -137,6 +141,7 @@
         if (hudRoomCode) hudRoomCode.textContent = roomCode ? `Room ${roomCode}` : 'Room';
         hudRoomChip?.classList.toggle('hidden', !roomCode);
         lobbyEndBtn?.classList.toggle('hidden', !isHost);
+        hudEndGameBtn?.classList.toggle('hidden', !isHost || !isGameStarted);
         hudEndBtn?.classList.toggle('hidden', !isHost);
     }
 
@@ -159,8 +164,16 @@
         syncBoardTextProfile();
     }
 
+    function syncTopDownHudLayout() {
+        if (!topBar) return;
+
+        const topBarHeight = Math.max(Math.ceil(topBar.getBoundingClientRect().height), 0);
+        document.body.style.setProperty('--top-down-top-bar-height', `${topBarHeight}px`);
+    }
+
     function setCurrentGameState(state) {
         currentGameState = state;
+        GameUI.updateHostPlayerId(state?.hostPlayerId || null);
         if (typeof DevPanel !== 'undefined' && DevPanel.updateState) {
             DevPanel.updateState(state);
         }
@@ -172,7 +185,7 @@
         if (!currentGameState || !myPlayerId) return null;
         const me = currentGameState.players.find(player => player.id === myPlayerId && player.isActive);
         if (!me) return null;
-        return GameTokens.getToken(me.character)?.group || null;
+        return GameTokens.getToken(me.id)?.group || null;
     }
 
     function syncCameraViewState() {
@@ -208,6 +221,7 @@
                 : 'Recenter the isometric framing and reset zoom';
         }
         syncBoardTextProfile();
+        syncTopDownHudLayout();
     }
 
     function syncTurnTimerUI(state = currentGameState) {
@@ -219,20 +233,20 @@
 
         GameBoard.updateBailoutAmount(state.taxPool || 0);
 
-        const activeCharacters = new Set(state.players.filter(player => player.isActive).map(player => player.character));
-        Object.keys(GameTokens.getAllTokens()).forEach(character => {
-            if (!activeCharacters.has(character)) {
-                GameTokens.removeToken(character, scene);
+        const activePlayerIds = new Set(state.players.filter(player => player.isActive).map(player => player.id));
+        Object.keys(GameTokens.getAllTokens()).forEach(playerId => {
+            if (!activePlayerIds.has(playerId)) {
+                GameTokens.removeToken(playerId, scene);
             }
         });
 
         state.players.forEach(player => {
             if (!player.isActive) return;
-            if (!GameTokens.getToken(player.character)) {
-                GameTokens.createToken(player.character, scene, player.color);
+            if (!GameTokens.getToken(player.id)) {
+                GameTokens.createToken(player, scene);
             }
-            GameTokens.setTokenColor(player.character, player.color);
-            GameTokens.setTokenPosition(player.character, player.position);
+            GameTokens.syncToken(player);
+            GameTokens.setTokenPosition(player.id, player.position);
         });
 
         GameTokens.layoutTokens(state.players);
@@ -325,6 +339,12 @@
             if (currentPlayer) {
                 GameUI.updateTurnIndicator(currentPlayer.id, currentPlayer.character, state.players, state);
             }
+        } else {
+            Lobby.showLobby();
+            GameUI.hideGameUI();
+            GameUI.updateLeaderboard([], []);
+            GameUI.updateTurnTimer(null);
+            hideSummaryModal();
         }
         if (syncBuyPrompt) maybeRestoreBuyPrompt(state);
         syncTurnTimerUI(state);
@@ -443,6 +463,7 @@
     });
 
     socket.on('lobby-update', (state) => {
+        GameUI.updateHostPlayerId(state?.hostPlayerId || null);
         syncRoomChrome(state);
     });
 
@@ -458,6 +479,17 @@
         setTimeout(() => window.location.assign(window.location.pathname), 250);
     });
 
+    socket.on('player-kicked', (data) => {
+        clearRoomCode();
+        Notifications.show(data?.message || 'You were removed from the room.', 'error', 5000);
+        setTimeout(() => window.location.assign(window.location.pathname), 250);
+    });
+
+    socket.on('game-ended-by-host', (data) => {
+        Notifications.show(data?.message || 'The host ended the current match.', 'info', 5000);
+        hideSummaryModal();
+    });
+
     // ── Init all systems ──────────────────────────────────
     Lobby.init(socket);
     GameUI.init(socket);
@@ -470,6 +502,17 @@
     GameScene.onViewModeChange(() => {
         syncCameraViewState();
     });
+
+    if (topBar) {
+        syncTopDownHudLayout();
+        if (typeof ResizeObserver !== 'undefined') {
+            topBarResizeObserver = new ResizeObserver(() => {
+                syncTopDownHudLayout();
+            });
+            topBarResizeObserver.observe(topBar);
+        }
+        window.addEventListener('resize', syncTopDownHudLayout);
+    }
 
     document.getElementById('create-room-btn')?.addEventListener('click', () => {
         connectToRoom(generateRoomCode());
@@ -493,8 +536,18 @@
 
     document.getElementById('copy-room-link-btn')?.addEventListener('click', () => copyInvite());
     document.getElementById('hud-copy-room-link-btn')?.addEventListener('click', () => copyInvite());
-    document.getElementById('end-room-btn')?.addEventListener('click', () => socket.emit('end-room'));
-    document.getElementById('hud-end-room-btn')?.addEventListener('click', () => socket.emit('end-room'));
+    document.getElementById('end-room-btn')?.addEventListener('click', () => {
+        if (!window.confirm('End this room for everyone?')) return;
+        socket.emit('end-room');
+    });
+    document.getElementById('hud-end-room-btn')?.addEventListener('click', () => {
+        if (!window.confirm('End this room for everyone?')) return;
+        socket.emit('end-room');
+    });
+    document.getElementById('hud-end-game-btn')?.addEventListener('click', () => {
+        if (!window.confirm('End the current match and return everyone to the lobby?')) return;
+        socket.emit('end-game');
+    });
 
     if (activeRoomCode) {
         connectToRoom(activeRoomCode);
@@ -565,7 +618,7 @@
 
         GameDice.roll(data.die1, data.die2, () => {
             GameTokens.animateMove(
-                data.character,
+                data.playerId,
                 data.moveResult.oldPosition,
                 data.moveResult.newPosition,
                 () => {
@@ -608,7 +661,7 @@
         const onAfterCard = () => {
             if (data.result?.moveResult) {
                 GameTokens.animateMove(
-                    data.character,
+                    data.playerId,
                     data.result.moveResult.oldPosition,
                     data.result.moveResult.newPosition,
                     () => {
