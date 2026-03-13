@@ -5,9 +5,11 @@ A real-time multiplayer Monopoly-style web game built with `Express`, `Socket.IO
 ## What is included
 
 - Real-time lobby and turn-based multiplayer flow
-- Property buying, rent, taxes, jail, bankruptcy, and win detection
-- Auctions and player-to-player trading
-- Shared game state models used by both server and client
+- Browser-rendered 3D board with shared server/client game-state models
+- Property buying, rent, taxes, jail, bankruptcy, auctions, and win detection
+- Reconnect support for in-progress matches on the currently running server
+- End-game stats and a match summary modal
+- Random lobby bots for quick local testing
 
 ## Tech stack
 
@@ -16,6 +18,44 @@ A real-time multiplayer Monopoly-style web game built with `Express`, `Socket.IO
 - Socket.IO
 - Vanilla JavaScript
 - Three.js (loaded from CDN in the client)
+
+## Gameplay features
+
+- Character-select lobby with live readiness updates
+- Turn timer with auto-roll and auto-auction timeout handling
+- Buy, pass-to-auction, mortgage, unmortgage, upgrade, downgrade, bank sell, and own-auction flows
+- Player-to-player trading with validation, stale-offer invalidation, and counter-offers
+- Rich action cards, including:
+  - direct collect/pay cards
+  - movement to exact tiles
+  - relative movement
+  - nearest railroad movement
+  - nearest utility movement
+  - collect-from-each-player effects
+  - pardon card draws
+- Auction bidding UI with live timer updates
+- Match history log, leaderboard, bankruptcy handling, and final placements
+
+## Rule coverage
+
+- Undeveloped monopolies charge double base rent on a fully owned color set
+- Double-rent does not apply once buildings are present
+- Mortgaged properties collect no rent
+- Buildings must be bought evenly across a color set
+- Buildings must be sold evenly across a color set
+- A color set cannot be upgraded if any property in that set is mortgaged
+- Asset management actions are limited to the active player during the correct turn phases
+- Trades can still be offered and answered outside the active turn
+- Group transfer locks prevent trading, mortgaging, selling, or auctioning properties from sets that still contain buildings
+
+## Quality-of-life features
+
+- Session-based reconnect after refresh or temporary disconnect
+- In-progress game sync for reconnecting players
+- Paused game state when the active human player disconnects
+- End-of-match summary with ranking, duration, turn count, and player/property stats
+- Random bot players for testing without opening multiple tabs
+- Local developer test panel for fast state manipulation while developing
 
 ## Getting started
 
@@ -56,6 +96,7 @@ npm start
 
 - `npm start` starts the server
 - `npm run dev` runs the same local server command
+- `npm test` runs the automated shared-rule and game-summary tests
 
 ## Project structure
 
@@ -67,12 +108,6 @@ server.js Express and Socket.IO game server
 
 ## Notes
 
+- Reconnect and save support are in-memory only. Refreshing or reconnecting to the same running server restores your seat, but restarting the Node server resets the match.
 - Client-side 3D rendering depends on external CDNs for `three.js` and `OrbitControls`.
-- There is currently no automated test suite in this repository.
-
-## Cleanup included
-
-- Added a proper `.gitignore`
-- Removed unused runtime dependencies
-- Added a favicon to avoid the missing asset request in the browser
-- Removed a checked-in local error scratch file
+- Automated coverage currently focuses on shared rules, trade validation, card resolution, and match summary generation.
