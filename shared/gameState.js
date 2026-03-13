@@ -64,6 +64,7 @@ class Property {
         this.type = tileData.type;
         this.price = tileData.price;
         this.rent = tileData.rent;
+        this.rentTiers = Array.isArray(tileData.rentTiers) ? [...tileData.rentTiers] : null;
         this.colorGroup = tileData.colorGroup;
         this.owner = null;
         this.houses = 0;          // 0-4 houses, 5 = hotel
@@ -90,6 +91,7 @@ class Property {
             type: this.type,
             price: this.price,
             rent: this.rent,
+            rentTiers: this.rentTiers ? [...this.rentTiers] : null,
             colorGroup: this.colorGroup,
             owner: this.owner,
             houses: this.houses,

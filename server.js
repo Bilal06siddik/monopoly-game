@@ -41,21 +41,22 @@ const BOT_ACTION_MIN_MS = 800;
 const BOT_ACTION_MAX_MS = 1800;
 const BOT_BID_INCREMENTS = [2, 5, 10, 25, 50, 100];
 
-const lobbyPlayers = new Map();
-const pendingTrades = new Map();
-const eventHistory = [];
 const supersededSocketIds = new Set();
-const botActionTimers = new Map();
-
+const rooms = new Map();
+let currentRoomCode = null;
+let lobbyPlayers = null;
+let pendingTrades = null;
+let eventHistory = null;
+let botActionTimers = null;
 let gameState = null;
-let actionDeck = [];
+let actionDeck = null;
 let auctionState = null;
 let auctionTimer = null;
 let turnTimerState = null;
 let turnTimerInterval = null;
 let pausedTurnTimerState = null;
 let pendingMoveResolution = null;
-let lastDiceTotal = 0;
+let lastDiceTotal = null;
 
 function normalizeSessionToken(token) {
   const value = typeof token === 'string' ? token.trim() : '';
@@ -66,8 +67,132 @@ function createPlayerId() {
   return `player-${randomUUID()}`;
 }
 
+function normalizeRoomCode(code) {
+  const value = typeof code === 'string' ? code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
+  return value && value.length <= 12 ? value : '';
+}
+
+function getSocketRoom(roomCode = currentRoomCode) {
+  return roomCode ? `room:${roomCode}` : null;
+}
+
 function getPlayerRoom(playerId) {
-  return `player:${playerId}`;
+  return currentRoomCode ? `room:${currentRoomCode}:player:${playerId}` : `player:${playerId}`;
+}
+
+function createRoomState(roomCode, hostSessionToken) {
+  return {
+    code: roomCode,
+    hostSessionToken,
+    createdAt: Date.now(),
+    endedAt: null,
+    lobbyPlayers: new Map(),
+    pendingTrades: new Map(),
+    eventHistory: [],
+    botActionTimers: new Map(),
+    gameState: null,
+    actionDeck: [],
+    auctionState: null,
+    auctionTimer: null,
+    turnTimerState: null,
+    turnTimerInterval: null,
+    pausedTurnTimerState: null,
+    pendingMoveResolution: null,
+    lastDiceTotal: 0
+  };
+}
+
+function assignRoomState(roomState) {
+  currentRoomCode = roomState?.code || null;
+  lobbyPlayers = roomState?.lobbyPlayers || null;
+  pendingTrades = roomState?.pendingTrades || null;
+  eventHistory = roomState?.eventHistory || null;
+  botActionTimers = roomState?.botActionTimers || null;
+  gameState = roomState?.gameState || null;
+  actionDeck = roomState?.actionDeck || null;
+  auctionState = roomState?.auctionState || null;
+  auctionTimer = roomState?.auctionTimer || null;
+  turnTimerState = roomState?.turnTimerState || null;
+  turnTimerInterval = roomState?.turnTimerInterval || null;
+  pausedTurnTimerState = roomState?.pausedTurnTimerState || null;
+  pendingMoveResolution = roomState?.pendingMoveResolution || null;
+  lastDiceTotal = roomState?.lastDiceTotal ?? null;
+}
+
+function persistRoomState(roomState) {
+  if (!roomState) return;
+  roomState.lobbyPlayers = lobbyPlayers;
+  roomState.pendingTrades = pendingTrades;
+  roomState.eventHistory = eventHistory;
+  roomState.botActionTimers = botActionTimers;
+  roomState.gameState = gameState;
+  roomState.actionDeck = actionDeck;
+  roomState.auctionState = auctionState;
+  roomState.auctionTimer = auctionTimer;
+  roomState.turnTimerState = turnTimerState;
+  roomState.turnTimerInterval = turnTimerInterval;
+  roomState.pausedTurnTimerState = pausedTurnTimerState;
+  roomState.pendingMoveResolution = pendingMoveResolution;
+  roomState.lastDiceTotal = lastDiceTotal;
+}
+
+function withRoomState(roomState, callback) {
+  const previous = {
+    currentRoomCode,
+    lobbyPlayers,
+    pendingTrades,
+    eventHistory,
+    botActionTimers,
+    gameState,
+    actionDeck,
+    auctionState,
+    auctionTimer,
+    turnTimerState,
+    turnTimerInterval,
+    pausedTurnTimerState,
+    pendingMoveResolution,
+    lastDiceTotal
+  };
+
+  assignRoomState(roomState);
+  try {
+    return callback();
+  } finally {
+    persistRoomState(roomState);
+    currentRoomCode = previous.currentRoomCode;
+    lobbyPlayers = previous.lobbyPlayers;
+    pendingTrades = previous.pendingTrades;
+    eventHistory = previous.eventHistory;
+    botActionTimers = previous.botActionTimers;
+    gameState = previous.gameState;
+    actionDeck = previous.actionDeck;
+    auctionState = previous.auctionState;
+    auctionTimer = previous.auctionTimer;
+    turnTimerState = previous.turnTimerState;
+    turnTimerInterval = previous.turnTimerInterval;
+    pausedTurnTimerState = previous.pausedTurnTimerState;
+    pendingMoveResolution = previous.pendingMoveResolution;
+    lastDiceTotal = previous.lastDiceTotal;
+  }
+}
+
+function getOrCreateRoomState(roomCode, hostSessionToken = null) {
+  const normalizedRoomCode = normalizeRoomCode(roomCode);
+  if (!normalizedRoomCode) return null;
+  let roomState = rooms.get(normalizedRoomCode);
+  if (!roomState) {
+    roomState = createRoomState(normalizedRoomCode, hostSessionToken);
+    rooms.set(normalizedRoomCode, roomState);
+  } else if (!roomState.hostSessionToken && hostSessionToken) {
+    roomState.hostSessionToken = hostSessionToken;
+  }
+  return roomState;
+}
+
+function emitToRoom(eventName, payload) {
+  const roomName = getSocketRoom();
+  if (!roomName) return;
+  io.to(roomName).emit(eventName, payload);
 }
 
 function pushHistoryEvent(event) {
@@ -80,7 +205,7 @@ function pushHistoryEvent(event) {
 function logEvent(text, type = 'info') {
   const event = { text, type, time: Date.now() };
   pushHistoryEvent(event);
-  io.emit('history-event', event);
+  emitToRoom('history-event', event);
 }
 
 function formatCurrency(amount) {
@@ -162,6 +287,7 @@ function getAvailableLobbyCharacters() {
 }
 
 function getLobbyState() {
+  const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
   const playerList = [...lobbyPlayers.values()]
     .filter(entry => entry.character)
     .map(entry => ({
@@ -172,6 +298,13 @@ function getLobbyState() {
     }));
 
   return {
+    roomCode: currentRoomCode,
+    joinUrl: currentRoomCode ? `/?room=${currentRoomCode}` : null,
+    hostPlayerId: roomState?.hostSessionToken
+      ? (gameState?.getPlayerBySessionToken(roomState.hostSessionToken)?.id
+        || lobbyPlayers.get(roomState.hostSessionToken)?.playerId
+        || null)
+      : null,
     players: playerList,
     characters: CHARACTERS.map(character => {
       const holder = getLobbyEntryByCharacter(character);
@@ -179,6 +312,7 @@ function getLobbyState() {
         name: character,
         taken: Boolean(holder),
         takenBy: holder?.playerId || null,
+        offline: Boolean(holder?.character && !holder?.isBot && !holder?.socketId),
         takenByBot: Boolean(holder?.isBot),
         takenByName: holder?.name || holder?.character || null
       };
@@ -187,7 +321,7 @@ function getLobbyState() {
 }
 
 function emitLobbyUpdate() {
-  io.emit('lobby-update', getLobbyState());
+  emitToRoom('lobby-update', getLobbyState());
 }
 
 function randomBotDelay(min = BOT_ACTION_MIN_MS, max = BOT_ACTION_MAX_MS) {
@@ -219,9 +353,12 @@ function clearAllBotTimers() {
 
 function scheduleBotTimer(key, delayMs, callback) {
   clearBotTimer(key);
+  const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
   const timeoutId = setTimeout(() => {
-    botActionTimers.delete(key);
-    callback();
+    withRoomState(roomState, () => {
+      botActionTimers.delete(key);
+      callback();
+    });
   }, delayMs);
   botActionTimers.set(key, timeoutId);
 }
@@ -331,6 +468,7 @@ function getViewerTrades(playerId) {
 }
 
 function buildGameStatePayload(viewerPlayerId = null) {
+  const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
   const payload = gameState ? gameState.getState() : {
     players: [],
     properties: [],
@@ -352,6 +490,13 @@ function buildGameStatePayload(viewerPlayerId = null) {
     payload.pendingTrades = getViewerTrades(viewerPlayerId);
   }
   payload.historyEvents = [...eventHistory];
+  payload.roomCode = currentRoomCode;
+  payload.joinUrl = currentRoomCode ? `/?room=${currentRoomCode}` : null;
+  payload.hostPlayerId = roomState?.hostSessionToken
+    ? (gameState?.getPlayerBySessionToken(roomState.hostSessionToken)?.id
+      || lobbyPlayers.get(roomState.hostSessionToken)?.playerId
+      || null)
+    : null;
   return payload;
 }
 
@@ -487,7 +632,7 @@ function emitGameStateSync({ restartTurnTimer = false, targetSocket = null } = {
     return;
   }
 
-  io.emit('game-state-sync', buildGameStatePayload());
+  emitToRoom('game-state-sync', buildGameStatePayload());
 }
 
 function stopTurnTimer(emitEvent = true) {
@@ -497,7 +642,7 @@ function stopTurnTimer(emitEvent = true) {
   turnTimerState = null;
   syncTurnTimerState(null);
   if (emitEvent && hadTimer) {
-    io.emit('turn-timer-stop');
+    emitToRoom('turn-timer-stop');
   }
 }
 
@@ -521,9 +666,10 @@ function startTurnTimer(phase, remainingSeconds = TURN_TIMER_SECONDS) {
     remainingSeconds
   };
   syncTurnTimerState(turnTimerState);
-  io.emit('turn-timer-start', gameState.turnTimer);
+  emitToRoom('turn-timer-start', gameState.turnTimer);
 
-  turnTimerInterval = setInterval(() => {
+  const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
+  turnTimerInterval = setInterval(() => withRoomState(roomState, () => {
     if (!gameState || !gameState.isGameStarted || !turnTimerState || auctionState || gameState.pauseState) {
       stopTurnTimer();
       return;
@@ -541,14 +687,14 @@ function startTurnTimer(phase, remainingSeconds = TURN_TIMER_SECONDS) {
 
     turnTimerState.remainingSeconds--;
     syncTurnTimerState(turnTimerState);
-    io.emit('turn-timer-tick', gameState.turnTimer);
+    emitToRoom('turn-timer-tick', gameState.turnTimer);
 
     if (turnTimerState.remainingSeconds <= 0) {
       const expiredTimer = { ...turnTimerState };
       stopTurnTimer();
       handleTurnTimeout(expiredTimer);
     }
-  }, 1000);
+  }), 1000);
 }
 
 function pauseGameForDisconnect(player) {
@@ -564,7 +710,7 @@ function pauseGameForDisconnect(player) {
     phase: gameState.turnPhase,
     remainingSeconds: pausedTurnTimerState?.remainingSeconds ?? null
   };
-  io.emit('game-paused', {
+  emitToRoom('game-paused', {
     pauseState: gameState.pauseState,
     gameState: gameState.getState()
   });
@@ -585,7 +731,7 @@ function resumePausedGameIfPossible(player) {
     stopTurnTimer(false);
   }
 
-  io.emit('game-resumed', { gameState: gameState.getState() });
+  emitToRoom('game-resumed', { gameState: gameState.getState() });
 }
 
 function setTurnPhase(phase, options = {}) {
@@ -614,12 +760,13 @@ function clearPendingMoveResolution() {
 function scheduleMoveResolution(playerId, steps, extraDelayMs = 0, resolution = {}) {
   clearPendingMoveResolution();
   const timeoutMs = DICE_ANIMATION_MS + ((steps || 0) * TOKEN_STEP_MS) + MOVE_RESOLUTION_BUFFER_MS + extraDelayMs;
+  const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
   pendingMoveResolution = {
     playerId,
     resolution,
-    timeoutId: setTimeout(() => {
+    timeoutId: setTimeout(() => withRoomState(roomState, () => {
       resolveMoveCompletion(playerId);
-    }, timeoutMs)
+    }), timeoutMs)
   };
 }
 
@@ -673,21 +820,22 @@ function startAuction(tileIndex, startingBid, initiatorId, options = {}) {
   };
 
   logEvent(`🔨 Auction started for ${tile.name}!`, 'auction');
-  io.emit('auction-started', {
+  emitToRoom('auction-started', {
     auction: auctionState,
     players: gameState.players.map(player => player.toJSON()),
     gameState: gameState.getState()
   });
   queueBotAuctionBids();
 
-  auctionTimer = setInterval(() => {
+  const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
+  auctionTimer = setInterval(() => withRoomState(roomState, () => {
     if (!auctionState) return;
     auctionState.timeRemaining--;
-    io.emit('auction-tick', { timeRemaining: auctionState.timeRemaining });
+    emitToRoom('auction-tick', { timeRemaining: auctionState.timeRemaining });
     if (auctionState.timeRemaining <= 0) {
       endAuction();
     }
-  }, 1000);
+  }), 1000);
 }
 
 function endAuction() {
@@ -720,7 +868,7 @@ function endAuction() {
   auctionState = null;
   invalidateStaleTrades();
 
-  io.emit('auction-ended', {
+  emitToRoom('auction-ended', {
     winnerId: winner?.id || null,
     winnerCharacter: winner?.character || null,
     bid: finishedAuction.currentBid,
@@ -752,7 +900,7 @@ function endAuction() {
   }
 
   setTurnPhase('waiting');
-  io.emit('turn-changed', {
+  emitToRoom('turn-changed', {
     currentPlayerId: currentPlayer.id,
     currentCharacter: currentPlayer.character,
     gameState: gameState.getState()
@@ -785,7 +933,7 @@ function handlePlaceBid(playerId, amountInput) {
   auctionState.timerMaxSeconds = auctionState.bidResetSeconds || AUCTION_BID_RESET_SECONDS;
 
   logEvent(`🔨 ${playerRecord.character} bid $${amount} on ${auctionState.tileName}`, 'bid');
-  io.emit('auction-bid', {
+  emitToRoom('auction-bid', {
     bidderId: playerRecord.id,
     bidderCharacter: playerRecord.character,
     amount,
@@ -812,7 +960,7 @@ function advanceTurnGlobal() {
   if (!nextPlayer.isConnected) {
     pauseGameForDisconnect(nextPlayer);
   }
-  io.emit('turn-changed', {
+  emitToRoom('turn-changed', {
     currentPlayerId: nextPlayer.id,
     currentCharacter: nextPlayer.character,
     gameState: gameState.getState()
@@ -848,7 +996,7 @@ function concludeGame(winner) {
 
   const summary = SummaryUtils.generateGameSummary(gameState, winner.id);
   logEvent(`🏆 ${winner.character} WINS THE GAME!`, 'win');
-  io.emit('game-over', {
+  emitToRoom('game-over', {
     winner: winner.toJSON(),
     summary,
     gameState: gameState.getState()
@@ -883,7 +1031,7 @@ function handleBankruptcy(player) {
   });
 
   logEvent(`💀 ${player.character} went BANKRUPT!`, 'bankrupt');
-  io.emit('player-bankrupt', {
+  emitToRoom('player-bankrupt', {
     playerId: player.id,
     character: player.character,
     returnedProperties: returnedProps,
@@ -910,7 +1058,7 @@ function emitBuyPrompt(player, tile) {
       gameState: gameState.getState()
     });
   }
-  io.emit('player-deciding', { character: player.character, tileName: tile.name });
+  emitToRoom('player-deciding', { character: player.character, tileName: tile.name });
   queueBotBuyDecision(player, tile);
 }
 
@@ -933,7 +1081,7 @@ function resolveActionCardAndMaybeMove(player) {
     player.stats.jailVisits++;
   }
 
-  io.emit('card-drawn', {
+  emitToRoom('card-drawn', {
     playerId: player.id,
     character: player.character,
     card,
@@ -978,7 +1126,7 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
       player.money += collected;
       logEvent(`💰 ${player.character} collected the $${collected} Bailout fund!`, 'buy');
       logPlayerMoneyDelta(player, collected, 'from the Bailout fund', 'buy');
-      io.emit('bailout-collected', {
+  emitToRoom('bailout-collected', {
         playerId: player.id,
         character: player.character,
         amount: collected,
@@ -994,7 +1142,7 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
     player.jailTurns = 0;
     player.stats.jailVisits++;
     logEvent(`🚔 ${player.character} was sent to Jail!`, 'tax');
-    io.emit('sent-to-jail', {
+  emitToRoom('sent-to-jail', {
       playerId: player.id,
       character: player.character,
       gameState: gameState.getState()
@@ -1003,11 +1151,11 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
   }
 
   if (tile.type === 'tax') {
-    const taxAmount = tile.rent;
+    const taxAmount = Rules.calculateTaxAmount(tile, player);
     player.money -= taxAmount;
     gameState.taxPool += taxAmount;
     logEvent(`💸 ${player.character} paid $${taxAmount} in ${tile.name}`, 'tax');
-    io.emit('tax-paid', {
+  emitToRoom('tax-paid', {
       playerId: player.id,
       character: player.character,
       amount: taxAmount,
@@ -1048,7 +1196,7 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
         tile.rentCollected += rent;
         tile.addHistory('rent', player.character, player.color, rent);
         logEvent(`💰 ${player.character} paid $${rent} rent to ${owner.character} for ${tile.name}`, 'rent');
-        io.emit('rent-paid', {
+  emitToRoom('rent-paid', {
           payerId: player.id,
           payerCharacter: player.character,
           ownerId: owner.id,
@@ -1124,7 +1272,7 @@ function handleRollDice(playerId) {
         logEvent(`🔓 ${currentPlayer.character} paid $50 to leave jail (3 turns).`, 'tax');
       } else {
         logEvent(`🔒 ${currentPlayer.character} failed to roll doubles (jail turn ${currentPlayer.jailTurns}/3)`, 'roll');
-        io.emit('dice-rolled', {
+        emitToRoom('dice-rolled', {
           playerId,
           character: currentPlayer.character,
           die1: diceResult.die1,
@@ -1152,7 +1300,7 @@ function handleRollDice(playerId) {
 
   logEvent(`🎲 ${currentPlayer.character} rolled ${diceResult.die1} & ${diceResult.die2}${diceResult.isDoubles ? ' (DOUBLES!)' : ''}`, 'roll');
 
-  io.emit('dice-rolled', {
+  emitToRoom('dice-rolled', {
     playerId,
     character: currentPlayer.character,
     die1: diceResult.die1,
@@ -1222,7 +1370,7 @@ function handleBuyProperty(playerId, tileIndex) {
   logEvent(`🏠 ${currentPlayer.character} bought ${tile.name} for $${tile.price}`, 'buy');
   invalidateStaleTrades();
 
-  io.emit('property-bought', {
+  emitToRoom('property-bought', {
     playerId: currentPlayer.id,
     character: currentPlayer.character,
     tileIndex: tile.index,
@@ -1416,7 +1564,7 @@ function executeAcceptedTrade(trade, accepter) {
     toCharacter: accepter.character,
     gameState: gameState.getState()
   };
-  io.emit('trade-completed', payload);
+  emitToRoom('trade-completed', payload);
   return payload;
 }
 
@@ -1537,26 +1685,89 @@ function syncBotAutomation() {
   }
 }
 
+function bindRoomHandler(socket, roomState, eventName, handler) {
+  socket.on(eventName, (...args) => {
+    if (roomState?.endedAt && eventName !== 'disconnect') return;
+    withRoomState(roomState, () => handler(...args));
+  });
+}
+
+function isRoomHost(socket, roomState) {
+  return Boolean(roomState?.hostSessionToken && socket.data.sessionToken === roomState.hostSessionToken);
+}
+
+function closeRoom(roomState, endedByCharacter = null) {
+  withRoomState(roomState, () => {
+    clearPendingMoveResolution();
+    clearAllBotTimers();
+    stopTurnTimer(false);
+    if (auctionTimer) {
+      clearInterval(auctionTimer);
+      auctionTimer = null;
+    }
+
+    roomState.endedAt = Date.now();
+    emitToRoom('room-ended', {
+      roomCode: roomState.code,
+      endedBy: endedByCharacter,
+      message: endedByCharacter
+        ? `${endedByCharacter} ended the room. Create a new invite to play again.`
+        : 'This room has ended. Create a new invite to play again.'
+    });
+
+    gameState = null;
+    actionDeck = [];
+    auctionState = null;
+    turnTimerState = null;
+    turnTimerInterval = null;
+    pausedTurnTimerState = null;
+    pendingMoveResolution = null;
+    lastDiceTotal = 0;
+    pendingTrades.clear();
+    eventHistory.length = 0;
+    lobbyPlayers.clear();
+    io.in(getSocketRoom(roomState.code)).disconnectSockets(true);
+  });
+}
+
 io.on('connection', socket => {
   socket.data.sessionToken = normalizeSessionToken(socket.handshake.auth?.sessionToken);
+  socket.data.roomCode = normalizeRoomCode(socket.handshake.auth?.roomCode || socket.handshake.query?.room);
   console.log(`✦ Player connected: ${socket.id}`);
 
-  const player = gameState?.getPlayerBySessionToken(socket.data.sessionToken) || null;
-  if (player) {
-    replaceSocketBinding(socket, player);
-    resumePausedGameIfPossible(player);
-    emitGameStateSync();
-  } else {
-    const lobbyEntry = getOrCreateLobbyEntry(socket);
-    emitPlayerSession(socket, gameState?.getPlayerById(lobbyEntry.playerId) || null);
+  if (!socket.data.roomCode) {
+    socket.emit('room-error', { message: 'Missing room code. Create or join a room first.' });
+    socket.disconnect(true);
+    return;
   }
 
-  socket.emit('lobby-update', getLobbyState());
-  if (gameState && gameState.isGameStarted) {
-    emitGameStateSync({ targetSocket: socket });
+  const roomState = getOrCreateRoomState(socket.data.roomCode, socket.data.sessionToken);
+  if (!roomState || roomState.endedAt) {
+    socket.emit('room-error', { message: 'That room is no longer available. Create a new room.' });
+    socket.disconnect(true);
+    return;
   }
 
-  socket.on('select-character', characterName => {
+  socket.join(getSocketRoom(roomState.code));
+
+  withRoomState(roomState, () => {
+    const player = gameState?.getPlayerBySessionToken(socket.data.sessionToken) || null;
+    if (player) {
+      replaceSocketBinding(socket, player);
+      resumePausedGameIfPossible(player);
+      emitGameStateSync();
+    } else {
+      const lobbyEntry = getOrCreateLobbyEntry(socket);
+      emitPlayerSession(socket, gameState?.getPlayerById(lobbyEntry.playerId) || lobbyEntry);
+    }
+
+    socket.emit('lobby-update', getLobbyState());
+    if (gameState && gameState.isGameStarted) {
+      emitGameStateSync({ targetSocket: socket });
+    }
+  });
+
+  bindRoomHandler(socket, roomState, 'select-character', characterName => {
     if (gameState && gameState.isGameStarted) {
       socket.emit('character-error', { message: 'Game already in progress' });
       return;
@@ -1582,7 +1793,7 @@ io.on('connection', socket => {
     emitLobbyUpdate();
   });
 
-  socket.on('deselect-character', () => {
+  bindRoomHandler(socket, roomState, 'deselect-character', () => {
     const entry = getLobbyEntryBySocketId(socket.id);
     if (!entry) return;
     entry.character = null;
@@ -1590,7 +1801,7 @@ io.on('connection', socket => {
     emitLobbyUpdate();
   });
 
-  socket.on('add-random-bot', () => {
+  bindRoomHandler(socket, roomState, 'add-random-bot', () => {
     if (gameState && gameState.isGameStarted) {
       socket.emit('game-error', { message: 'Add bots before starting the game.' });
       return;
@@ -1605,7 +1816,7 @@ io.on('connection', socket => {
     emitLobbyUpdate();
   });
 
-  socket.on('clear-lobby-bots', () => {
+  bindRoomHandler(socket, roomState, 'clear-lobby-bots', () => {
     if (gameState && gameState.isGameStarted) {
       socket.emit('game-error', { message: 'You can only clear bots from the lobby.' });
       return;
@@ -1615,7 +1826,7 @@ io.on('connection', socket => {
     emitLobbyUpdate();
   });
 
-  socket.on('requestStartGame', () => {
+  bindRoomHandler(socket, roomState, 'requestStartGame', () => {
     const readyPlayers = [...lobbyPlayers.values()].filter(entry => entry.character);
     if (readyPlayers.length < 2) {
       socket.emit('game-error', { message: 'Need at least 2 players to start' });
@@ -1671,11 +1882,21 @@ io.on('connection', socket => {
 
     console.log(`\n  🎮 Game started with ${readyPlayers.length} players!\n`);
     logEvent(`🎮 Game started with ${readyPlayers.length} players!`, 'system');
-    io.emit('gameStarted', buildGameStatePayload());
+    emitToRoom('gameStarted', buildGameStatePayload());
     queueBotTurnIfNeeded(gameState.getCurrentPlayer());
   });
 
-  socket.on('roll-dice', () => {
+  bindRoomHandler(socket, roomState, 'end-room', () => {
+    if (!isRoomHost(socket, roomState)) {
+      socket.emit('game-error', { message: 'Only the room host can end this room.' });
+      return;
+    }
+
+    const hostPlayer = getSocketPlayer(socket) || gameState?.getPlayerBySessionToken(socket.data.sessionToken) || lobbyPlayers.get(socket.data.sessionToken) || null;
+    closeRoom(roomState, hostPlayer?.character || 'The host');
+  });
+
+  bindRoomHandler(socket, roomState, 'roll-dice', () => {
     if (!gameState || !gameState.isGameStarted) return;
     if (auctionState) {
       socket.emit('game-error', { message: 'Auction in progress' });
@@ -1685,7 +1906,7 @@ io.on('connection', socket => {
     handleRollDice(playerRecord?.id);
   });
 
-  socket.on('move-complete', () => {
+  bindRoomHandler(socket, roomState, 'move-complete', () => {
     if (!gameState || !gameState.isGameStarted) return;
     const currentPlayer = gameState.getCurrentPlayer();
     const playerRecord = getSocketPlayer(socket);
@@ -1693,12 +1914,12 @@ io.on('connection', socket => {
     resolveMoveCompletion(playerRecord.id);
   });
 
-  socket.on('buy-property', data => {
+  bindRoomHandler(socket, roomState, 'buy-property', data => {
     const playerRecord = getSocketPlayer(socket);
     handleBuyProperty(playerRecord?.id, data.tileIndex);
   });
 
-  socket.on('buy-out-jail', () => {
+  bindRoomHandler(socket, roomState, 'buy-out-jail', () => {
     if (!gameState || !gameState.isGameStarted) return;
 
     const playerRecord = getSocketPlayer(socket);
@@ -1715,7 +1936,7 @@ io.on('connection', socket => {
     logEvent(`🔓 ${playerRecord.character} paid $50 to leave jail!`, 'tax');
     invalidateStaleTrades();
 
-    io.emit('jail-state-changed', {
+    emitToRoom('jail-state-changed', {
       playerId: playerRecord.id,
       character: playerRecord.character,
       inJail: false,
@@ -1723,7 +1944,7 @@ io.on('connection', socket => {
     });
   });
 
-  socket.on('use-pardon', () => {
+  bindRoomHandler(socket, roomState, 'use-pardon', () => {
     if (!gameState || !gameState.isGameStarted) return;
 
     const playerRecord = getSocketPlayer(socket);
@@ -1734,7 +1955,7 @@ io.on('connection', socket => {
     playerRecord.jailTurns = 0;
     logEvent(`🃏 ${playerRecord.character} used a Pardon Card to leave jail!`, 'card');
 
-    io.emit('jail-state-changed', {
+    emitToRoom('jail-state-changed', {
       playerId: playerRecord.id,
       character: playerRecord.character,
       inJail: false,
@@ -1742,12 +1963,12 @@ io.on('connection', socket => {
     });
   });
 
-  socket.on('pass-property', () => {
+  bindRoomHandler(socket, roomState, 'pass-property', () => {
     const playerRecord = getSocketPlayer(socket);
     handlePassProperty(playerRecord?.id);
   });
 
-  socket.on('dev-command', (data = {}) => {
+  bindRoomHandler(socket, roomState, 'dev-command', (data = {}) => {
     if (!isDevSocket(socket)) {
       socket.emit('game-error', { message: 'Developer tools are only available from localhost.' });
       return;
@@ -1945,7 +2166,7 @@ io.on('connection', socket => {
     emitGameStateSync({ restartTurnTimer });
   });
 
-  socket.on('own-auction', data => {
+  bindRoomHandler(socket, roomState, 'own-auction', data => {
     if (!gameState || !gameState.isGameStarted || auctionState || gameState.pauseState) return;
 
     const playerRecord = getSocketPlayer(socket);
@@ -1974,7 +2195,7 @@ io.on('connection', socket => {
     });
   });
 
-  socket.on('place-bid', data => {
+  bindRoomHandler(socket, roomState, 'place-bid', data => {
     const playerRecord = getSocketPlayer(socket);
     const result = handlePlaceBid(playerRecord?.id, data.amount);
     if (!result.ok && result.message) {
@@ -1982,7 +2203,7 @@ io.on('connection', socket => {
     }
   });
 
-  socket.on('trade-offer', data => {
+  bindRoomHandler(socket, roomState, 'trade-offer', data => {
     if (!gameState || !gameState.isGameStarted) return;
 
     const from = getSocketPlayer(socket);
@@ -2030,7 +2251,7 @@ io.on('connection', socket => {
     io.to(getPlayerRoom(trade.toId)).emit('trade-incoming', trade);
   });
 
-  socket.on('trade-accept', data => {
+  bindRoomHandler(socket, roomState, 'trade-accept', data => {
     if (!gameState || !gameState.isGameStarted) return;
 
     const accepter = getSocketPlayer(socket);
@@ -2059,7 +2280,7 @@ io.on('connection', socket => {
     executeAcceptedTrade(trade, accepter);
   });
 
-  socket.on('trade-reject', data => {
+  bindRoomHandler(socket, roomState, 'trade-reject', data => {
     if (!gameState || !gameState.isGameStarted) return;
 
     const rejecter = getSocketPlayer(socket);
@@ -2080,7 +2301,7 @@ io.on('connection', socket => {
     }
   });
 
-  socket.on('upgrade-property', data => {
+  bindRoomHandler(socket, roomState, 'upgrade-property', data => {
     if (!gameState || !gameState.isGameStarted) return;
 
     const playerRecord = getSocketPlayer(socket);
@@ -2110,7 +2331,7 @@ io.on('connection', socket => {
     logEvent(`🏗️ ${playerRecord.character} built ${label} on ${tile.name} ($${upgradeCost})`, 'buy');
     invalidateStaleTrades();
 
-    io.emit('property-upgraded', {
+    emitToRoom('property-upgraded', {
       playerId: playerRecord.id,
       character: playerRecord.character,
       tileIndex: tile.index,
@@ -2121,7 +2342,7 @@ io.on('connection', socket => {
     });
   });
 
-  socket.on('downgrade-property', data => {
+  bindRoomHandler(socket, roomState, 'downgrade-property', data => {
     if (!gameState || !gameState.isGameStarted) return;
 
     const playerRecord = getSocketPlayer(socket);
@@ -2145,7 +2366,7 @@ io.on('connection', socket => {
     logEvent(`🔻 ${playerRecord.character} sold a house on ${tile.name} (+$${refund})`, 'sell');
     invalidateStaleTrades();
 
-    io.emit('property-downgraded', {
+    emitToRoom('property-downgraded', {
       playerId: playerRecord.id,
       character: playerRecord.character,
       tileIndex: tile.index,
@@ -2156,7 +2377,7 @@ io.on('connection', socket => {
     });
   });
 
-  socket.on('mortgage-property', data => {
+  bindRoomHandler(socket, roomState, 'mortgage-property', data => {
     if (!gameState || !gameState.isGameStarted) return;
 
     const playerRecord = getSocketPlayer(socket);
@@ -2180,7 +2401,7 @@ io.on('connection', socket => {
     logEvent(`🏦 ${playerRecord.character} mortgaged ${tile.name} (+$${mortgageValue})`, 'sell');
     invalidateStaleTrades();
 
-    io.emit('property-mortgaged', {
+    emitToRoom('property-mortgaged', {
       playerId: playerRecord.id,
       character: playerRecord.character,
       tileIndex: tile.index,
@@ -2190,7 +2411,7 @@ io.on('connection', socket => {
     });
   });
 
-  socket.on('unmortgage-property', data => {
+  bindRoomHandler(socket, roomState, 'unmortgage-property', data => {
     if (!gameState || !gameState.isGameStarted) return;
 
     const playerRecord = getSocketPlayer(socket);
@@ -2215,7 +2436,7 @@ io.on('connection', socket => {
     logEvent(`🏦 ${playerRecord.character} unmortgaged ${tile.name} (-$${unmortgageCost})`, 'buy');
     invalidateStaleTrades();
 
-    io.emit('property-unmortgaged', {
+    emitToRoom('property-unmortgaged', {
       playerId: playerRecord.id,
       character: playerRecord.character,
       tileIndex: tile.index,
@@ -2225,7 +2446,7 @@ io.on('connection', socket => {
     });
   });
 
-  socket.on('sell-property', data => {
+  bindRoomHandler(socket, roomState, 'sell-property', data => {
     if (!gameState || !gameState.isGameStarted) return;
 
     const playerRecord = getSocketPlayer(socket);
@@ -2251,7 +2472,7 @@ io.on('connection', socket => {
     logEvent(`💰 ${playerRecord.character} sold ${tile.name} to the bank (+$${sellValue})`, 'sell');
     invalidateStaleTrades();
 
-    io.emit('property-sold', {
+    emitToRoom('property-sold', {
       playerId: playerRecord.id,
       character: playerRecord.character,
       tileIndex: tile.index,
@@ -2261,7 +2482,7 @@ io.on('connection', socket => {
     });
   });
 
-  socket.on('disconnect', () => {
+  bindRoomHandler(socket, roomState, 'disconnect', () => {
     if (supersededSocketIds.delete(socket.id)) {
       return;
     }

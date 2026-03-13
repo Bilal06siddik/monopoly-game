@@ -74,6 +74,11 @@ const Lobby = (() => {
     }
 
     function bindEvents() {
+        socket.on('player-session', (data) => {
+            selectedCharacter = data.character || null;
+            if (lobbyState) renderCharacters(lobbyState);
+        });
+
         socket.on('lobby-update', (state) => {
             lobbyState = state;
             renderCharacters(state);
@@ -110,6 +115,7 @@ const Lobby = (() => {
             const stats   = CHARACTER_STATS[char.name];
             const display = CHARACTER_DISPLAY[char.name];
             const imgSrc  = `./characters/${char.name}.png`;
+            const statusLabel = isMine ? 'SELECTED' : isTaken ? (char.offline ? 'OFFLINE' : 'TAKEN') : 'SELECT';
 
             const wrapper = document.createElement('div');
             wrapper.className = 'tcg-card-wrapper' + (isMine ? ' selected' : '') + (isTaken ? ' taken' : '');
@@ -130,7 +136,7 @@ const Lobby = (() => {
                         </div>
 
                         <div class="tcg-card-footer">
-                            <button class="tcg-select-btn">${isMine ? 'SELECTED' : isTaken ? 'TAKEN' : 'SELECT'}</button>
+                            <button class="tcg-select-btn">${statusLabel}</button>
                         </div>
                     </div>
 

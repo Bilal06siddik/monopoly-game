@@ -82,6 +82,11 @@
 
     <!-- Top Bar -->
     <div class="top-bar">
+      <div id="hud-room-chip" class="hud-room-chip hidden">
+        <span id="hud-room-code">ROOM</span>
+        <button id="hud-copy-room-link-btn" class="hud-room-btn" type="button">Copy Invite</button>
+        <button id="hud-end-room-btn" class="hud-room-btn danger hidden" type="button">End Room</button>
+      </div>
       <div id="turn-indicator" class="turn-indicator"></div>
       <div id="turn-timer" class="turn-timer hidden"></div>
       <div id="dice-result" class="dice-result hidden"></div>
@@ -434,10 +439,37 @@
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
   
   <div id="lobby-screen">
+    <div id="room-gate" class="room-gate hidden">
+      <div class="room-gate-card">
+        <p class="room-gate-kicker">PRIVATE ROOM</p>
+        <h2>Create a room or join a friend's invite</h2>
+        <p class="room-gate-copy">Each room gets its own private lobby and match. Refreshing keeps you in the same room.</p>
+        <div class="room-gate-actions">
+          <button id="create-room-btn" class="start-game-btn">CREATE ROOM</button>
+          <div class="room-join-form">
+            <input id="room-code-input" class="room-code-input" type="text" maxlength="12" placeholder="ENTER ROOM CODE" />
+            <button id="join-room-btn" class="secondary-lobby-btn">JOIN ROOM</button>
+          </div>
+        </div>
+        <div id="room-gate-status" class="room-gate-status"></div>
+      </div>
+    </div>
+
     <div class="tcg-room">
       <div class="tcg-header">
         <h1 class="tcg-title">SELECT YOUR CHAMPION</h1>
         <p class="tcg-subtitle">CHOOSE YOUR DEED TO BEGIN</p>
+      </div>
+
+      <div id="room-banner" class="room-banner hidden">
+        <div>
+          <div class="room-banner-label">ROOM CODE</div>
+          <div id="room-code-display" class="room-banner-code">------</div>
+        </div>
+        <div class="room-banner-actions">
+          <button id="copy-room-link-btn" class="secondary-lobby-btn subtle">COPY INVITE</button>
+          <button id="end-room-btn" class="secondary-lobby-btn danger hidden">END ROOM</button>
+        </div>
       </div>
 
       <!-- Dynamically generated TCG cards will go here in a 3x2 grid -->

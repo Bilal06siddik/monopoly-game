@@ -576,6 +576,10 @@ const GameBoard = (() => {
     }
 
     function getTileIconText(tile) {
+        const name = typeof tile.name === 'string' ? tile.name.toLowerCase() : '';
+        if (name.includes('lucky wheel')) return 'WHEEL';
+        if (name.includes('happy birthday')) return 'BDAY';
+        if (name.includes('income tax')) return '10%';
         if (tile.type === 'chance') return 'CHANCE';
         if (tile.type === 'chest') return 'CHEST';
         if (tile.type === 'tax') return 'TAX';

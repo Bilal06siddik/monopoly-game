@@ -402,6 +402,139 @@ body {
   cursor: not-allowed;
 }
 
+.secondary-lobby-btn.danger,
+.hud-room-btn.danger {
+  border-color: rgba(255, 107, 107, 0.6);
+  color: #ffd8d8;
+}
+
+.room-gate {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(circle at top, rgba(27, 35, 55, 0.92), rgba(7, 12, 22, 0.97));
+  z-index: 50;
+}
+
+.room-gate-card {
+  width: min(560px, 100%);
+  padding: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 24px;
+  background: rgba(8, 14, 24, 0.92);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+
+.room-gate-kicker,
+.room-banner-label {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.room-gate-copy {
+  margin: 12px auto 20px;
+  max-width: 42ch;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.room-gate-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+}
+
+.room-join-form {
+  width: 100%;
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.room-code-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 280px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  padding: 14px 16px;
+  font: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  text-align: center;
+}
+
+.room-gate-status {
+  min-height: 1.4em;
+  margin-top: 12px;
+  color: #ffd6d6;
+}
+
+.room-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 14px 18px;
+  border-radius: 18px;
+  background: rgba(5, 12, 20, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.room-banner-code {
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+}
+
+.room-banner-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.hud-room-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(8, 15, 26, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.hud-room-btn {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  border-radius: 999px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .room-join-form,
+  .room-banner,
+  .hud-room-chip {
+    flex-direction: column;
+  }
+
+  .room-code-input {
+    max-width: none;
+    width: 100%;
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════
    GAME HUD — Layout
    ═══════════════════════════════════════════════════════════ */

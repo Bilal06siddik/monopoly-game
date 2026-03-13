@@ -11,15 +11,21 @@
     GameTokens.init(scene, GameBoard.getTileWorldPosition);
 
     const SESSION_TOKEN_KEY = 'monopoly-session-token';
+    const ROOM_CODE_KEY = 'monopoly-room-code';
     const DEFAULT_VIEW_MODE = 'isometric';
     const sessionToken = getOrCreateSessionToken();
-    const socket = io({ auth: { sessionToken } });
+    const initialRoomCode = resolveInitialRoomCode();
+    const socket = io({ autoConnect: false, auth: { sessionToken, roomCode: initialRoomCode || undefined } });
     let myPlayerId = null;
     let currentGameState = null;
+    let activeRoomCode = initialRoomCode;
     let focusedTileIndex = null;
     const cameraViewBtn = document.getElementById('camera-view-btn');
     const cameraTopdownBtn = document.getElementById('camera-topdown-btn');
     const cameraResetBtn = document.getElementById('camera-reset-btn');
+    const roomGate = document.getElementById('room-gate');
+    const roomGateStatus = document.getElementById('room-gate-status');
+    const roomCodeInput = document.getElementById('room-code-input');
 
     function getOrCreateSessionToken() {
         let token = sessionStorage.getItem(SESSION_TOKEN_KEY);
@@ -29,6 +35,109 @@
         }
         localStorage.removeItem(SESSION_TOKEN_KEY);
         return token;
+    }
+
+    function normalizeRoomCode(value) {
+        return (typeof value === 'string' ? value : '')
+            .trim()
+            .toUpperCase()
+            .replace(/[^A-Z0-9]/g, '')
+            .slice(0, 12);
+    }
+
+    function resolveInitialRoomCode() {
+        const params = new URLSearchParams(window.location.search);
+        const roomFromUrl = normalizeRoomCode(params.get('room'));
+        if (roomFromUrl) {
+            sessionStorage.setItem(ROOM_CODE_KEY, roomFromUrl);
+            return roomFromUrl;
+        }
+
+        return normalizeRoomCode(sessionStorage.getItem(ROOM_CODE_KEY));
+    }
+
+    function generateRoomCode() {
+        return Math.random().toString(36).slice(2, 8).toUpperCase();
+    }
+
+    function buildInviteUrl(roomCode = activeRoomCode) {
+        return `${window.location.origin}${window.location.pathname}?room=${roomCode}`;
+    }
+
+    function setRoomCode(roomCode) {
+        activeRoomCode = normalizeRoomCode(roomCode);
+        if (!activeRoomCode) return;
+        sessionStorage.setItem(ROOM_CODE_KEY, activeRoomCode);
+        const url = new URL(window.location.href);
+        url.searchParams.set('room', activeRoomCode);
+        window.history.replaceState({}, '', url);
+        socket.auth = { sessionToken, roomCode: activeRoomCode };
+    }
+
+    function clearRoomCode() {
+        activeRoomCode = null;
+        sessionStorage.removeItem(ROOM_CODE_KEY);
+        const url = new URL(window.location.href);
+        url.searchParams.delete('room');
+        window.history.replaceState({}, '', url);
+    }
+
+    function setRoomGateStatus(message = '') {
+        if (roomGateStatus) roomGateStatus.textContent = message;
+    }
+
+    function showRoomGate(message = '') {
+        roomGate?.classList.remove('hidden');
+        setRoomGateStatus(message);
+        roomCodeInput?.focus();
+    }
+
+    function hideRoomGate() {
+        roomGate?.classList.add('hidden');
+        setRoomGateStatus('');
+    }
+
+    function connectToRoom(roomCode) {
+        const normalized = normalizeRoomCode(roomCode);
+        if (!normalized) {
+            showRoomGate('Enter a valid room code.');
+            return;
+        }
+
+        setRoomCode(normalized);
+        hideRoomGate();
+        if (socket.connected) {
+            socket.disconnect();
+        }
+        socket.connect();
+    }
+
+    async function copyInvite(roomCode = activeRoomCode) {
+        const inviteUrl = buildInviteUrl(roomCode);
+        try {
+            await navigator.clipboard.writeText(inviteUrl);
+            Notifications.show('Invite link copied', 'success', 2000);
+        } catch (error) {
+            Notifications.show(inviteUrl, 'info', 5000);
+        }
+    }
+
+    function syncRoomChrome(state = currentGameState) {
+        const roomCode = normalizeRoomCode(state?.roomCode || activeRoomCode);
+        const isHost = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
+        const roomBanner = document.getElementById('room-banner');
+        const roomCodeDisplay = document.getElementById('room-code-display');
+        const lobbyEndBtn = document.getElementById('end-room-btn');
+        const hudRoomChip = document.getElementById('hud-room-chip');
+        const hudRoomCode = document.getElementById('hud-room-code');
+        const hudEndBtn = document.getElementById('hud-end-room-btn');
+
+        roomBanner?.classList.toggle('hidden', !roomCode);
+        if (roomCodeDisplay) roomCodeDisplay.textContent = roomCode || '------';
+        if (hudRoomCode) hudRoomCode.textContent = roomCode ? `Room ${roomCode}` : 'Room';
+        hudRoomChip?.classList.toggle('hidden', !roomCode);
+        lobbyEndBtn?.classList.toggle('hidden', !isHost);
+        hudEndBtn?.classList.toggle('hidden', !isHost);
     }
 
     function setFocusedTile(tileIndex) {
@@ -55,6 +164,7 @@
         if (typeof DevPanel !== 'undefined' && DevPanel.updateState) {
             DevPanel.updateState(state);
         }
+        syncRoomChrome(state);
         syncCameraViewState();
     }
 
@@ -312,6 +422,7 @@
 
     socket.on('connect', () => {
         console.log('🔌 Connected:', socket.id);
+        hideRoomGate();
         Notifications.show('Connected to game server', 'info', 2000);
     });
 
@@ -327,7 +438,24 @@
         GameUI.updateMyPlayerId(myPlayerId);
         TradeSystem.updatePlayerId(myPlayerId);
         AuctionSystem.updatePlayerId(myPlayerId);
+        syncRoomChrome();
         syncCameraViewState();
+    });
+
+    socket.on('lobby-update', (state) => {
+        syncRoomChrome(state);
+    });
+
+    socket.on('room-error', (data) => {
+        clearRoomCode();
+        setTimeout(() => window.location.assign(window.location.pathname), 150);
+        Notifications.show(data?.message || 'Room unavailable', 'error', 4000);
+    });
+
+    socket.on('room-ended', (data) => {
+        clearRoomCode();
+        Notifications.show(data?.message || 'Room ended', 'info', 5000);
+        setTimeout(() => window.location.assign(window.location.pathname), 250);
     });
 
     // ── Init all systems ──────────────────────────────────
@@ -342,6 +470,37 @@
     GameScene.onViewModeChange(() => {
         syncCameraViewState();
     });
+
+    document.getElementById('create-room-btn')?.addEventListener('click', () => {
+        connectToRoom(generateRoomCode());
+    });
+
+    document.getElementById('join-room-btn')?.addEventListener('click', () => {
+        connectToRoom(roomCodeInput?.value || '');
+    });
+
+    roomCodeInput?.addEventListener('input', () => {
+        roomCodeInput.value = normalizeRoomCode(roomCodeInput.value);
+        setRoomGateStatus('');
+    });
+
+    roomCodeInput?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            connectToRoom(roomCodeInput.value);
+        }
+    });
+
+    document.getElementById('copy-room-link-btn')?.addEventListener('click', () => copyInvite());
+    document.getElementById('hud-copy-room-link-btn')?.addEventListener('click', () => copyInvite());
+    document.getElementById('end-room-btn')?.addEventListener('click', () => socket.emit('end-room'));
+    document.getElementById('hud-end-room-btn')?.addEventListener('click', () => socket.emit('end-room'));
+
+    if (activeRoomCode) {
+        connectToRoom(activeRoomCode);
+    } else {
+        showRoomGate();
+    }
 
     if (cameraViewBtn) {
         cameraViewBtn.addEventListener('click', () => {
@@ -683,7 +842,19 @@
         rentTiersEl.innerHTML = '';
         if (tile.type === 'property' && tile.rent > 0) {
             const ownerHasFullSet = prop?.owner && ownsFullColorGroup(prop.owner, tile);
-            const multipliers = [ownerHasFullSet ? 2 : 1, 5, 15, 45, 80, 125];
+            const rentTiers = Array.isArray(tile.rentTiers) && tile.rentTiers.length === 6
+                ? [...tile.rentTiers]
+                : null;
+            const amounts = rentTiers
+                ? [ownerHasFullSet ? rentTiers[0] * 2 : rentTiers[0], ...rentTiers.slice(1)]
+                : [
+                    tile.rent * (ownerHasFullSet ? 2 : 1),
+                    tile.rent * 5,
+                    tile.rent * 15,
+                    tile.rent * 45,
+                    tile.rent * 80,
+                    tile.rent * 125
+                ];
             const labels = [
                 ownerHasFullSet ? 'No house (set bonus)' : 'No house',
                 '1 house',
@@ -692,10 +863,10 @@
                 '4 houses',
                 'Hotel'
             ];
-            multipliers.forEach((m, idx) => {
+            amounts.forEach((amount, idx) => {
                 const row = document.createElement('div');
                 row.className = `pdm-rent-row${prop?.houses === idx ? ' current' : ''}`;
-                row.innerHTML = `<span>with ${labels[idx]}</span><span class="pdm-rent-val">$${tile.rent * m}</span>`;
+                row.innerHTML = `<span>with ${labels[idx]}</span><span class="pdm-rent-val">$${amount}</span>`;
                 rentTiersEl.appendChild(row);
             });
         } else if (tile.type === 'railroad') {

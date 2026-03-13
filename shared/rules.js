@@ -122,15 +122,30 @@
         }
 
         if (property.type === 'property') {
+            const rentTiers = Array.isArray(property.rentTiers) ? property.rentTiers : null;
             if ((property.houses || 0) > 0) {
+                if (rentTiers?.[property.houses] != null) {
+                    return rentTiers[property.houses];
+                }
                 return property.rent * (HOUSE_MULTIPLIERS[property.houses] || 1);
             }
             if (playerOwnsFullColorGroup(properties, property.owner, property.colorGroup)) {
-                return property.rent * 2;
+                return (rentTiers?.[0] ?? property.rent) * 2;
             }
         }
 
         return property.rent;
+    }
+
+    function calculateTaxAmount(tile, player) {
+        if (!tile || tile.type !== 'tax') return 0;
+
+        const playerMoney = Number.isFinite(player?.money) ? player.money : 0;
+        if (typeof tile.name === 'string' && tile.name.toLowerCase().includes('income tax')) {
+            return Math.max(0, Math.floor(playerMoney * 0.1));
+        }
+
+        return Math.max(0, Number(tile.rent) || 0);
     }
 
     function findNearestTileIndex(properties, startIndex, type) {
@@ -159,6 +174,7 @@
         validateUpgrade,
         validateDowngrade,
         calculateRent,
+        calculateTaxAmount,
         findNearestTileIndex
     };
 });

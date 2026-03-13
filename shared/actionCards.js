@@ -40,7 +40,7 @@ const ACTION_CARDS = [
     },
     {
         id: 5,
-        text: 'Advance to Fifth Settlement.',
+        text: 'Advance to Sheikh Zayed.',
         emoji: '🏘️',
         type: 'moveAbsolute',
         targetIndex: 32,

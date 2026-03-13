@@ -39,6 +39,17 @@ test('houses override monopoly double-rent handling', () => {
     assert.equal(rent, game.properties[1].rent * 5);
 });
 
+test('custom rent tiers are used for upgraded properties', () => {
+    const { game, p1 } = createGame();
+    [31, 32, 34].forEach(index => {
+        game.properties[index].owner = p1.id;
+    });
+    game.properties[34].houses = 3;
+
+    const rent = Rules.calculateRent(game.properties, game.properties[34], 8);
+    assert.equal(rent, 1000);
+});
+
 test('mortgaged properties collect no rent', () => {
     const { game, p1 } = createGame();
     game.properties[1].owner = p1.id;
@@ -170,6 +181,14 @@ test('nearest utility card movement captures the rolled utility dice total', () 
 
     assert.equal(result.moveResult.newPosition, 28);
     assert.equal(result.evaluationContext.utilityDiceTotal, 7);
+});
+
+test('income tax charges 10 percent of the player cash', () => {
+    const { game, p1 } = createGame();
+    p1.money = 1375;
+
+    const taxAmount = Rules.calculateTaxAmount(game.properties[4], p1);
+    assert.equal(taxAmount, 137);
 });
 
 test('collect-from-each-player cards transfer money from every active player', () => {
