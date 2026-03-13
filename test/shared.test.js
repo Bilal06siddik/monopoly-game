@@ -124,21 +124,23 @@ test('trade validation enforces cash availability', () => {
     assert.equal(validation.code, 'insufficient-offer-cash');
 });
 
-test('trade validation rejects bot participants', () => {
+test('trade validation allows bot participants when the offer is otherwise valid', () => {
     const { game, p1, p2 } = createGame();
     p2.isBot = true;
+
+    game.properties[5].owner = p1.id;
 
     const validation = TradeUtils.validateTradeOffer(game, {
         fromId: p1.id,
         toId: p2.id,
-        offerProperties: [],
+        offerProperties: [5],
         offerCash: 25,
         requestProperties: [],
         requestCash: 0
     });
 
-    assert.equal(validation.ok, false);
-    assert.equal(validation.code, 'bot-trade');
+    assert.equal(validation.ok, true);
+    assert.equal(validation.value.toId, p2.id);
 });
 
 test('nearest railroad card movement sets double-rent evaluation', () => {

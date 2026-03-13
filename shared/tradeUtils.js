@@ -39,9 +39,6 @@
         if (!from.isActive || !to.isActive) {
             return { ok: false, code: 'inactive-player', message: 'Trades require two active players.' };
         }
-        if (from.isBot || to.isBot) {
-            return { ok: false, code: 'bot-trade', message: 'Bots do not trade in test games yet.' };
-        }
 
         const offerCash = normalizeCash(tradeInput.offerCash);
         const requestCash = normalizeCash(tradeInput.requestCash);

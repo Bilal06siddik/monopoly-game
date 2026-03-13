@@ -254,7 +254,7 @@ const GameUI = (() => {
             ${botBadge}
             ${disconnectedBadge}
           </div>
-          ${player.id !== myPlayerId && player.isActive && !player.isBot ? `<button class="lb-trade-btn" data-player-id="${player.id}">🤝 Trade</button>` : ''}
+          ${player.id !== myPlayerId && player.isActive ? `<button class="lb-trade-btn" data-player-id="${player.id}">🤝 Trade</button>` : ''}
         `;
             }
             panel.appendChild(element);

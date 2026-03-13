@@ -419,6 +419,7 @@ function removePendingTrade(tradeId, invalidation = null) {
   const trade = pendingTrades.get(tradeId);
   if (!trade) return null;
 
+  clearBotTimer(`trade:${tradeId}`);
   pendingTrades.delete(tradeId);
 
   if (invalidation) {
@@ -1182,9 +1183,18 @@ function handlePassProperty(playerId, { timedOut = false } = {}) {
   if (!tile) return false;
 
   if (timedOut) {
-    logEvent(`⏰ ${currentPlayer.character} ran out of time on ${tile.name}. Starting auction.`, 'system');
+    if (currentPlayer.isBot) {
+      logEvent(`⏰ ${currentPlayer.character} ran out of time on ${tile.name}. Skipping the auction.`, 'system');
+    } else {
+      logEvent(`⏰ ${currentPlayer.character} ran out of time on ${tile.name}. Starting auction.`, 'system');
+    }
   } else {
     logEvent(`⏭️ ${currentPlayer.character} passed on ${tile.name}`, 'pass');
+  }
+
+  if (currentPlayer.isBot) {
+    advanceTurnGlobal();
+    return true;
   }
 
   setTurnPhase('auctioning');
@@ -1298,6 +1308,158 @@ function getBotBidCap(player, tile) {
   return Math.max(0, Math.min(player.money, cap));
 }
 
+function getPlayerTradeAssetValue(player, propertyIndexes) {
+  if (!gameState || !player) return 0;
+
+  return (propertyIndexes || []).reduce((total, index) => {
+    const tile = gameState.properties[index];
+    if (!tile) return total;
+
+    let value = tile.price || 0;
+    if (tile.type === 'railroad') {
+      const railroadCount = gameState.properties.filter(entry => entry.type === 'railroad' && entry.owner === player.id).length;
+      value += railroadCount * 25;
+    } else if (tile.type === 'utility') {
+      const utilityCount = gameState.properties.filter(entry => entry.type === 'utility' && entry.owner === player.id).length;
+      value += utilityCount * 20;
+    } else if (tile.type === 'property' && tile.colorGroup) {
+      if (wouldOwnFullColorGroup(player.id, tile)) {
+        value += 120;
+      }
+      value += (tile.houses || 0) * Math.floor(tile.price * 0.5);
+    }
+
+    if (tile.isMortgaged) {
+      value -= Math.floor((tile.price || 0) * 0.25);
+    }
+
+    return total + value;
+  }, 0);
+}
+
+function shouldBotAcceptTrade(trade) {
+  if (!gameState || !trade) return false;
+
+  const bot = gameState.getPlayerById(trade.toId);
+  const otherPlayer = gameState.getPlayerById(trade.fromId);
+  if (!bot || !otherPlayer || !bot.isBot || !bot.isActive || !otherPlayer.isActive) return false;
+
+  const incomingCash = trade.requestCash;
+  const outgoingCash = trade.offerCash;
+  const incomingValue = getPlayerTradeAssetValue(bot, trade.requestProperties);
+  const outgoingValue = getPlayerTradeAssetValue(otherPlayer, trade.offerProperties);
+
+  let score = incomingCash + incomingValue - outgoingCash - outgoingValue;
+
+  if ((trade.requestProperties || []).length === 0 && trade.requestCash > 0) {
+    score += 20;
+  }
+  if ((trade.offerProperties || []).length === 0 && trade.offerCash > 0) {
+    score -= 15;
+  }
+
+  return score >= -25;
+}
+
+function executeAcceptedTrade(trade, accepter) {
+  if (!gameState || !trade || !accepter) return null;
+
+  const offerer = gameState.getPlayerById(trade.fromId);
+  if (!offerer) return null;
+
+  const offererMoneyBefore = offerer.money;
+  const accepterMoneyBefore = accepter.money;
+
+  offerer.money -= trade.offerCash;
+  offerer.money += trade.requestCash;
+  accepter.money += trade.offerCash;
+  accepter.money -= trade.requestCash;
+
+  trade.offerProperties.forEach(index => {
+    const tile = gameState.properties[index];
+    if (!tile || tile.owner !== trade.fromId) return;
+    tile.owner = accepter.id;
+    tile.addHistory('trade', accepter.character, accepter.color, 0);
+  });
+  trade.requestProperties.forEach(index => {
+    const tile = gameState.properties[index];
+    if (!tile || tile.owner !== accepter.id) return;
+    tile.owner = offerer.id;
+    tile.addHistory('trade', offerer.character, offerer.color, 0);
+  });
+
+  offerer.stats.tradesCompleted++;
+  accepter.stats.tradesCompleted++;
+  syncPlayerPropertyLists();
+  removePendingTrade(trade.id);
+  invalidateStaleTrades();
+
+  logEvent(`✅ ${accepter.character} accepted trade with ${offerer.character}!`, 'trade');
+  logPlayerMoneyDelta(
+    offerer,
+    offerer.money - offererMoneyBefore,
+    describeTradeCashForPlayer(offerer, trade, accepter),
+    'trade'
+  );
+  logPlayerMoneyDelta(
+    accepter,
+    accepter.money - accepterMoneyBefore,
+    describeTradeCashForPlayer(accepter, trade, offerer),
+    'trade'
+  );
+
+  const payload = {
+    tradeId: trade.id,
+    fromId: offerer.id,
+    toId: accepter.id,
+    fromCharacter: offerer.character,
+    toCharacter: accepter.character,
+    gameState: gameState.getState()
+  };
+  io.emit('trade-completed', payload);
+  return payload;
+}
+
+function queueBotTradeDecision(trade) {
+  if (!gameState || !trade) return;
+
+  const bot = gameState.getPlayerById(trade.toId);
+  if (!bot?.isBot || !bot.isActive) return;
+
+  scheduleBotTimer(`trade:${trade.id}`, randomBotDelay(), () => {
+    if (!gameState) return;
+
+    const liveTrade = pendingTrades.get(trade.id);
+    if (!liveTrade) return;
+
+    const validation = TradeUtils.validateTradeOffer(gameState, liveTrade);
+    if (!validation.ok) {
+      removePendingTrade(liveTrade.id, {
+        code: validation.code,
+        message: validation.message
+      });
+      return;
+    }
+
+    const liveBot = gameState.getPlayerById(liveTrade.toId);
+    const offerer = gameState.getPlayerById(liveTrade.fromId);
+    if (!liveBot || !offerer) return;
+
+    if (shouldBotAcceptTrade(liveTrade)) {
+      executeAcceptedTrade(liveTrade, liveBot);
+      return;
+    }
+
+    removePendingTrade(liveTrade.id);
+    logEvent(`❌ ${liveBot.character} rejected trade from ${offerer.character}`, 'trade');
+    io.to(getPlayerRoom(offerer.id)).emit('trade-rejected', {
+      tradeId: liveTrade.id,
+      fromId: offerer.id,
+      toId: liveBot.id
+    });
+  });
+}
+
 function queueBotTurnIfNeeded(player = gameState?.getCurrentPlayer()) {
   clearBotTimersByPrefix('turn:');
 
@@ -1340,40 +1502,7 @@ function queueBotBuyDecision(player, tile) {
 
 function queueBotAuctionBids() {
   clearBotTimersByPrefix('auction:');
-
   if (!gameState || !auctionState || gameState.pauseState) return;
-
-  const tile = gameState.properties[auctionState.tileIndex];
-  if (!tile) return;
-
-  gameState.players
-    .filter(player => player.isBot && player.isActive)
-    .forEach(player => {
-      if (auctionState.currentBidderId === player.id) return;
-
-      scheduleBotTimer(`auction:${player.id}`, randomBotDelay(700, 1500), () => {
-        if (!gameState || !auctionState || gameState.pauseState) return;
-
-        const livePlayer = gameState.getPlayerById(player.id);
-        const liveTile = gameState.properties[auctionState.tileIndex];
-        if (!livePlayer || !livePlayer.isBot || !livePlayer.isActive || !liveTile) return;
-        if (auctionState.currentBidderId === livePlayer.id) return;
-
-        const maxBid = getBotBidCap(livePlayer, liveTile);
-        const possibleBids = BOT_BID_INCREMENTS
-          .map(increment => auctionState.currentBid + increment)
-          .filter(amount => amount <= maxBid && amount <= livePlayer.money);
-
-        if (possibleBids.length === 0) return;
-
-        const bidChance = liveTile.type === 'property' ? 0.72 : 0.64;
-        if (Math.random() > bidChance) return;
-
-        const choicePool = possibleBids.slice(0, Math.min(possibleBids.length, 3));
-        const bid = choicePool[Math.floor(Math.random() * choicePool.length)];
-        handlePlaceBid(livePlayer.id, bid);
-      });
-    });
 }
 
 function syncBotAutomation() {
@@ -1888,11 +2017,17 @@ io.on('connection', socket => {
 
     pendingTrades.set(tradeId, trade);
     logEvent(`🤝 ${from.character} offered a trade to ${trade.toCharacter}`, 'trade');
-    io.to(getPlayerRoom(trade.toId)).emit('trade-incoming', trade);
     socket.emit('trade-sent', {
       trade,
       replacedTradeId: trade.counterToTradeId || null
     });
+
+    if (gameState.getPlayerById(trade.toId)?.isBot) {
+      queueBotTradeDecision(trade);
+      return;
+    }
+
+    io.to(getPlayerRoom(trade.toId)).emit('trade-incoming', trade);
   });
 
   socket.on('trade-accept', data => {
@@ -1921,56 +2056,7 @@ io.on('connection', socket => {
       return;
     }
 
-    const offerer = gameState.getPlayerById(trade.fromId);
-    if (!offerer) return;
-
-    const offererMoneyBefore = offerer.money;
-    const accepterMoneyBefore = accepter.money;
-    offerer.money -= trade.offerCash;
-    offerer.money += trade.requestCash;
-    accepter.money += trade.offerCash;
-    accepter.money -= trade.requestCash;
-
-    trade.offerProperties.forEach(index => {
-      const tile = gameState.properties[index];
-      if (!tile || tile.owner !== trade.fromId) return;
-      tile.owner = accepter.id;
-      tile.addHistory('trade', accepter.character, accepter.color, 0);
-    });
-    trade.requestProperties.forEach(index => {
-      const tile = gameState.properties[index];
-      if (!tile || tile.owner !== accepter.id) return;
-      tile.owner = offerer.id;
-      tile.addHistory('trade', offerer.character, offerer.color, 0);
-    });
-
-    offerer.stats.tradesCompleted++;
-    accepter.stats.tradesCompleted++;
-    syncPlayerPropertyLists();
-    removePendingTrade(trade.id);
-    invalidateStaleTrades();
-
-    logEvent(`✅ ${accepter.character} accepted trade with ${offerer.character}!`, 'trade');
-    logPlayerMoneyDelta(
-      offerer,
-      offerer.money - offererMoneyBefore,
-      describeTradeCashForPlayer(offerer, trade, accepter),
-      'trade'
-    );
-    logPlayerMoneyDelta(
-      accepter,
-      accepter.money - accepterMoneyBefore,
-      describeTradeCashForPlayer(accepter, trade, offerer),
-      'trade'
-    );
-    io.emit('trade-completed', {
-      tradeId: trade.id,
-      fromId: offerer.id,
-      toId: accepter.id,
-      fromCharacter: offerer.character,
-      toCharacter: accepter.character,
-      gameState: gameState.getState()
-    });
+    executeAcceptedTrade(trade, accepter);
   });
 
   socket.on('trade-reject', data => {

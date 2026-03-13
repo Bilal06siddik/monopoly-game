@@ -90,10 +90,6 @@ const TradeSystem = (() => {
         if (!me || !target) {
             return { ok: false, message: 'Trade participants are no longer available.' };
         }
-        if (target.isBot) {
-            return { ok: false, message: 'Bots do not accept trades in test games yet.' };
-        }
-
         const offerProperties = [...document.querySelectorAll('#trade-my-props .trade-prop-btn.selected')]
             .map(button => Number.parseInt(button.dataset.tileIndex, 10));
         const requestProperties = [...document.querySelectorAll('#trade-target-props .trade-prop-btn.selected')]
@@ -177,11 +173,6 @@ const TradeSystem = (() => {
         const me = getPlayer(myPlayerId);
         const target = getPlayer(targetId);
         if (!me || !target) return;
-        if (target.isBot) {
-            Notifications.show('Bots do not accept trades in test games yet.', 'error', 2500);
-            return;
-        }
-
         targetPlayerId = targetId;
         counterTradeId = options.counterTradeId || null;
         modal.dataset.targetId = targetId;
