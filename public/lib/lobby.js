@@ -161,6 +161,7 @@ const Lobby = (() => {
                     <!-- FRONT OF CARD -->
                     <div class="tcg-card-front">
                         <div class="tcg-card-header">
+                            <img src="/images/bank-el-haz-logo.png" class="tcg-card-logo" alt="Bank El Haz" />
                             <span class="tcg-card-name">${display}</span>
                         </div>
                         

@@ -3768,3 +3768,46 @@ body[data-view-mode="top-down"] .history-log {
   justify-content: center;
   color: var(--text-dim);
 }
+
+/* ══════════════════════════════════════════════════════
+   LUCK POPUP — Custom board event popup
+   ══════════════════════════════════════════════════════ */
+.luck-popup {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    pointer-events: none;
+    background: rgba(0, 0, 0, 0);
+    transition: background 0.5s ease;
+}
+
+.luck-popup.active {
+    background: rgba(0, 0, 0, 0.4);
+    pointer-events: auto;
+}
+
+.luck-content {
+    transform: scale(0.2) rotate(-10deg);
+    opacity: 0;
+    transition: all 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    filter: drop-shadow(0 0 40px rgba(0, 255, 127, 0.6));
+}
+
+.luck-popup.active .luck-content {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+}
+
+.luck-image {
+    max-width: 80vw;
+    max-height: 80vh;
+    border-radius: 24px;
+    border: 4px solid #00ff7f;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+}

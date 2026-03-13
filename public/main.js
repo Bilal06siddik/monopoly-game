@@ -228,6 +228,24 @@
         GameUI.updateTurnTimer(state?.pauseState ? null : (state?.turnTimer || null));
     }
 
+    function showLuckPopup(duration = 3500) {
+        const popup = document.getElementById('luck-popup');
+        if (!popup) return;
+        
+        popup.classList.remove('hidden');
+        // Small delay to ensure CSS transition works if it was just unhidden
+        requestAnimationFrame(() => {
+            popup.classList.add('active');
+        });
+
+        setTimeout(() => {
+            popup.classList.remove('active');
+            setTimeout(() => {
+                popup.classList.add('hidden');
+            }, 600); // Wait for transition out
+        }, duration);
+    }
+
     function syncWorldFromState(state) {
         if (!state) return;
 
@@ -624,6 +642,10 @@
                 () => {
                     applyState(data.gameState, { syncWorld: false, syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
                     if (data.playerId === myPlayerId) {
+                        // Trigger luck popup if landed exactly on GO (index 0)
+                        if (data.moveResult.newPosition === 0) {
+                            showLuckPopup();
+                        }
                         socket.emit('move-complete');
                     }
                 }
@@ -719,6 +741,9 @@
         applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
         if (data.playerId === myPlayerId) {
             Notifications.show(`💰 You collected $${data.amount} from the Bailout fund!`, 'success', 4000);
+            if (data.amount > 0) {
+                showLuckPopup();
+            }
         } else {
             Notifications.show(`💰 ${data.character} collected $${data.amount} Bailout!`, 'hype', 3000);
         }
