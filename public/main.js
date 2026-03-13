@@ -4,6 +4,32 @@
 
 (function () {
     'use strict';
+    
+    // --- INTRO ANIMATION SEQUENCE ---
+    (function initIntro() {
+        const introScreen = document.getElementById('intro-screen');
+        const introContainer = document.getElementById('intro-logo-container');
+        if (!introScreen || !introContainer) return;
+
+        // Sequence: 
+        // 1. Pop-in completes (2s)
+        // 2. Trigger Sheen (after 2.2s)
+        // 3. Fade out entire screen (after 5.5s)
+        
+        setTimeout(() => {
+            introContainer.classList.add('active-sheen');
+        }, 2200);
+
+        setTimeout(() => {
+            introScreen.classList.add('fade-out');
+            // Allow game interaction once it starts fading
+            introScreen.style.pointerEvents = 'none';
+        }, 5500);
+
+        setTimeout(() => {
+            introScreen.remove();
+        }, 7000);
+    })();
 
     const { scene, camera, renderer } = GameScene.init();
     GameBoard.build(scene, renderer);

@@ -226,7 +226,7 @@ const GameBoard = (() => {
             texture.anisotropy = maxTextureAnisotropy;
             texture.encoding = THREE.sRGBEncoding;
             
-            const logoSize = innerSize * 0.45;
+            const logoSize = innerSize * 1.2;
             const logoPlane = new THREE.Mesh(
                 new THREE.PlaneGeometry(logoSize, logoSize),
                 new THREE.MeshBasicMaterial({
