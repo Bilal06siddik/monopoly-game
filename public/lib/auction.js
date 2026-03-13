@@ -4,7 +4,7 @@
 
 const AuctionSystem = (() => {
     let socket = null;
-    let mySocketId = null;
+    let myPlayerId = null;
     let currentAuction = null;
     let currentPlayers = [];
 
@@ -12,10 +12,9 @@ const AuctionSystem = (() => {
 
     function init(socketInstance) {
         socket = socketInstance;
-        mySocketId = socket.id;
     }
 
-    function updateSocketId(id) { mySocketId = id; }
+    function updatePlayerId(id) { myPlayerId = id; }
 
     function showAuction(auctionData, players) {
         currentAuction = auctionData.auction;
@@ -70,7 +69,7 @@ const AuctionSystem = (() => {
         const grid = document.getElementById('auc-bid-grid');
         grid.innerHTML = '';
 
-        const me = currentPlayers.find(p => p.id === mySocketId);
+        const me = currentPlayers.find(p => p.id === myPlayerId);
         const myMoney = me ? me.money : 0;
 
         BID_INCREMENTS.forEach(inc => {
@@ -145,5 +144,5 @@ const AuctionSystem = (() => {
         currentAuction = null;
     }
 
-    return { init, updateSocketId, showAuction, onBid, onTick, hideAuction };
+    return { init, updatePlayerId, showAuction, onBid, onTick, hideAuction };
 })();

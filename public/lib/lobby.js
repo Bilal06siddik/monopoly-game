@@ -24,6 +24,7 @@ const Lobby = (() => {
     function init(socketInstance) {
         socket = socketInstance;
         bindEvents();
+        bindButtons();
         setupErrorDismiss();
     }
 
@@ -80,7 +81,7 @@ const Lobby = (() => {
             card.innerHTML = `
         <span class="char-avatar">${CHARACTER_AVATARS[char.name] || '👤'}</span>
         <span class="char-name">${char.name}</span>
-        ${isTaken ? '<span class="char-status">Taken</span>' : ''}
+        ${isTaken ? `<span class="char-status">${char.takenByBot ? 'Bot' : 'Taken'}</span>` : ''}
         ${isMine ? '<span class="char-status">You</span>' : ''}
       `;
 
@@ -105,13 +106,17 @@ const Lobby = (() => {
 
     function updateStatus(state) {
         const statusEl = document.getElementById('lobby-status');
-        const count = state.players.filter(p => p.character).length;
+        const readyPlayers = state.players.filter(player => player.character);
+        const count = readyPlayers.length;
         const total = state.characters.length;
+        const botCount = readyPlayers.filter(player => player.isBot).length;
+        const humanCount = count - botCount;
 
         if (count === 0) {
             statusEl.innerHTML = '<span class="dot-pulse"></span> Waiting for players...';
         } else {
-            statusEl.innerHTML = `<span class="dot-pulse"></span> ${count}/${total} players ready`;
+            const botText = botCount > 0 ? ` • ${botCount} bot${botCount > 1 ? 's' : ''}` : '';
+            statusEl.innerHTML = `<span class="dot-pulse"></span> ${count}/${total} ready (${humanCount} human${humanCount === 1 ? '' : 's'})${botText}`;
         }
 
         // Show/enable Start Game button when >= 2 players
@@ -124,6 +129,27 @@ const Lobby = (() => {
                 startBtn.classList.add('disabled');
                 startBtn.textContent = 'Need 2+ players';
             }
+        }
+
+        const clearBotsBtn = document.getElementById('clear-bots-btn');
+        if (clearBotsBtn) {
+            clearBotsBtn.disabled = botCount === 0;
+            clearBotsBtn.classList.toggle('disabled', botCount === 0);
+        }
+    }
+
+    function bindButtons() {
+        const addBotBtn = document.getElementById('add-bot-btn');
+        if (addBotBtn) {
+            addBotBtn.addEventListener('click', () => socket.emit('add-random-bot'));
+        }
+
+        const clearBotsBtn = document.getElementById('clear-bots-btn');
+        if (clearBotsBtn) {
+            clearBotsBtn.addEventListener('click', () => {
+                if (clearBotsBtn.disabled) return;
+                socket.emit('clear-lobby-bots');
+            });
         }
     }
 

@@ -11,14 +11,26 @@
     GameTokens.init(scene, GameBoard.getTileWorldPosition);
     GameScene.animate();
 
-    const socket = io();
-    let mySocketId = null;
+    const SESSION_TOKEN_KEY = 'monopoly-session-token';
+    const sessionToken = getOrCreateSessionToken();
+    const socket = io({ auth: { sessionToken } });
+    let myPlayerId = null;
     let currentGameState = null;
 
     // Player color cache (character -> color)
     const CHAR_COLORS = {
         'Bilo': '#6c5ce7', 'Os': '#e17055', 'Ziko': '#00b894', 'Maro': '#fdcb6e'
     };
+
+    function getOrCreateSessionToken() {
+        let token = sessionStorage.getItem(SESSION_TOKEN_KEY);
+        if (!token) {
+            token = window.crypto?.randomUUID?.() || `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+        }
+        localStorage.removeItem(SESSION_TOKEN_KEY);
+        return token;
+    }
 
     function getPlayerColor(playerId) {
         if (!currentGameState) return '#fff';
@@ -34,11 +46,18 @@
     }
 
     function syncTurnTimerUI(state = currentGameState) {
-        GameUI.updateTurnTimer(state?.turnTimer || null);
+        GameUI.updateTurnTimer(state?.pauseState ? null : (state?.turnTimer || null));
     }
 
     function syncWorldFromState(state) {
         if (!state) return;
+
+        const activeCharacters = new Set(state.players.filter(player => player.isActive).map(player => player.character));
+        Object.keys(GameTokens.getAllTokens()).forEach(character => {
+            if (!activeCharacters.has(character)) {
+                GameTokens.removeToken(character, scene);
+            }
+        });
 
         state.players.forEach(player => {
             if (!player.isActive) return;
@@ -71,21 +90,143 @@
         });
     }
 
-    function getColorGroupProperties(colorGroup) {
-        if (!currentGameState || !colorGroup) return [];
-        return currentGameState.properties.filter(prop => prop.type === 'property' && prop.colorGroup === colorGroup);
+    function syncHistoryFromState(state) {
+        if (state?.historyEvents) {
+            HistoryLog.replaceEvents(state.historyEvents);
+        }
+    }
+
+    function maybeRestoreBuyPrompt(state) {
+        if (!state || state.turnPhase !== 'buying' || state.currentPlayerId !== myPlayerId) {
+            GameModals.hideBuyModal();
+            return;
+        }
+
+        const me = state.players.find(player => player.id === myPlayerId);
+        const tile = me ? state.properties[me.position] : null;
+        if (!tile || tile.owner !== null) {
+            GameModals.hideBuyModal();
+            return;
+        }
+
+        GameModals.showBuyModal({
+            playerId: myPlayerId,
+            tileIndex: tile.index,
+            tileName: tile.name,
+            tileType: tile.type,
+            price: tile.price,
+            colorGroup: tile.colorGroup,
+            canAfford: (me?.money || 0) >= tile.price,
+            gameState: state
+        });
+    }
+
+    function syncPendingTrades(state) {
+        if (state?.pendingTrades) {
+            TradeSystem.replaceTrades(state.pendingTrades);
+        }
+    }
+
+    function syncAuctionFromState(state) {
+        if (!state?.auctionState) {
+            AuctionSystem.hideAuction();
+            return;
+        }
+
+        AuctionSystem.showAuction({ auction: state.auctionState }, state.players);
+    }
+
+    function applyState(state, { syncWorld = true, syncHistory = true, syncTrades = true, syncAuction = true, syncBuyPrompt = true } = {}) {
+        if (!state) return;
+        setCurrentGameState(state);
+        if (syncWorld) syncWorldFromState(state);
+        if (syncHistory) syncHistoryFromState(state);
+        if (syncTrades) syncPendingTrades(state);
+        if (syncAuction) syncAuctionFromState(state);
+        if (state.isGameStarted) {
+            Lobby.hideLobby();
+            GameUI.showGameUI();
+            GameUI.updateLeaderboard(state.players, state.properties);
+            const currentPlayer = state.players[state.currentPlayerIndex];
+            if (currentPlayer) {
+                GameUI.updateTurnIndicator(currentPlayer.id, currentPlayer.character, state.players, state);
+            }
+        }
+        if (syncBuyPrompt) maybeRestoreBuyPrompt(state);
+        syncTurnTimerUI(state);
     }
 
     function ownsFullColorGroup(playerId, tile) {
-        if (!playerId || tile?.type !== 'property' || !tile.colorGroup) return false;
-        const group = getColorGroupProperties(tile.colorGroup);
-        return group.length > 0 && group.every(prop => prop.owner === playerId);
+        if (!playerId || tile?.type !== 'property' || !tile.colorGroup || !currentGameState) return false;
+        return MonopolyRules.playerOwnsFullColorGroup(currentGameState.properties, playerId, tile.colorGroup);
     }
 
     function colorGroupHasBuildings(tile) {
         return tile?.type === 'property'
             && Boolean(tile.colorGroup)
-            && getColorGroupProperties(tile.colorGroup).some(prop => prop.houses > 0);
+            && currentGameState
+            && MonopolyRules.colorGroupHasBuildings(currentGameState.properties, tile.colorGroup);
+    }
+
+    function colorGroupHasMortgaged(tile) {
+        return tile?.type === 'property'
+            && Boolean(tile.colorGroup)
+            && currentGameState
+            && MonopolyRules.colorGroupHasMortgaged(currentGameState.properties, tile.colorGroup);
+    }
+
+    function canManageAssetsNow() {
+        if (!currentGameState || !myPlayerId) return false;
+        return MonopolyRules.canManageAssets({
+            currentPlayerId: currentGameState.currentPlayerId,
+            pauseState: currentGameState.pauseState,
+            turnPhase: currentGameState.turnPhase
+        }, myPlayerId);
+    }
+
+    function showSummaryModal(summary) {
+        const modal = document.getElementById('summary-modal');
+        if (!modal || !summary) return;
+
+        const winner = summary.placements.find(player => player.isWinner);
+        document.getElementById('summary-winner').textContent = winner
+            ? `${winner.character} wins the match`
+            : 'Match complete';
+
+        const minutes = Math.floor((summary.durationMs || 0) / 60000);
+        const seconds = Math.floor(((summary.durationMs || 0) % 60000) / 1000);
+        document.getElementById('summary-meta').textContent = `Turns: ${summary.turnCount} • Duration: ${minutes}m ${seconds}s`;
+
+        document.getElementById('summary-placements').innerHTML = summary.placements.map(player => `
+            <div class="summary-placement${player.playerId === myPlayerId ? ' is-me' : ''}">
+                <div>
+                    <strong>#${player.placement} ${player.character}</strong>
+                    <div>Cash: $${player.money} • Net worth: $${player.netWorth}</div>
+                </div>
+                <div class="summary-stats-inline">
+                    <span>Cards ${player.stats.cardsDrawn}</span>
+                    <span>GO ${player.stats.goPasses}</span>
+                    <span>Trades ${player.stats.tradesCompleted}</span>
+                </div>
+            </div>
+        `).join('');
+
+        document.getElementById('summary-visited').innerHTML = (summary.topVisitedProperties || []).map(property => `
+            <div class="summary-list-row">
+                <span>${property.name}</span>
+                <strong>${property.landedCount}</strong>
+            </div>
+        `).join('') || '<div class="summary-list-row empty">No visits recorded.</div>';
+
+        document.getElementById('summary-rent').innerHTML = (summary.topRentProperties || []).map(property => `
+            <div class="summary-list-row">
+                <span>${property.name}</span>
+                <strong>$${property.rentCollected}</strong>
+            </div>
+        `).join('') || '<div class="summary-list-row empty">No rent recorded.</div>';
+
+        modal.classList.remove('hidden');
+        modal.classList.add('show');
     }
 
     function createActionButton(variant, html, onClick) {
@@ -106,16 +247,22 @@
     }
 
     socket.on('connect', () => {
-        mySocketId = socket.id;
         console.log('🔌 Connected:', socket.id);
         Notifications.show('Connected to game server', 'info', 2000);
-        GameUI.updateMySocketId(socket.id);
-        TradeSystem.updateSocketId(socket.id);
-        AuctionSystem.updateSocketId(socket.id);
     });
 
     socket.on('disconnect', () => {
         Notifications.show('Disconnected from server', 'error', 4000);
+    });
+
+    socket.on('player-session', (data) => {
+        if (data.sessionToken) {
+            sessionStorage.setItem(SESSION_TOKEN_KEY, data.sessionToken);
+        }
+        myPlayerId = data.playerId || null;
+        GameUI.updateMyPlayerId(myPlayerId);
+        TradeSystem.updatePlayerId(myPlayerId);
+        AuctionSystem.updatePlayerId(myPlayerId);
     });
 
     // ── Init all systems ──────────────────────────────────
@@ -142,40 +289,10 @@
         HistoryLog.addEvent(data.text, data.type);
     });
 
-    // ── Game Started ──────────────────────────────────────
     socket.on('gameStarted', (state) => {
-        try {
-            setCurrentGameState(state);
-            console.log('🎮 Game started! Processing UI transition...', state);
-            
-            console.log('- Hiding lobby...');
-            Lobby.hideLobby();
-            
-            console.log('- Showing Game UI...');
-            GameUI.showGameUI();
-            
-            console.log('- Syncing board state...');
-            syncWorldFromState(state);
-            
-            console.log('- Updating leaderboard...');
-            GameUI.updateLeaderboard(state.players, state.properties);
-            
-            console.log('- Updating turn indicator...');
-            GameUI.updateTurnIndicator(
-                state.currentPlayerId,
-                state.players[state.currentPlayerIndex].character,
-                state.players,
-                state
-            );
-            syncTurnTimerUI(state);
-            
-            console.log('✅ UI transition complete!');
-        } catch (err) {
-            console.error('❌ Error during gameStarted transition:', err);
-        }
+        applyState(state);
     });
 
-    // ── Dice Rolled ───────────────────────────────────────
     socket.on('dice-rolled', (data) => {
         setCurrentGameState(data.gameState);
         GameUI.showDiceResult(data.die1, data.die2, data.character, data.isDoubles);
@@ -187,224 +304,180 @@
                 data.moveResult.oldPosition,
                 data.moveResult.newPosition,
                 () => {
-                    GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-                    if (data.playerId === socket.id) socket.emit('move-complete');
+                    applyState(data.gameState, { syncWorld: false, syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
+                    if (data.playerId === myPlayerId) {
+                        socket.emit('move-complete');
+                    }
                 }
             );
         });
     });
 
-    // ── Buy Prompt ────────────────────────────────────────
     socket.on('buy-prompt', (data) => {
         setCurrentGameState(data.gameState);
         GameModals.showBuyModal(data);
         syncTurnTimerUI(data.gameState);
     });
 
-    socket.on('player-deciding', (data) => {
-        // Only show in history, not a popup
-    });
+    socket.on('player-deciding', () => { });
 
-    // ── Property Bought ───────────────────────────────────
     socket.on('property-bought', (data) => {
-        setCurrentGameState(data.gameState);
-        if (data.playerId === socket.id) {
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false });
+        if (data.playerId === myPlayerId) {
             Notifications.show(`🏠 Bought ${data.tileName}!`, 'success', 2500);
         }
-        // Color the tile with the owner's color
-        const ownerColor = getPlayerColor(data.playerId);
-        GameBoard.updateTileOwner(data.tileIndex, ownerColor);
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        syncTurnTimerUI(data.gameState);
     });
 
-    // ── Rent Paid ─────────────────────────────────────────
     socket.on('rent-paid', (data) => {
-        setCurrentGameState(data.gameState);
-        GameModals.showRentPaid(data, data.payerId === socket.id);
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        syncTurnTimerUI(data.gameState);
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
+        GameModals.showRentPaid(data, data.payerId === myPlayerId, data.ownerId === myPlayerId);
     });
 
-    // ── Tax Paid ──────────────────────────────────────────
     socket.on('tax-paid', (data) => {
-        setCurrentGameState(data.gameState);
-        GameModals.showTaxPaid(data, data.playerId === socket.id);
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        syncTurnTimerUI(data.gameState);
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
+        GameModals.showTaxPaid(data, data.playerId === myPlayerId);
     });
 
-    // ── Card Drawn ────────────────────────────────────────
     socket.on('card-drawn', (data) => {
         setCurrentGameState(data.gameState);
-        GameModals.showActionCard(data.card);
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        syncTurnTimerUI(data.gameState);
-    });
-
-    // ── Bankruptcy ────────────────────────────────────────
-    socket.on('player-bankrupt', (data) => {
-        setCurrentGameState(data.gameState);
-        GameModals.showBankruptcy(data, data.playerId === socket.id);
-        GameTokens.removeToken(data.character, scene);
-        // Clear all tile ownership colors for this player's old properties
-        data.gameState.properties.forEach(prop => {
-            if (!prop.owner) GameBoard.updateTileOwner(prop.index, null);
-        });
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        syncTurnTimerUI(data.gameState);
-    });
-
-    // ── Game Over ─────────────────────────────────────────
-    socket.on('game-over', (data) => {
-        if (data.gameState) setCurrentGameState(data.gameState);
-        if (currentGameState) {
-            currentGameState.turnTimer = null;
-            if (typeof DevPanel !== 'undefined' && DevPanel.updateState) {
-                DevPanel.updateState(currentGameState);
+        const onAfterCard = () => {
+            if (data.result?.moveResult) {
+                GameTokens.animateMove(
+                    data.character,
+                    data.result.moveResult.oldPosition,
+                    data.result.moveResult.newPosition,
+                    () => {
+                        applyState(data.gameState, { syncWorld: false, syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
+                        if (data.playerId === myPlayerId) {
+                            socket.emit('move-complete');
+                        }
+                    }
+                );
+                return;
             }
+
+            applyState(data.gameState, { syncWorld: true, syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
+        };
+
+        GameModals.showActionCard(data.card, data.result, onAfterCard);
+    });
+
+    socket.on('player-bankrupt', (data) => {
+        applyState(data.gameState, { syncHistory: false, syncTrades: true, syncAuction: true, syncBuyPrompt: false });
+        GameModals.showBankruptcy(data, data.playerId === myPlayerId);
+    });
+
+    socket.on('game-over', (data) => {
+        if (data.gameState) {
+            applyState(data.gameState, { syncTrades: true, syncAuction: true, syncBuyPrompt: false });
         }
         GameUI.updateTurnTimer(null);
-        const isMe = data.winner.id === socket.id;
+        const isMe = data.winner.id === myPlayerId;
         Notifications.show(
             isMe ? '🏆 You WIN! Congratulations!' : `🏆 ${data.winner.character} wins!`,
             isMe ? 'success' : 'hype', 10000
         );
+        showSummaryModal(data.summary);
     });
 
-    // ── Turn Changed ──────────────────────────────────────
     socket.on('turn-changed', (data) => {
-        setCurrentGameState(data.gameState);
-        GameModals.hideBuyModal();
-        GameUI.updateTurnIndicator(data.currentPlayerId, data.currentCharacter, data.gameState.players, data.gameState);
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        syncTurnTimerUI(data.gameState);
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false });
     });
 
-    // ── Jail Events ──────────────────────────────────────────
     socket.on('sent-to-jail', (data) => {
-        setCurrentGameState(data.gameState);
-        if (data.playerId === socket.id) {
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
+        if (data.playerId === myPlayerId) {
             Notifications.show('🚔 You were sent to Jail!', 'error', 4000);
         } else {
             Notifications.show(`🚔 ${data.character} was sent to Jail!`, 'info', 3000);
         }
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        GameUI.updateTurnIndicator(data.gameState.currentPlayerId, null, data.gameState.players, data.gameState);
-        syncTurnTimerUI(data.gameState);
     });
 
     socket.on('jail-state-changed', (data) => {
-        setCurrentGameState(data.gameState);
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        GameUI.updateTurnIndicator(data.gameState.currentPlayerId, null, data.gameState.players, data.gameState);
-        syncTurnTimerUI(data.gameState);
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
     });
 
     socket.on('bailout-collected', (data) => {
-        setCurrentGameState(data.gameState);
-        if (data.playerId === socket.id) {
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
+        if (data.playerId === myPlayerId) {
             Notifications.show(`💰 You collected $${data.amount} from the Bailout fund!`, 'success', 4000);
         } else {
             Notifications.show(`💰 ${data.character} collected $${data.amount} Bailout!`, 'hype', 3000);
         }
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        syncTurnTimerUI(data.gameState);
     });
 
-    // ── Auction Events ────────────────────────────────────
     socket.on('auction-started', (data) => {
-        setCurrentGameState(data.gameState);
+        applyState({ ...data.gameState, auctionState: data.auction }, { syncHistory: false, syncTrades: false, syncBuyPrompt: false });
         GameModals.hideBuyModal();
-        AuctionSystem.showAuction(data, data.players);
         Notifications.show(`🔨 Auction: ${data.auction.tileName}!`, 'hype', 3000);
-        syncTurnTimerUI(data.gameState);
     });
     socket.on('auction-bid', (data) => { AuctionSystem.onBid(data); });
     socket.on('auction-tick', (data) => { AuctionSystem.onTick(data); });
     socket.on('auction-ended', (data) => {
-        setCurrentGameState(data.gameState);
-        AuctionSystem.hideAuction();
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: true, syncBuyPrompt: true });
         if (data.winnerId) {
-            const isMe = data.winnerId === socket.id;
+            const isMe = data.winnerId === myPlayerId;
             Notifications.show(
-                isMe ? `🎉 Won ${data.tileName} for $${data.bid}!`
-                    : `🔨 ${data.winnerCharacter} won ${data.tileName}`,
-                isMe ? 'success' : 'info', 3000
+                isMe ? `🎉 Won ${data.tileName} for $${data.bid}!` : `🔨 ${data.winnerCharacter} won ${data.tileName}`,
+                isMe ? 'success' : 'info',
+                3000
             );
-            // Color the tile with the winner's color
-            const winnerColor = getPlayerColor(data.winnerId);
-            GameBoard.updateTileOwner(data.tileIndex, winnerColor);
         }
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        syncTurnTimerUI(data.gameState);
     });
 
-    // ── Trade Events ──────────────────────────────────────
     socket.on('trade-incoming', (offer) => {
         TradeSystem.showIncomingTrade(offer);
-        Notifications.show(`🤝 ${offer.fromCharacter} wants to trade!`, 'hype', 3000);
+        Notifications.show(`${offer.isCounterOffer ? '↩️' : '🤝'} ${offer.fromCharacter} sent ${offer.isCounterOffer ? 'a counter-offer' : 'a trade offer'}!`, 'hype', 3000);
     });
-    socket.on('trade-sent', () => { Notifications.show('Trade sent!', 'success', 2000); });
+    socket.on('trade-sent', (data) => {
+        if (data?.replacedTradeId) {
+            TradeSystem.handleTradeInvalidated({
+                tradeId: data.replacedTradeId,
+                message: 'The original offer was replaced by your counter-offer.',
+                code: 'countered'
+            });
+        }
+        Notifications.show('Trade sent!', 'success', 2000);
+    });
     socket.on('trade-completed', (data) => {
-        setCurrentGameState(data.gameState);
-        Notifications.show(`✅ Trade completed!`, 'success', 3000);
-        // Re-apply all ownership colors from updated state
-        data.gameState.properties.forEach(prop => {
-            if (prop.owner) {
-                const ownerPlayer = data.gameState.players.find(p => p.id === prop.owner);
-                if (ownerPlayer) GameBoard.updateTileOwner(prop.index, ownerPlayer.color);
-            }
-        });
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        syncTurnTimerUI(data.gameState);
+        TradeSystem.dismissTrade(data.tradeId);
+        applyState(data.gameState, { syncHistory: false, syncTrades: true, syncAuction: false, syncBuyPrompt: false });
+        Notifications.show('✅ Trade completed!', 'success', 3000);
     });
-    socket.on('trade-rejected', () => { Notifications.show('Trade rejected', 'error', 2000); });
+    socket.on('trade-rejected', () => {
+        Notifications.show('Trade rejected', 'error', 2000);
+    });
+    socket.on('trade-invalidated', (data) => {
+        TradeSystem.handleTradeInvalidated(data);
+    });
+    socket.on('trade-validation', (data) => {
+        TradeSystem.handleTradeValidation(data);
+    });
 
-    // ── Upgrade / Downgrade / Mortgage / Sell Events ──────
     socket.on('property-upgraded', (data) => {
-        setCurrentGameState(data.gameState);
-        GameBoard.addHouse(data.tileIndex, data.houses, scene);
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        if (data.playerId === socket.id) {
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
+        if (data.playerId === myPlayerId) {
             Notifications.show(`🏗️ Upgraded ${data.tileName}!`, 'success', 2000);
         }
-        syncTurnTimerUI(data.gameState);
     });
 
     socket.on('property-downgraded', (data) => {
-        setCurrentGameState(data.gameState);
-        if (data.houses > 0) GameBoard.addHouse(data.tileIndex, data.houses, scene);
-        else GameBoard.removeHouses(data.tileIndex, scene);
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        syncTurnTimerUI(data.gameState);
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
     });
 
     socket.on('property-mortgaged', (data) => {
-        setCurrentGameState(data.gameState);
-        GameBoard.setMortgaged(data.tileIndex, true);
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        if (data.playerId === socket.id) {
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
+        if (data.playerId === myPlayerId) {
             Notifications.show(`🏦 Mortgaged ${data.tileName} (+$${data.mortgageValue})`, 'info', 2500);
         }
-        syncTurnTimerUI(data.gameState);
     });
 
     socket.on('property-unmortgaged', (data) => {
-        setCurrentGameState(data.gameState);
-        GameBoard.setMortgaged(data.tileIndex, false);
-        GameBoard.updateTileOwner(data.tileIndex, getPlayerColor(data.playerId));
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        syncTurnTimerUI(data.gameState);
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
     });
 
     socket.on('property-sold', (data) => {
-        setCurrentGameState(data.gameState);
-        GameBoard.removeHouses(data.tileIndex, scene);
-        GameBoard.setMortgaged(data.tileIndex, false);
-        GameBoard.updateTileOwner(data.tileIndex, null); // clear owner color
-        GameUI.updateLeaderboard(data.gameState.players, data.gameState.properties);
-        syncTurnTimerUI(data.gameState);
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
     });
 
     socket.on('turn-timer-start', (data) => {
@@ -424,19 +497,20 @@
         GameUI.updateTurnTimer(null);
     });
 
-    // ── Game State Sync ───────────────────────────────────
+    socket.on('game-paused', (data) => {
+        if (!currentGameState) return;
+        currentGameState.pauseState = data.pauseState;
+        GameUI.updateTurnIndicator(currentGameState.currentPlayerId, null, currentGameState.players, currentGameState);
+        Notifications.show(`⏸ Game paused while waiting for ${data.pauseState.character} to reconnect.`, 'info', 4000);
+    });
+
+    socket.on('game-resumed', (data) => {
+        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: true });
+        Notifications.show('▶️ Game resumed.', 'success', 2500);
+    });
+
     socket.on('game-state-sync', (state) => {
-        setCurrentGameState(state);
-        if (state.isGameStarted) {
-            Lobby.hideLobby();
-            GameUI.showGameUI();
-            syncWorldFromState(state);
-            GameUI.updateLeaderboard(state.players, state.properties);
-            const currentP = state.players[state.currentPlayerIndex];
-            GameUI.updateTurnIndicator(currentP.id, currentP.character, state.players, state);
-            if (state.turnPhase !== 'buying') GameModals.hideBuyModal();
-            syncTurnTimerUI(state);
-        }
+        applyState(state);
     });
 
     socket.on('game-error', (data) => {
@@ -496,8 +570,16 @@
         const rentTiersEl = document.getElementById('pd-rent-tiers');
         rentTiersEl.innerHTML = '';
         if (tile.type === 'property' && tile.rent > 0) {
-            const multipliers = [1, 5, 15, 45, 80, 125];
-            const labels = ['No house', '1 house', '2 houses', '3 houses', '4 houses', 'Hotel'];
+            const ownerHasFullSet = prop?.owner && ownsFullColorGroup(prop.owner, tile);
+            const multipliers = [ownerHasFullSet ? 2 : 1, 5, 15, 45, 80, 125];
+            const labels = [
+                ownerHasFullSet ? 'No house (set bonus)' : 'No house',
+                '1 house',
+                '2 houses',
+                '3 houses',
+                '4 houses',
+                'Hotel'
+            ];
             multipliers.forEach((m, idx) => {
                 const row = document.createElement('div');
                 row.className = `pdm-rent-row${prop?.houses === idx ? ' current' : ''}`;
@@ -523,36 +605,56 @@
         // Action buttons (2x2 grid)
         const actionsEl = document.getElementById('pd-actions');
         actionsEl.innerHTML = '';
-        const me = currentGameState.players.find(p => p.id === mySocketId);
-        const hasFullSet = ownsFullColorGroup(mySocketId, tile);
+        const me = currentGameState.players.find(p => p.id === myPlayerId);
+        const hasFullSet = ownsFullColorGroup(myPlayerId, tile);
         const groupLocked = colorGroupHasBuildings(tile);
+        const groupMortgaged = colorGroupHasMortgaged(tile);
+        const canManage = canManageAssetsNow();
 
-        if (prop && prop.owner === mySocketId && tile.type === 'property') {
+        if (prop && prop.owner === myPlayerId && tile.type === 'property') {
             const uCost = Math.floor(tile.price * 0.5);
             const dRefund = Math.floor(tile.price * 0.25);
+            const upgradeValidation = MonopolyRules.validateUpgrade(currentGameState.properties, myPlayerId, tileIndex);
+            const downgradeValidation = MonopolyRules.validateDowngrade(currentGameState.properties, myPlayerId, tileIndex);
 
             if (!prop.isMortgaged && prop.houses < 5) {
-                const btn = hasFullSet
+                const btn = canManage && upgradeValidation.ok && me.money >= uCost
                     ? createActionButton('upgrade', `⬆ Upgrade<br><small>$${uCost}</small>`, () => {
                         socket.emit('upgrade-property', { tileIndex });
                         hidePropertyDetailsModal();
                     })
                     : createDisabledActionButton(
                         'upgrade',
-                        '⬆ Upgrade<br><small>Need full color set</small>',
-                        'Own every property in this color group before building.'
+                        `⬆ Upgrade<br><small>${!canManage ? 'Your turn only' : me.money < uCost ? 'Not enough cash' : 'Unavailable'}</small>`,
+                        !canManage
+                            ? 'Only the active player can build right now.'
+                            : upgradeValidation.ok
+                                ? `Need $${uCost} to upgrade this property.`
+                                : upgradeValidation.message
                     );
                 actionsEl.appendChild(btn);
             }
             if (prop.houses > 0) {
-                const btn = createActionButton('downgrade', `⬇ Downgrade<br><small>+$${dRefund}</small>`, () => {
-                    socket.emit('downgrade-property', { tileIndex });
-                    hidePropertyDetailsModal();
-                });
+                const btn = canManage && downgradeValidation.ok
+                    ? createActionButton('downgrade', `⬇ Downgrade<br><small>+$${dRefund}</small>`, () => {
+                        socket.emit('downgrade-property', { tileIndex });
+                        hidePropertyDetailsModal();
+                    })
+                    : createDisabledActionButton(
+                        'downgrade',
+                        `⬇ Downgrade<br><small>${!canManage ? 'Your turn only' : 'Unavailable'}</small>`,
+                        !canManage ? 'Only the active player can sell buildings right now.' : downgradeValidation.message
+                    );
                 actionsEl.appendChild(btn);
             }
             if (!prop.isMortgaged && prop.houses === 0) {
-                const btn = groupLocked
+                const btn = !canManage
+                    ? createDisabledActionButton(
+                        'mortgage',
+                        '🏦 Mortgage<br><small>Your turn only</small>',
+                        'Only the active player can mortgage property right now.'
+                    )
+                    : groupLocked
                     ? createDisabledActionButton(
                         'mortgage',
                         '🏦 Mortgage<br><small>Set has buildings</small>',
@@ -565,13 +667,26 @@
                 actionsEl.appendChild(btn);
             }
             if (prop.isMortgaged) {
-                const btn = createActionButton('mortgage', `🔓 Unmortgage<br><small>$${Math.floor(tile.price * 0.55)}</small>`, () => {
-                    socket.emit('unmortgage-property', { tileIndex });
-                    hidePropertyDetailsModal();
-                });
+                const unmortgageCost = Math.floor(tile.price * 0.55);
+                const btn = canManage && me.money >= unmortgageCost
+                    ? createActionButton('mortgage', `🔓 Unmortgage<br><small>$${unmortgageCost}</small>`, () => {
+                        socket.emit('unmortgage-property', { tileIndex });
+                        hidePropertyDetailsModal();
+                    })
+                    : createDisabledActionButton(
+                        'mortgage',
+                        `🔓 Unmortgage<br><small>${!canManage ? 'Your turn only' : 'Not enough cash'}</small>`,
+                        !canManage ? 'Only the active player can unmortgage property right now.' : `Need $${unmortgageCost} to unmortgage this property.`
+                    );
                 actionsEl.appendChild(btn);
             }
-            const sellBtn = groupLocked
+            const sellBtn = !canManage
+                ? createDisabledActionButton(
+                    'sell',
+                    '💰 Sell<br><small>Your turn only</small>',
+                    'Only the active player can sell property right now.'
+                )
+                : groupLocked
                 ? createDisabledActionButton(
                     'sell',
                     '💰 Sell<br><small>Set has buildings</small>',
@@ -583,24 +698,43 @@
                 });
             actionsEl.appendChild(sellBtn);
 
-        } else if (prop && prop.owner === mySocketId) {
+        } else if (prop && prop.owner === myPlayerId) {
             if (!prop.isMortgaged) {
-                const btn = createActionButton('mortgage', `🏦 Mortgage<br><small>+$${Math.floor(tile.price / 2)}</small>`, () => {
-                    socket.emit('mortgage-property', { tileIndex });
-                    hidePropertyDetailsModal();
-                });
+                const btn = canManage
+                    ? createActionButton('mortgage', `🏦 Mortgage<br><small>+$${Math.floor(tile.price / 2)}</small>`, () => {
+                        socket.emit('mortgage-property', { tileIndex });
+                        hidePropertyDetailsModal();
+                    })
+                    : createDisabledActionButton(
+                        'mortgage',
+                        '🏦 Mortgage<br><small>Your turn only</small>',
+                        'Only the active player can mortgage property right now.'
+                    );
                 actionsEl.appendChild(btn);
             } else {
-                const btn = createActionButton('mortgage', `🔓 Unmortgage<br><small>$${Math.floor(tile.price * 0.55)}</small>`, () => {
-                    socket.emit('unmortgage-property', { tileIndex });
-                    hidePropertyDetailsModal();
-                });
+                const unmortgageCost = Math.floor(tile.price * 0.55);
+                const btn = canManage && me.money >= unmortgageCost
+                    ? createActionButton('mortgage', `🔓 Unmortgage<br><small>$${unmortgageCost}</small>`, () => {
+                        socket.emit('unmortgage-property', { tileIndex });
+                        hidePropertyDetailsModal();
+                    })
+                    : createDisabledActionButton(
+                        'mortgage',
+                        `🔓 Unmortgage<br><small>${!canManage ? 'Your turn only' : 'Not enough cash'}</small>`,
+                        !canManage ? 'Only the active player can unmortgage property right now.' : `Need $${unmortgageCost} to unmortgage this property.`
+                    );
                 actionsEl.appendChild(btn);
             }
-            const sellBtn = createActionButton('sell', '💰 Sell<br><small>to Bank</small>', () => {
-                socket.emit('sell-property', { tileIndex });
-                hidePropertyDetailsModal();
-            });
+            const sellBtn = canManage
+                ? createActionButton('sell', '💰 Sell<br><small>to Bank</small>', () => {
+                    socket.emit('sell-property', { tileIndex });
+                    hidePropertyDetailsModal();
+                })
+                : createDisabledActionButton(
+                    'sell',
+                    '💰 Sell<br><small>Your turn only</small>',
+                    'Only the active player can sell property right now.'
+                );
             actionsEl.appendChild(sellBtn);
         }
 
@@ -677,11 +811,22 @@
         modal.classList.add('hidden');
     }
 
+    function hideSummaryModal() {
+        const modal = document.getElementById('summary-modal');
+        if (!modal) return;
+        modal.classList.remove('show');
+        modal.classList.add('hidden');
+    }
+
     // Close on overlay click
     document.getElementById('prop-details-modal')?.addEventListener('click', (e) => {
         if (e.target.id === 'prop-details-modal') hidePropertyDetailsModal();
     });
     document.getElementById('pd-close-btn')?.addEventListener('click', hidePropertyDetailsModal);
+    document.getElementById('summary-modal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'summary-modal') hideSummaryModal();
+    });
+    document.getElementById('summary-close-btn')?.addEventListener('click', hideSummaryModal);
 
     window.notifyGo = Notifications.notifyGo;
     window.notifyDoubles = Notifications.notifyDoubles;

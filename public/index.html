@@ -250,6 +250,7 @@
   <div id="trade-modal" class="modal-overlay hidden">
     <div class="trade-two-col-card">
       <h2 class="trade-title-bar">🤝 Trade Offer</h2>
+      <div id="trade-mode-label" class="trade-mode-label">New offer</div>
       <div class="trade-two-col">
         <!-- Left: You -->
         <div class="trade-col">
@@ -288,6 +289,9 @@
           </div>
         </div>
       </div>
+
+      <div id="trade-validation" class="trade-validation hidden"></div>
+      <div id="trade-summary" class="trade-summary">Offer summary: you give nothing for nothing.</div>
 
       <div class="trade-sticky-footer">
         <button id="trade-send-btn" class="trade-make-offer-btn">Make offer</button>
@@ -396,6 +400,22 @@
     </div>
   </div>
 
+  <div id="summary-modal" class="modal-overlay hidden">
+    <div class="summary-card">
+      <div class="summary-header">
+        <h2>🏁 Match Summary</h2>
+        <button id="summary-close-btn" class="pdm-close">✕</button>
+      </div>
+      <div id="summary-winner" class="summary-winner">Winner</div>
+      <div id="summary-meta" class="summary-meta"></div>
+      <div id="summary-placements" class="summary-placements"></div>
+      <div class="summary-section-label">Most Visited Properties</div>
+      <div id="summary-visited" class="summary-list"></div>
+      <div class="summary-section-label">Top Rent Generators</div>
+      <div id="summary-rent" class="summary-list"></div>
+    </div>
+  </div>
+
   <!-- ══════════════════════════════════════════════════════
        LOBBY
        ══════════════════════════════════════════════════════ -->
@@ -410,7 +430,13 @@
       <div id="lobby-status" class="lobby-status">
         <span class="dot-pulse"></span> Waiting for players...
       </div>
-      <button id="start-game-btn" class="start-game-btn disabled">Need 2+ players</button>
+      <div class="lobby-actions">
+        <button id="start-game-btn" class="start-game-btn disabled">Need 2+ players</button>
+        <div class="lobby-secondary-actions">
+          <button id="add-bot-btn" class="secondary-lobby-btn">+ Random Bot</button>
+          <button id="clear-bots-btn" class="secondary-lobby-btn subtle">Clear Bots</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -430,6 +456,7 @@
   <script src="/shared/boardData.js"></script>
   <script src="/shared/gameState.js"></script>
   <script src="/shared/actionCards.js"></script>
+  <script src="/shared/rules.js"></script>
   <script src="lib/notifications.js"></script>
   <script src="lib/scene.js"></script>
   <script src="lib/board.js"></script>

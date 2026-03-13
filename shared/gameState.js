@@ -1,20 +1,41 @@
 // ═══════════════════════════════════════════════════════════
-//  GAME STATE — OOP classes for Player, Property, GameState
-//  Shared between server and client
+//  GAME STATE — Shared multiplayer state models
 // ═══════════════════════════════════════════════════════════
 
+function createDefaultPlayerStats() {
+    return {
+        cardsDrawn: 0,
+        goPasses: 0,
+        jailVisits: 0,
+        rentPaid: 0,
+        rentReceived: 0,
+        propertiesBought: 0,
+        housesBuilt: 0,
+        housesSold: 0,
+        auctionsWon: 0,
+        tradesCompleted: 0
+    };
+}
+
 class Player {
-    constructor(id, character, color) {
+    constructor(id, character, color, sessionToken = null, options = {}) {
         this.id = id;
         this.character = character;
         this.color = color;
+        this.sessionToken = sessionToken;
+        this.socketId = null;
         this.position = 0;        // tile index 0-39
         this.money = 1500;
         this.properties = [];     // array of tile indices owned
         this.inJail = false;
         this.jailTurns = 0;
-        this.pardons = 0;         // get-out-of-jail-free cards
-        this.isActive = true;     // still in the game
+        this.pardons = 0;
+        this.isActive = true;
+        this.isBot = Boolean(options.isBot);
+        this.isConnected = options.isConnected !== false;
+        this.connectedAt = Date.now();
+        this.lastSeenAt = Date.now();
+        this.stats = createDefaultPlayerStats();
     }
 
     toJSON() {
@@ -24,11 +45,14 @@ class Player {
             color: this.color,
             position: this.position,
             money: this.money,
-            properties: this.properties,
+            properties: [...this.properties],
             inJail: this.inJail,
             jailTurns: this.jailTurns,
             pardons: this.pardons,
-            isActive: this.isActive
+            isActive: this.isActive,
+            isConnected: this.isConnected,
+            isBot: this.isBot,
+            stats: { ...this.stats }
         };
     }
 }
@@ -41,12 +65,12 @@ class Property {
         this.price = tileData.price;
         this.rent = tileData.rent;
         this.colorGroup = tileData.colorGroup;
-        this.owner = null;        // player id or null
+        this.owner = null;
         this.houses = 0;          // 0-4 houses, 5 = hotel
         this.isMortgaged = false;
-        this.landedCount = 0;     // analytics
-        this.rentCollected = 0;   // analytics
-        this.history = [];        // [{type, character, color, amount, timestamp}]
+        this.landedCount = 0;
+        this.rentCollected = 0;
+        this.history = [];
     }
 
     get isPurchasable() {
@@ -56,7 +80,7 @@ class Property {
 
     addHistory(type, character, color, amount) {
         this.history.push({ type, character, color, amount, timestamp: Date.now() });
-        if (this.history.length > 20) this.history.shift(); // cap at 20 events
+        if (this.history.length > 20) this.history.shift();
     }
 
     toJSON() {
@@ -72,7 +96,7 @@ class Property {
             isMortgaged: this.isMortgaged,
             landedCount: this.landedCount,
             rentCollected: this.rentCollected,
-            history: this.history
+            history: [...this.history]
         };
     }
 }
@@ -80,31 +104,48 @@ class Property {
 class GameState {
     constructor(boardData) {
         this.players = [];
-        this.properties = boardData.map(td => new Property(td));
+        this.properties = boardData.map(tileData => new Property(tileData));
         this.currentPlayerIndex = 0;
         this.isGameStarted = false;
         this.doublesCount = 0;
-        this.turnPhase = 'waiting'; // waiting | rolling | moving | buying | done
+        this.turnPhase = 'waiting'; // waiting | rolling | moving | buying | auctioning | done
         this.taxPool = 0;
         this.turnTimer = null;
+        this.matchStartedAt = null;
+        this.matchEndedAt = null;
+        this.turnCount = 0;
+        this.pauseState = null;
+        this.eliminationOrder = [];
     }
 
-    addPlayer(id, character, color) {
-        const player = new Player(id, character, color);
+    addPlayer(id, character, color, sessionToken = null, options = {}) {
+        const player = new Player(id, character, color, sessionToken, options);
         this.players.push(player);
         return player;
     }
 
     getPlayerById(id) {
-        return this.players.find(p => p.id === id);
+        return this.players.find(player => player.id === id);
+    }
+
+    getPlayerBySocketId(socketId) {
+        return this.players.find(player => player.socketId === socketId);
+    }
+
+    getPlayerBySessionToken(sessionToken) {
+        return this.players.find(player => player.sessionToken === sessionToken);
     }
 
     getPlayerByCharacter(character) {
-        return this.players.find(p => p.character === character);
+        return this.players.find(player => player.character === character);
     }
 
     getCurrentPlayer() {
         return this.players[this.currentPlayerIndex];
+    }
+
+    getActivePlayers() {
+        return this.players.filter(player => player.isActive);
     }
 
     rollDice() {
@@ -127,16 +168,17 @@ class GameState {
         if (!player) return null;
 
         const oldPosition = player.position;
-        const newPosition = (oldPosition + steps) % 40;
-        const passedGo = (oldPosition + steps) >= 40;
+        const boardSize = this.properties.length;
+        const rawPosition = oldPosition + steps;
+        let newPosition = rawPosition % boardSize;
+        if (newPosition < 0) newPosition += boardSize;
+        const passedGo = steps > 0 && rawPosition >= boardSize;
 
         player.position = newPosition;
 
-        // Collect $200 for passing GO
         if (passedGo && newPosition !== 0) {
             player.money += 200;
         }
-        // Landing exactly on GO also gives $200
         if (newPosition === 0 && steps > 0) {
             player.money += 200;
         }
@@ -145,23 +187,52 @@ class GameState {
             playerId,
             oldPosition,
             newPosition,
-            steps,
-            passedGo: passedGo || newPosition === 0,
+            steps: Math.abs(steps),
+            rawSteps: steps,
+            passedGo: passedGo || (newPosition === 0 && steps > 0),
             landedTile: this.properties[newPosition]
         };
     }
 
+    movePlayerTo(playerId, targetPosition, options = {}) {
+        const player = this.getPlayerById(playerId);
+        if (!player) return null;
+
+        const collectGoOnPass = options.collectGoOnPass !== false;
+        const collectGoOnLand = options.collectGoOnLand !== false;
+        const boardSize = this.properties.length;
+        const normalizedTarget = ((targetPosition % boardSize) + boardSize) % boardSize;
+        const oldPosition = player.position;
+        const stepsForward = (normalizedTarget - oldPosition + boardSize) % boardSize;
+        const passedGo = normalizedTarget < oldPosition || (stepsForward === 0 && options.forceLoop === true);
+
+        player.position = normalizedTarget;
+
+        if (collectGoOnPass && passedGo && normalizedTarget !== 0) {
+            player.money += 200;
+        }
+        if (collectGoOnLand && normalizedTarget === 0 && oldPosition !== 0) {
+            player.money += 200;
+        }
+
+        return {
+            playerId,
+            oldPosition,
+            newPosition: normalizedTarget,
+            steps: stepsForward,
+            rawSteps: stepsForward,
+            passedGo: Boolean((collectGoOnPass && passedGo) || (collectGoOnLand && normalizedTarget === 0 && oldPosition !== 0)),
+            landedTile: this.properties[normalizedTarget]
+        };
+    }
+
     nextTurn() {
-        // If doubles were rolled, same player goes again (unless 3 in a row)
         if (this.doublesCount > 0 && this.doublesCount < 3) {
-            // Same player rolls again
             return this.getCurrentPlayer();
         }
 
-        // Reset doubles count
         this.doublesCount = 0;
 
-        // Advance to next active player
         let attempts = 0;
         do {
             this.currentPlayerIndex = (this.currentPlayerIndex + 1) % this.players.length;
@@ -174,21 +245,25 @@ class GameState {
 
     getState() {
         return {
-            players: this.players.map(p => p.toJSON()),
-            properties: this.properties.map(p => p.toJSON()),
+            players: this.players.map(player => player.toJSON()),
+            properties: this.properties.map(property => property.toJSON()),
             currentPlayerIndex: this.currentPlayerIndex,
-            currentPlayerId: this.getCurrentPlayer()?.id,
+            currentPlayerId: this.getCurrentPlayer()?.id || null,
             isGameStarted: this.isGameStarted,
             turnPhase: this.turnPhase,
             taxPool: this.taxPool,
-            turnTimer: this.turnTimer
+            turnTimer: this.turnTimer,
+            matchStartedAt: this.matchStartedAt,
+            matchEndedAt: this.matchEndedAt,
+            turnCount: this.turnCount,
+            pauseState: this.pauseState,
+            eliminationOrder: [...this.eliminationOrder]
         };
     }
 }
 
-// Export for Node.js / expose for browser
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { Player, Property, GameState };
+    module.exports = { Player, Property, GameState, createDefaultPlayerStats };
 } else {
-    window.GameStateClasses = { Player, Property, GameState };
+    window.GameStateClasses = { Player, Property, GameState, createDefaultPlayerStats };
 }

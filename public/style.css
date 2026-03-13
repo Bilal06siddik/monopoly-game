@@ -346,6 +346,47 @@ body {
   cursor: not-allowed;
 }
 
+.lobby-actions {
+  display: grid;
+  gap: 12px;
+}
+
+.lobby-secondary-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.secondary-lobby-btn {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, opacity 0.18s ease;
+}
+
+.secondary-lobby-btn:hover:not(.disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(85, 239, 196, 0.3);
+  background: rgba(85, 239, 196, 0.1);
+}
+
+.secondary-lobby-btn.subtle:hover:not(.disabled) {
+  border-color: rgba(255, 107, 107, 0.3);
+  background: rgba(255, 107, 107, 0.1);
+}
+
+.secondary-lobby-btn.disabled,
+.secondary-lobby-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ═══════════════════════════════════════════════════════════
    GAME HUD — Layout
    ═══════════════════════════════════════════════════════════ */
@@ -2869,4 +2910,154 @@ body {
   color: var(--text-dim);
   text-align: center;
   padding: 20px 0;
+}
+
+.card-amount.neutral {
+  color: var(--accent-cyan);
+}
+
+.lb-disconnected {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--accent-gold);
+  background: rgba(253, 203, 110, 0.12);
+  border: 1px solid rgba(253, 203, 110, 0.18);
+}
+
+.trade-mode-label {
+  margin-bottom: 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--accent-cyan);
+}
+
+.trade-validation {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.trade-validation.info {
+  color: var(--accent-secondary);
+  background: rgba(108, 92, 231, 0.12);
+  border: 1px solid rgba(108, 92, 231, 0.24);
+}
+
+.trade-validation.error {
+  color: var(--accent-red);
+  background: rgba(255, 107, 107, 0.12);
+  border: 1px solid rgba(255, 107, 107, 0.24);
+}
+
+.trade-summary {
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.summary-card {
+  width: min(820px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 28px;
+  border-radius: 20px;
+  background: rgba(7, 9, 24, 0.96);
+  border: 1px solid rgba(108, 92, 231, 0.24);
+  box-shadow: var(--shadow-glow), var(--shadow-deep);
+}
+
+.summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.summary-header h2 {
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.summary-winner {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent-green);
+}
+
+.summary-meta {
+  margin-top: 6px;
+  margin-bottom: 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.summary-placements {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.summary-placement {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.summary-placement.is-me {
+  border-color: rgba(85, 239, 196, 0.35);
+  background: rgba(85, 239, 196, 0.08);
+}
+
+.summary-stats-inline {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.summary-section-label {
+  margin-top: 14px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--accent-secondary);
+}
+
+.summary-list {
+  display: grid;
+  gap: 8px;
+}
+
+.summary-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.summary-list-row.empty {
+  justify-content: center;
+  color: var(--text-dim);
 }

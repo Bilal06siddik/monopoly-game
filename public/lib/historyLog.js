@@ -10,25 +10,38 @@ const HistoryLog = (() => {
         // Container already exists in HTML
     }
 
-    function addEvent(text, type = 'info') {
+    function render() {
         const container = document.getElementById('history-log-list');
         if (!container) return;
 
-        const el = document.createElement('div');
-        el.className = `history-item history-${type}`;
-        el.innerHTML = `<span class="hl-text">${text}</span>`;
-
-        container.appendChild(el);
-        events.push({ text, type });
-
-        // Trim old events
-        while (container.children.length > MAX_EVENTS) {
-            container.removeChild(container.firstChild);
-        }
-
-        // Auto-scroll to bottom
+        container.innerHTML = '';
+        events.forEach(({ text, type }) => {
+            const el = document.createElement('div');
+            el.className = `history-item history-${type}`;
+            el.innerHTML = `<span class="hl-text">${text}</span>`;
+            container.appendChild(el);
+        });
         container.scrollTop = container.scrollHeight;
     }
 
-    return { init, addEvent };
+    function addEvent(text, type = 'info') {
+        events.push({ text, type });
+        while (events.length > MAX_EVENTS) {
+            events.shift();
+        }
+        render();
+    }
+
+    function replaceEvents(nextEvents = []) {
+        events.length = 0;
+        nextEvents.slice(-MAX_EVENTS).forEach(event => {
+            events.push({
+                text: event.text,
+                type: event.type || 'info'
+            });
+        });
+        render();
+    }
+
+    return { init, addEvent, replaceEvents };
 })();

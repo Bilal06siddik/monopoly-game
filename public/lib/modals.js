@@ -72,7 +72,7 @@ const GameModals = (() => {
     }
 
     // ── Action Card Modal (3D Flip Animation) ─────────────
-    function showActionCard(card, callback) {
+    function showActionCard(card, result = {}, callback) {
         const overlay = document.getElementById('card-modal');
         const inner = document.getElementById('card-inner');
         const frontEmoji = document.getElementById('card-front-emoji');
@@ -88,11 +88,25 @@ const GameModals = (() => {
 
         // Set back content
         backEmoji.textContent = card.emoji || '🎲';
-        backText.textContent = card.text;
-        backAmount.textContent = card.type === 'collect'
-            ? `+$${card.amount}`
-            : `-$${card.amount}`;
-        backAmount.className = `card-amount ${card.type === 'collect' ? 'positive' : 'negative'}`;
+        backText.textContent = result.detailText || card.text;
+
+        if (result.amountLabel) {
+            backAmount.textContent = result.amountLabel;
+            const amountClass = result.amountLabel.startsWith('+')
+                ? 'positive'
+                : result.amountLabel.startsWith('-')
+                    ? 'negative'
+                    : 'neutral';
+            backAmount.className = `card-amount ${amountClass}`;
+        } else if (card.type === 'collect' || card.type === 'pay') {
+            backAmount.textContent = card.type === 'collect'
+                ? `+$${card.amount}`
+                : `-$${card.amount}`;
+            backAmount.className = `card-amount ${card.type === 'collect' ? 'positive' : 'negative'}`;
+        } else {
+            backAmount.textContent = card.text;
+            backAmount.className = 'card-amount neutral';
+        }
 
         // Show overlay
         overlay.classList.remove('hidden');
@@ -112,13 +126,13 @@ const GameModals = (() => {
     }
 
     // ── Rent Notification ─────────────────────────────────
-    function showRentPaid(data, isMe) {
+    function showRentPaid(data, isMe, iAmOwner = false) {
         if (isMe) {
             Notifications.show(
                 `Paid <strong>$${data.amount}</strong> rent to <strong>${data.ownerCharacter}</strong> for ${data.tileName}`,
                 'error', 5000
             );
-        } else if (data.ownerId === socket.id) {
+        } else if (iAmOwner) {
             Notifications.show(
                 `<strong>${data.payerCharacter}</strong> paid you <strong>$${data.amount}</strong> rent for ${data.tileName}`,
                 'success', 5000
