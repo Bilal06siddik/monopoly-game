@@ -181,7 +181,7 @@ const Lobby = (() => {
             const color   = CHARACTER_COLORS[char.name];
             const stats   = CHARACTER_STATS[char.name];
             const display = CHARACTER_DISPLAY[char.name];
-            const imgSrc  = `./characters/${char.name}.png`;
+            const imgSrc  = `./characters/${char.name}.webp`;
             const statusLabel = isMine ? 'SELECTED' : isTaken ? (char.offline ? 'OFFLINE' : 'TAKEN') : 'SELECT';
             const tokenText = isMine && selectedToken
                 ? `TOKEN • ${getTokenLabel(selectedToken).toUpperCase()}`
@@ -203,7 +203,7 @@ const Lobby = (() => {
                         
                         <div class="tcg-artwork-box">
                             <div class="tcg-info-btn" title="View Stats">i</div>
-                            <img class="tcg-avatar" src="${imgSrc}" onerror="this.onerror=null; this.src='./characters/${char.name}.svg';" alt="${display}" />
+                            <img class="tcg-avatar" src="${imgSrc}" loading="lazy" decoding="async" fetchpriority="low" onerror="this.onerror=null; this.src='./characters/${char.name}.svg';" alt="${display}" />
                         </div>
 
                         <div class="tcg-card-footer">

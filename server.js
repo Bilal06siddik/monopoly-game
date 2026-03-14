@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const { randomUUID } = require('crypto');
+const compression = require('compression');
 const { Server } = require('socket.io');
 
 const BOARD_DATA = require('./shared/boardData');
@@ -19,7 +20,15 @@ const {
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, {
+  cors: { origin: '*' },
+  perMessageDeflate: {
+    threshold: 1024
+  },
+  httpCompression: {
+    threshold: 1024
+  }
+});
 const UPGRADE_MODEL_FILES = new Set([
   'small_buildingB.glb',
   'small_buildingA.glb',
@@ -28,14 +37,39 @@ const UPGRADE_MODEL_FILES = new Set([
   'skyscraperB.glb'
 ]);
 
-app.use(express.static(path.join(__dirname, 'public')));
-app.use('/shared', express.static(path.join(__dirname, 'shared')));
+function setStaticCacheHeaders(res, filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const immutableAssetExtensions = new Set([
+    '.js', '.css', '.png', '.jpg', '.jpeg', '.svg', '.webp', '.gif', '.glb', '.ico'
+  ]);
+
+  if (ext === '.html') {
+    res.setHeader('Cache-Control', 'no-cache');
+    return;
+  }
+
+  if (immutableAssetExtensions.has(ext)) {
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    return;
+  }
+
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+}
+
+app.use(compression({ threshold: 1024 }));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: setStaticCacheHeaders
+}));
+app.use('/shared', express.static(path.join(__dirname, 'shared'), {
+  setHeaders: setStaticCacheHeaders
+}));
 app.get('/models/:file', (req, res) => {
   const file = typeof req.params.file === 'string' ? req.params.file.trim() : '';
   if (!UPGRADE_MODEL_FILES.has(file)) {
     res.sendStatus(404);
     return;
   }
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   res.sendFile(path.join(__dirname, file));
 });
 
