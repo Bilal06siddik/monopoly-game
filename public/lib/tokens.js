@@ -322,6 +322,9 @@ const GameTokens = (() => {
             liveToken.group.add(importedModel);
             liveToken.colorMaterials = importedModel.userData.colorMaterials || [];
             liveToken.badge.position.set(0, (importedModel.userData.height || 1) + 0.32, 0);
+            if (liveToken.pointLight) {
+                liveToken.pointLight.position.y = (importedModel.userData.height || 1) + 0.1;
+            }
         });
     }
 
@@ -554,6 +557,10 @@ const GameTokens = (() => {
         token.badge.material.map = createBadgeTexture(character, resolvedColor);
         token.badge.material.needsUpdate = true;
         token.badge.position.set(0, (token.modelRoot?.userData?.height || 1) + 0.32, 0);
+        if (token.pointLight) {
+            token.pointLight.color.copy(resolvedColor);
+            token.pointLight.position.y = (token.modelRoot?.userData?.height || 1) + 0.1;
+        }
     }
 
     function createToken(player, scene) {
@@ -583,6 +590,10 @@ const GameTokens = (() => {
         badge.scale.set(0.52, 0.52, 1);
         group.add(badge);
 
+        const pointLight = new THREE.PointLight(0xffffff, 0, 1.5);
+        pointLight.position.set(0, 0.5, 0);
+        group.add(pointLight);
+
         scene.add(group);
 
         tokens[player.id] = {
@@ -593,6 +604,7 @@ const GameTokens = (() => {
             group,
             ring,
             badge,
+            pointLight,
             modelRoot: null,
             colorMaterials: [],
             currentTile: 0,
@@ -603,10 +615,13 @@ const GameTokens = (() => {
         return group;
     }
 
-    function syncToken(player) {
+    function syncToken(player, isActiveTurn = false) {
         const token = tokens[player?.id];
         if (!token || !player) return;
         applyTokenAppearance(token, player);
+        if (token.pointLight) {
+            token.pointLight.intensity = isActiveTurn ? 0.8 : 0;
+        }
     }
 
     function animateMove(playerId, fromTile, toTile, onComplete) {

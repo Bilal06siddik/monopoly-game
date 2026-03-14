@@ -36,6 +36,7 @@ class Player {
         this.isConnected = options.isConnected !== false;
         this.connectedAt = Date.now();
         this.lastSeenAt = Date.now();
+        this.bankruptcyDeadline = null;
         this.stats = createDefaultPlayerStats();
     }
 
@@ -54,6 +55,7 @@ class Player {
             isActive: this.isActive,
             isConnected: this.isConnected,
             isBot: this.isBot,
+            bankruptcyDeadline: this.bankruptcyDeadline,
             stats: { ...this.stats }
         };
     }

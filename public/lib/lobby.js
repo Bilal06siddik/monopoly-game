@@ -69,11 +69,14 @@ const Lobby = (() => {
     let selectedToken     = null;
     let myPlayerId        = null;
     let lobbyState        = null;
+    let useCustomColor    = false;
+    let selectedCustomColor = '#ffffff';
 
     function init(socketInstance) {
         socket = socketInstance;
         bindEvents();
         bindButtons();
+        bindCustomColorControls();
         setupErrorDismiss();
     }
 
@@ -82,6 +85,9 @@ const Lobby = (() => {
             myPlayerId = data.playerId || null;
             selectedCharacter = data.character || null;
             selectedToken = data.tokenId || null;
+            useCustomColor = Boolean(normalizeHexColor(data.customColor));
+            selectedCustomColor = normalizeHexColor(data.customColor) || selectedCustomColor;
+            syncCustomColorControls();
             if (lobbyState) {
                 renderCharacters(lobbyState);
                 renderTokens(lobbyState);
@@ -99,6 +105,9 @@ const Lobby = (() => {
         socket.on('character-confirmed', (data) => {
             selectedCharacter = data.character;
             selectedToken = data.tokenId || selectedToken;
+            useCustomColor = Boolean(normalizeHexColor(data.customColor));
+            selectedCustomColor = normalizeHexColor(data.customColor) || selectedCustomColor;
+            syncCustomColorControls();
             Notifications.show(`Deck Secured: <strong>${CHARACTER_DISPLAY[data.character] || data.character}</strong>`, 'success');
             if (lobbyState) {
                 renderCharacters(lobbyState);
@@ -130,6 +139,33 @@ const Lobby = (() => {
         const fromLobbyState = lobbyState?.tokens?.find(token => token.id === normalizedTokenId);
         const fromCatalog = TOKEN_OPTIONS.find(token => token.id === normalizedTokenId);
         return fromLobbyState?.label || fromCatalog?.label || normalizedTokenId || 'Unknown Token';
+    }
+
+    function normalizeHexColor(value) {
+        return /^#[0-9a-f]{6}$/i.test(value || '') ? value.toLowerCase() : null;
+    }
+
+    function getSelectedLobbyColor() {
+        return useCustomColor ? normalizeHexColor(selectedCustomColor) : null;
+    }
+
+    function persistSelectedCharacterColor() {
+        if (!socket || !selectedCharacter) return;
+        socket.emit('update-custom-color', {
+            customColor: getSelectedLobbyColor()
+        });
+    }
+
+    function syncCustomColorControls() {
+        const toggle = document.getElementById('custom-color-toggle');
+        const picker = document.getElementById('custom-color-picker');
+        const value = document.getElementById('custom-color-value');
+        if (!toggle || !picker || !value) return;
+
+        toggle.checked = useCustomColor;
+        picker.disabled = !useCustomColor;
+        picker.value = normalizeHexColor(selectedCustomColor) || '#ffffff';
+        value.textContent = useCustomColor ? picker.value.toUpperCase() : 'Default';
     }
 
     function renderCharacters(state) {
@@ -230,7 +266,10 @@ const Lobby = (() => {
                     selectedCharacter = null;
                     selectedToken = null;
                 } else {
-                    socket.emit('select-character', char.name);
+                    socket.emit('select-character', {
+                        name: char.name,
+                        customColor: getSelectedLobbyColor()
+                    });
                 }
             });
 
@@ -243,7 +282,10 @@ const Lobby = (() => {
                             selectedCharacter = null;
                             selectedToken = null;
                         } else {
-                            socket.emit('select-character', char.name);
+                            socket.emit('select-character', {
+                                name: char.name,
+                                customColor: getSelectedLobbyColor()
+                            });
                         }
                     }
                 }
@@ -344,7 +386,7 @@ const Lobby = (() => {
     }
 
     function renderHostControls(state) {
-        const panel = document.getElementById('host-controls');
+        const panel = document.getElementById('persistent-host-controls');
         const list = document.getElementById('host-player-list');
         if (!panel || !list) return;
 
@@ -352,7 +394,9 @@ const Lobby = (() => {
         panel.classList.toggle('hidden', !isHost);
         list.innerHTML = '';
 
-        if (!isHost) return;
+        if (!isHost) {
+            return;
+        }
 
         const members = Array.isArray(state?.members) ? state.members : [];
         const visibleMembers = members.filter(member => !member.isHost);
@@ -401,6 +445,48 @@ const Lobby = (() => {
                 if (clearBotsBtn.disabled) return;
                 socket.emit('clear-lobby-bots');
             });
+        }
+
+        const hostControlsToggle = document.getElementById('host-controls-toggle');
+        const hostControlsClose = document.getElementById('host-controls-close');
+
+        hostControlsToggle?.addEventListener('click', () => {
+            const panel = document.getElementById('persistent-host-controls');
+            setHostControlsOpen(panel?.classList.contains('hidden'));
+        });
+
+        hostControlsClose?.addEventListener('click', () => setHostControlsOpen(false));
+    }
+
+    function bindCustomColorControls() {
+        const toggle = document.getElementById('custom-color-toggle');
+        const picker = document.getElementById('custom-color-picker');
+        if (!toggle || !picker) return;
+
+        toggle.addEventListener('change', () => {
+            useCustomColor = toggle.checked;
+            syncCustomColorControls();
+            persistSelectedCharacterColor();
+        });
+
+        picker.addEventListener('input', () => {
+            selectedCustomColor = normalizeHexColor(picker.value) || '#ffffff';
+            syncCustomColorControls();
+            persistSelectedCharacterColor();
+        });
+
+        syncCustomColorControls();
+    }
+
+    function setHostControlsOpen(isOpen) {
+        const panel = document.getElementById('persistent-host-controls');
+        const toggle = document.getElementById('host-controls-toggle');
+        if (!panel) return;
+
+        panel.classList.toggle('hidden', !isOpen);
+        if (toggle) {
+            toggle.setAttribute('aria-expanded', String(Boolean(isOpen)));
+            toggle.textContent = isOpen ? 'Hide Host Controls' : 'Host Controls';
         }
     }
 

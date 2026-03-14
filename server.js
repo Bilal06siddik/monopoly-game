@@ -60,6 +60,7 @@ const HISTORY_EVENT_LIMIT = 50;
 const BOT_ACTION_MIN_MS = 800;
 const BOT_ACTION_MAX_MS = 1800;
 const BOT_BID_INCREMENTS = [2, 5, 10, 25, 50, 100];
+const SAVE_FILE_VERSION = 1;
 
 const supersededSocketIds = new Set();
 const rooms = new Map();
@@ -321,6 +322,11 @@ function resolveLobbyToken(character, preferredTokenId = null) {
   return normalizeTokenId(preferredTokenId) || getDefaultTokenForCharacter(character);
 }
 
+function normalizeCustomColor(value) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized.toLowerCase() : null;
+}
+
 function getLobbyState() {
   const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
   const playerList = [...lobbyPlayers.values()]
@@ -507,7 +513,8 @@ function emitPlayerSession(socket, player) {
     sessionToken: socket.data.sessionToken,
     playerId: player?.id || null,
     character: player?.character || null,
-    tokenId: player?.tokenId || null
+    tokenId: player?.tokenId || null,
+    customColor: player?.customColor || null
   });
 }
 
@@ -549,6 +556,140 @@ function buildGameStatePayload(viewerPlayerId = null) {
       || null)
     : null;
   return payload;
+}
+
+function buildSavePayload() {
+  if (!gameState) return null;
+
+  return {
+    version: SAVE_FILE_VERSION,
+    savedAt: Date.now(),
+    roomCode: currentRoomCode,
+    actionDeck: Array.isArray(actionDeck) ? [...actionDeck] : [],
+    eventHistory: Array.isArray(eventHistory) ? [...eventHistory] : [],
+    lastDiceTotal: Number.isFinite(lastDiceTotal) ? lastDiceTotal : 0,
+    turnTimerState: turnTimerState ? { ...turnTimerState } : null,
+    gameState: {
+      currentPlayerIndex: gameState.currentPlayerIndex,
+      isGameStarted: gameState.isGameStarted,
+      doublesCount: gameState.doublesCount,
+      turnPhase: gameState.turnPhase,
+      taxPool: gameState.taxPool,
+      matchStartedAt: gameState.matchStartedAt,
+      matchEndedAt: gameState.matchEndedAt,
+      turnCount: gameState.turnCount,
+      pauseState: gameState.pauseState,
+      eliminationOrder: [...gameState.eliminationOrder],
+      players: gameState.players.map(player => ({
+        id: player.id,
+        character: player.character,
+        color: player.color,
+        tokenId: player.tokenId,
+        sessionToken: player.sessionToken,
+        position: player.position,
+        money: player.money,
+        properties: [...player.properties],
+        inJail: Boolean(player.inJail),
+        jailTurns: player.jailTurns,
+        pardons: player.pardons,
+        isActive: Boolean(player.isActive),
+        isBot: Boolean(player.isBot),
+        stats: { ...player.stats },
+        bankruptcyDeadline: player.bankruptcyDeadline
+      })),
+      properties: gameState.properties.map(property => ({
+        index: property.index,
+        owner: property.owner,
+        houses: property.houses,
+        isMortgaged: Boolean(property.isMortgaged),
+        landedCount: property.landedCount,
+        rentCollected: property.rentCollected,
+        history: Array.isArray(property.history) ? [...property.history] : []
+      }))
+    }
+  };
+}
+
+function restoreGameStateFromSave(saveState) {
+  const payload = saveState?.gameState && Array.isArray(saveState.gameState.players)
+    ? saveState.gameState
+    : saveState;
+
+  if (!payload || !Array.isArray(payload.players) || !Array.isArray(payload.properties)) {
+    throw new Error('Invalid save file format.');
+  }
+
+  const restored = new GameState(BOARD_DATA);
+  restored.players = [];
+
+  payload.players.forEach((playerData, index) => {
+    const lobbyEntry = playerData.sessionToken
+      ? lobbyPlayers.get(playerData.sessionToken)
+      : getLobbyEntryByPlayerId(playerData.id) || getLobbyEntryByCharacter(playerData.character);
+
+    const restoredPlayer = restored.addPlayer(
+      playerData.id || lobbyEntry?.playerId || createPlayerId(),
+      playerData.character || lobbyEntry?.character || lobbyEntry?.name || `Player ${index + 1}`,
+      playerData.color || CHARACTER_COLORS[playerData.character] || '#9aa4b2',
+      playerData.isBot ? null : (playerData.sessionToken || lobbyEntry?.sessionToken || null),
+      {
+        isBot: Boolean(playerData.isBot),
+        isConnected: Boolean(playerData.isBot || lobbyEntry?.socketId),
+        tokenId: resolveLobbyToken(playerData.character || lobbyEntry?.character, playerData.tokenId)
+      }
+    );
+
+    restoredPlayer.socketId = lobbyEntry?.socketId || null;
+    restoredPlayer.position = clampInt(playerData.position, 0, BOARD_DATA.length - 1) ?? 0;
+    restoredPlayer.money = Number.isFinite(playerData.money) ? playerData.money : 1500;
+    restoredPlayer.properties = Array.isArray(playerData.properties) ? [...playerData.properties] : [];
+    restoredPlayer.inJail = Boolean(playerData.inJail);
+    restoredPlayer.jailTurns = clampInt(playerData.jailTurns, 0, 3) ?? 0;
+    restoredPlayer.pardons = Math.max(0, Number.parseInt(playerData.pardons, 10) || 0);
+    restoredPlayer.isActive = playerData.isActive !== false;
+    restoredPlayer.connectedAt = lobbyEntry?.socketId ? Date.now() : restoredPlayer.connectedAt;
+    restoredPlayer.lastSeenAt = Date.now();
+    Object.assign(restoredPlayer.stats, playerData.stats || {});
+
+    restoredPlayer.bankruptcyDeadline = playerData.bankruptcyDeadline != null ? Date.now() : null;
+  });
+
+  restored.properties.forEach(property => {
+    const savedProperty = payload.properties.find(entry => entry.index === property.index);
+    if (!savedProperty) return;
+    property.owner = restored.getPlayerById(savedProperty.owner)?.id || null;
+    property.houses = clampInt(savedProperty.houses, 0, 5) ?? 0;
+    property.isMortgaged = Boolean(savedProperty.isMortgaged);
+    property.landedCount = Math.max(0, Number.parseInt(savedProperty.landedCount, 10) || 0);
+    property.rentCollected = Math.max(0, Number.parseInt(savedProperty.rentCollected, 10) || 0);
+    property.history = Array.isArray(savedProperty.history) ? [...savedProperty.history].slice(-20) : [];
+  });
+
+  restored.currentPlayerIndex = clampInt(payload.currentPlayerIndex, 0, Math.max(restored.players.length - 1, 0)) ?? 0;
+  restored.isGameStarted = payload.isGameStarted !== false;
+  restored.doublesCount = clampInt(payload.doublesCount, 0, 2) ?? 0;
+  restored.turnPhase = ['waiting', 'buying', 'done'].includes(payload.turnPhase)
+    ? payload.turnPhase
+    : 'waiting';
+  restored.taxPool = Math.max(0, Number.parseInt(payload.taxPool, 10) || 0);
+  restored.matchStartedAt = payload.matchStartedAt || Date.now();
+  restored.matchEndedAt = payload.matchEndedAt || null;
+  restored.turnCount = Math.max(0, Number.parseInt(payload.turnCount, 10) || 0);
+  restored.pauseState = null;
+  restored.eliminationOrder = Array.isArray(payload.eliminationOrder) ? [...payload.eliminationOrder] : [];
+
+  if (!restored.getCurrentPlayer()?.isActive) {
+    const nextActiveIndex = restored.players.findIndex(player => player.isActive);
+    restored.currentPlayerIndex = nextActiveIndex >= 0 ? nextActiveIndex : 0;
+  }
+
+  return {
+    restoredGameState: restored,
+    restoredActionDeck: Array.isArray(saveState?.actionDeck) ? [...saveState.actionDeck] : [...ACTION_CARDS],
+    restoredEventHistory: Array.isArray(saveState?.eventHistory) ? [...saveState.eventHistory] : [],
+    restoredLastDiceTotal: Number.isFinite(saveState?.lastDiceTotal) ? saveState.lastDiceTotal : 0,
+    restoredTurnTimerState: saveState?.turnTimerState ? { ...saveState.turnTimerState } : null
+  };
 }
 
 function clearRoomGameRuntime({ preserveLobby = true } = {}) {
@@ -814,6 +955,7 @@ function emitGameStateSync({ restartTurnTimer = false, targetSocket = null } = {
   if (!gameState) return;
 
   syncPlayerPropertyLists();
+  gameState.players.forEach(checkBankruptcyRecovery);
   invalidateStaleTrades();
 
   if (restartTurnTimer) {
@@ -821,7 +963,10 @@ function emitGameStateSync({ restartTurnTimer = false, targetSocket = null } = {
     gameState.doublesCount = 0;
     if (gameState.pauseState) {
       stopTurnTimer(false);
-    } else if (gameState.turnPhase === 'waiting' || gameState.turnPhase === 'buying') {
+    } else if (
+      ['waiting', 'buying', 'done'].includes(gameState.turnPhase)
+      && !gameState.getCurrentPlayer()?.bankruptcyDeadline
+    ) {
       startTurnTimer(gameState.turnPhase);
     } else {
       stopTurnTimer();
@@ -858,7 +1003,11 @@ function startTurnTimer(phase, remainingSeconds = TURN_TIMER_SECONDS) {
   }
 
   const currentPlayer = gameState.getCurrentPlayer();
-  if (!currentPlayer || !currentPlayer.isActive || !['waiting', 'buying'].includes(phase)) {
+  if (!currentPlayer || !currentPlayer.isActive || !['waiting', 'buying', 'done'].includes(phase)) {
+    stopTurnTimer(false);
+    return;
+  }
+  if (currentPlayer.bankruptcyDeadline) {
     stopTurnTimer(false);
     return;
   }
@@ -930,7 +1079,7 @@ function resumePausedGameIfPossible(player) {
   const timerToResume = pausedTurnTimerState;
   pausedTurnTimerState = null;
 
-  if (timerToResume && ['waiting', 'buying'].includes(gameState.turnPhase)) {
+  if (timerToResume && ['waiting', 'buying', 'done'].includes(gameState.turnPhase)) {
     startTurnTimer(gameState.turnPhase, timerToResume.remainingSeconds);
   } else {
     stopTurnTimer(false);
@@ -943,12 +1092,16 @@ function setTurnPhase(phase, options = {}) {
   if (!gameState) return;
 
   gameState.turnPhase = phase;
+  if (options.restartTimer === false) {
+    stopTurnTimer(options.emitTimerStop !== false);
+    return;
+  }
   if (options.resumeTimerSeconds != null) {
     startTurnTimer(phase, options.resumeTimerSeconds);
     return;
   }
 
-  if (['waiting', 'buying'].includes(phase)) {
+  if (['waiting', 'buying', 'done'].includes(phase)) {
     startTurnTimer(phase);
   } else {
     stopTurnTimer();
@@ -1064,6 +1217,15 @@ function endAuction() {
       if (!winner.properties.includes(tile.index)) {
         winner.properties.push(tile.index);
       }
+      // #5: Own auction proceeds go to the seller
+      if (finishedAuction.reason === 'own' && finishedAuction.initiatorId) {
+        const seller = gameState.getPlayerById(finishedAuction.initiatorId);
+        if (seller && seller.id !== winner.id) {
+          seller.money += finishedAuction.currentBid;
+          checkBankruptcyRecovery(seller);
+          logEvent(`💰 ${seller.character} received $${finishedAuction.currentBid} from the auction of ${tile.name}`, 'buy');
+        }
+      }
       logEvent(`🔨 ${winner.character} won ${tile.name} for $${finishedAuction.currentBid}!`, 'auction');
     }
   } else {
@@ -1083,7 +1245,7 @@ function endAuction() {
   });
 
   if (finishedAuction.reason === 'pass') {
-    advanceTurnGlobal();
+    waitForTurnEndCurrentPlayer();
     return;
   }
 
@@ -1172,6 +1334,28 @@ function advanceTurnGlobal() {
   });
   queueBotTurnIfNeeded(nextPlayer);
 }
+
+function waitForTurnEndCurrentPlayer() {
+  if (!gameState) return;
+
+  clearPendingMoveResolution();
+  const currentPlayer = gameState.getCurrentPlayer();
+  if (!currentPlayer || !currentPlayer.isActive) {
+    advanceTurnGlobal();
+    return;
+  }
+
+  setTurnPhase('done');
+  if (!currentPlayer.isConnected) {
+    pauseGameForDisconnect(currentPlayer);
+  }
+  emitToRoom('turn-changed', {
+    currentPlayerId: currentPlayer.id,
+    currentCharacter: currentPlayer.character,
+    gameState: gameState.getState()
+  });
+  queueBotEndTurnIfNeeded(currentPlayer);
+}
 function recordMoveStats(player, moveResult) {
   if (!player || !moveResult) return;
   if (moveResult.passedGo) {
@@ -1193,6 +1377,7 @@ function awardPropertyToPlayer(player, tile, price, historyType = 'buy') {
 function concludeGame(winner) {
   if (!gameState || gameState.matchEndedAt) return;
 
+  const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
   gameState.matchEndedAt = Date.now();
   gameState.pauseState = null;
   pausedTurnTimerState = null;
@@ -1206,14 +1391,71 @@ function concludeGame(winner) {
     summary,
     gameState: gameState.getState()
   });
+
+  clearRoomGameRuntime({ preserveLobby: true });
+  emitLobbyUpdate();
+  emitToRoom('game-state-sync', buildGameStatePayload());
+  persistRoomState(roomState);
 }
 
 function handleBankruptcy(player) {
+  if (!gameState || !player || !player.isActive) return 'ignored';
+
+  const ownedTiles = gameState.properties.filter(t => t.owner === player.id);
+  const hasAssets = ownedTiles.some(t => t.houses > 0 || !t.isMortgaged);
+  const alreadyInRecovery = Boolean(player.bankruptcyDeadline);
+
+  if (!hasAssets) {
+    executeBankruptcy(player);
+    return 'eliminated';
+  }
+
+  if (!player.bankruptcyDeadline) {
+    player.bankruptcyDeadline = Date.now();
+  }
+
+  if (gameState.getCurrentPlayer()?.id === player.id) {
+    setTurnPhase('waiting', { restartTimer: false });
+  }
+
+  if (!alreadyInRecovery) {
+    logEvent(`⚠️ ${player.character} is in debt ($${player.money})! Recover before ending the turn or declare bankruptcy.`, 'bankrupt');
+  }
+  emitToRoom('bankruptcy-warning', {
+    playerId: player.id,
+    character: player.character,
+    money: player.money,
+    gameState: gameState.getState()
+  });
+
+  emitGameStateSync({ restartTurnTimer: false });
+  return 'warning';
+}
+
+function checkBankruptcyRecovery(player) {
+  if (!player?.bankruptcyDeadline || !player.isActive) return;
+
+  if (player.money >= 0) {
+    player.bankruptcyDeadline = null;
+
+    logEvent(`✅ ${player.character} recovered from debt!`, 'system');
+    emitToRoom('bankruptcy-resolved', {
+      playerId: player.id,
+      character: player.character,
+      survived: true,
+      gameState: gameState.getState()
+    });
+  }
+}
+
+function executeBankruptcy(player) {
   if (!gameState || !player || !player.isActive) return;
 
   if (pendingMoveResolution?.playerId === player.id) {
     clearPendingMoveResolution();
   }
+
+  player.bankruptcyDeadline = null;
 
   player.isActive = false;
   player.money = 0;
@@ -1268,6 +1510,11 @@ function emitBuyPrompt(player, tile) {
 }
 
 function resolveActionCardAndMaybeMove(player) {
+  // #27: Lucky Wheel removes 'roll again' doubles bonus
+  if (lastDiceTotal && lastDiceTotal.isDoubles) {
+      lastDiceTotal.isDoubles = false;
+      player.doublesCount = 0;
+  }
   const card = drawActionCard();
   player.stats.cardsDrawn++;
   logEvent(`🃏 ${player.character}: "${card.text}"`, 'card');
@@ -1299,6 +1546,9 @@ function resolveActionCardAndMaybeMove(player) {
 
   if (!player.isActive) {
     return 'bankrupt';
+  }
+  if (player.bankruptcyDeadline) {
+    return 'recovery';
   }
 
   if (result.moveResult) {
@@ -1371,8 +1621,7 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
     invalidateStaleTrades();
 
     if (player.money < 0) {
-      handleBankruptcy(player);
-      return 'bankrupt';
+      return handleBankruptcy(player) === 'eliminated' ? 'bankrupt' : 'recovery';
     }
     return 'done';
   }
@@ -1415,8 +1664,7 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
       invalidateStaleTrades();
 
       if (player.money < 0) {
-        handleBankruptcy(player);
-        return 'bankrupt';
+        return handleBankruptcy(player) === 'eliminated' ? 'bankrupt' : 'recovery';
       }
     }
 
@@ -1440,8 +1688,13 @@ function resolveMoveCompletion(playerId) {
     return;
   }
 
+  if (resolution.action === 'finish-turn') {
+    waitForTurnEndCurrentPlayer();
+    return;
+  }
+
   const result = evaluateTile(currentPlayer, resolution.diceTotal ?? lastDiceTotal, resolution.rentContext || {});
-  if (result === 'buying' || result === 'pending') return;
+  if (result === 'buying' || result === 'pending' || result === 'recovery') return;
   if (result === 'bankrupt') {
     if (gameState.getActivePlayers().length > 1) {
       advanceTurnGlobal();
@@ -1449,7 +1702,7 @@ function resolveMoveCompletion(playerId) {
     return;
   }
 
-  advanceTurnGlobal();
+  waitForTurnEndCurrentPlayer();
 }
 
 function handleRollDice(playerId) {
@@ -1457,7 +1710,9 @@ function handleRollDice(playerId) {
 
   const currentPlayer = gameState.getCurrentPlayer();
   if (!currentPlayer || currentPlayer.id !== playerId) return false;
+  // #12: Safeguard — only allow rolling when in 'waiting' phase
   if (gameState.turnPhase !== 'waiting') return false;
+  if (currentPlayer.bankruptcyDeadline || currentPlayer.money < 0) return false;
 
   setTurnPhase('rolling');
   const diceResult = gameState.rollDice();
@@ -1468,13 +1723,57 @@ function handleRollDice(playerId) {
       currentPlayer.inJail = false;
       currentPlayer.jailTurns = 0;
       logEvent(`🔓 ${currentPlayer.character} rolled doubles and escaped jail!`, 'roll');
+      // #7: Escaping jail by rolling doubles ends the turn (no move this turn)
+      emitToRoom('dice-rolled', {
+        playerId,
+        character: currentPlayer.character,
+        die1: diceResult.die1,
+        die2: diceResult.die2,
+        total: diceResult.total,
+        isDoubles: true,
+        moveResult: {
+          oldPosition: currentPlayer.position,
+          newPosition: currentPlayer.position,
+          steps: 0,
+          passedGo: false
+        },
+        gameState: gameState.getState(),
+        jailRoll: true
+      });
+      // End turn after escaping jail — next turn they roll normally
+      scheduleMoveResolution(playerId, 0, 0, { action: 'finish-turn' });
+      return true;
     } else {
       currentPlayer.jailTurns++;
       if (currentPlayer.jailTurns >= 3) {
-        currentPlayer.money -= 50;
+        // #10: After 3 failed rolls, forced to pay $100
+        currentPlayer.money -= 100;
+        gameState.taxPool += 100;
         currentPlayer.inJail = false;
         currentPlayer.jailTurns = 0;
-        logEvent(`🔓 ${currentPlayer.character} paid $50 to leave jail (3 turns).`, 'tax');
+        logEvent(`🔓 ${currentPlayer.character} paid $100 to leave jail (3 failed rolls).`, 'tax');
+        emitToRoom('dice-rolled', {
+          playerId,
+          character: currentPlayer.character,
+          die1: diceResult.die1,
+          die2: diceResult.die2,
+          total: diceResult.total,
+          isDoubles: false,
+          moveResult: {
+            oldPosition: currentPlayer.position,
+            newPosition: currentPlayer.position,
+            steps: 0,
+            passedGo: false
+          },
+          gameState: gameState.getState(),
+          jailRoll: true
+        });
+        if (currentPlayer.money < 0) {
+          handleBankruptcy(currentPlayer);
+          return true;
+        }
+        scheduleMoveResolution(playerId, 0, 0, { action: 'finish-turn' });
+        return true;
       } else {
         logEvent(`🔒 ${currentPlayer.character} failed to roll doubles (jail turn ${currentPlayer.jailTurns}/3)`, 'roll');
         emitToRoom('dice-rolled', {
@@ -1493,7 +1792,8 @@ function handleRollDice(playerId) {
           gameState: gameState.getState(),
           jailRoll: true
         });
-        scheduleMoveResolution(playerId, 0, 0, { action: 'evaluate', diceTotal: lastDiceTotal, rentContext: {} });
+        // End turn — stay in jail
+        scheduleMoveResolution(playerId, 0, 0, { action: 'finish-turn' });
         return true;
       }
     }
@@ -1503,7 +1803,10 @@ function handleRollDice(playerId) {
   recordMoveStats(currentPlayer, moveResult);
   setTurnPhase('moving');
 
-  logEvent(`🎲 ${currentPlayer.character} rolled ${diceResult.die1} & ${diceResult.die2}${diceResult.isDoubles ? ' (DOUBLES!)' : ''}`, 'roll');
+  // #18: History log includes tile name
+  const landedTile = gameState.properties[moveResult.newPosition];
+  const tileName = landedTile ? landedTile.name : `tile ${moveResult.newPosition}`;
+  logEvent(`🎲 ${currentPlayer.character} rolled ${diceResult.total} and went to ${tileName}${diceResult.isDoubles ? ' (DOUBLES!)' : ''}`, 'roll');
 
   emitToRoom('dice-rolled', {
     playerId,
@@ -1546,7 +1849,7 @@ function handlePassProperty(playerId, { timedOut = false } = {}) {
   }
 
   if (currentPlayer.isBot) {
-    advanceTurnGlobal();
+    waitForTurnEndCurrentPlayer();
     return true;
   }
 
@@ -1583,7 +1886,7 @@ function handleBuyProperty(playerId, tileIndex) {
     price: tile.price,
     gameState: gameState.getState()
   });
-  advanceTurnGlobal();
+  waitForTurnEndCurrentPlayer();
   return true;
 }
 
@@ -1607,6 +1910,12 @@ function handleTurnTimeout(expiredTimer) {
 
   if (expiredTimer.phase === 'buying') {
     handlePassProperty(currentPlayer.id, { timedOut: true });
+    return;
+  }
+
+  if (expiredTimer.phase === 'done') {
+    logEvent(`⏰ ${currentPlayer.character} ran out of time. Ending the turn.`, 'system');
+    advanceTurnGlobal();
   }
 }
 
@@ -1743,6 +2052,8 @@ function executeAcceptedTrade(trade, accepter) {
 
   offerer.stats.tradesCompleted++;
   accepter.stats.tradesCompleted++;
+  checkBankruptcyRecovery(offerer);
+  checkBankruptcyRecovery(accepter);
   syncPlayerPropertyLists();
   removePendingTrade(trade.id);
   invalidateStaleTrades();
@@ -1829,6 +2140,22 @@ function queueBotTurnIfNeeded(player = gameState?.getCurrentPlayer()) {
   });
 }
 
+function queueBotEndTurnIfNeeded(player = gameState?.getCurrentPlayer()) {
+  clearBotTimersByPrefix('turn:');
+
+  if (!gameState || !gameState.isGameStarted || auctionState || gameState.pauseState) return;
+  if (!player?.isBot || !player.isActive) return;
+  if (gameState.getCurrentPlayer()?.id !== player.id) return;
+  if (gameState.turnPhase !== 'done') return;
+
+  scheduleBotTimer(`turn:${player.id}`, randomBotDelay(), () => {
+    if (!gameState || !gameState.isGameStarted || auctionState || gameState.pauseState) return;
+    const currentPlayer = gameState.getCurrentPlayer();
+    if (!currentPlayer || currentPlayer.id !== player.id || !currentPlayer.isBot || gameState.turnPhase !== 'done') return;
+    advanceTurnGlobal();
+  });
+}
+
 function queueBotBuyDecision(player, tile) {
   clearBotTimersByPrefix('buy:');
 
@@ -1887,6 +2214,11 @@ function syncBotAutomation() {
     if (tile?.owner === null) {
       queueBotBuyDecision(currentPlayer, tile);
     }
+    return;
+  }
+
+  if (gameState.turnPhase === 'done') {
+    queueBotEndTurnIfNeeded(currentPlayer);
   }
 }
 
@@ -1958,7 +2290,10 @@ io.on('connection', socket => {
     }
   });
 
-  bindRoomHandler(socket, roomState, 'select-character', characterName => {
+  bindRoomHandler(socket, roomState, 'select-character', data => {
+    const characterName = typeof data === 'string' ? data : data?.name;
+    const customColor = normalizeCustomColor(typeof data === 'object' ? data?.customColor : null);
+
     if (gameState && gameState.isGameStarted) {
       socket.emit('character-error', { message: 'Game already in progress' });
       return;
@@ -1978,16 +2313,20 @@ io.on('connection', socket => {
     currentEntry.character = characterName;
     currentEntry.tokenId = resolveLobbyToken(characterName, currentEntry.tokenId);
     currentEntry.name = characterName;
+    if (customColor) currentEntry.customColor = customColor;
+    else delete currentEntry.customColor;
     currentEntry.socketId = socket.id;
     socket.data.playerId = currentEntry.playerId;
     socket.emit('character-confirmed', {
       character: characterName,
-      tokenId: currentEntry.tokenId
+      tokenId: currentEntry.tokenId,
+      customColor: currentEntry.customColor || null
     });
     emitPlayerSession(socket, {
       id: currentEntry.playerId,
       character: characterName,
-      tokenId: currentEntry.tokenId
+      tokenId: currentEntry.tokenId,
+      customColor: currentEntry.customColor || null
     });
     emitLobbyUpdate();
   });
@@ -2020,13 +2359,40 @@ io.on('connection', socket => {
     emitLobbyUpdate();
   });
 
+  bindRoomHandler(socket, roomState, 'update-custom-color', data => {
+    if (gameState && gameState.isGameStarted) {
+      socket.emit('character-error', { message: 'Game already in progress' });
+      return;
+    }
+
+    const entry = getLobbyEntryBySocketId(socket.id);
+    if (!entry || !entry.character) return;
+
+    const customColor = normalizeCustomColor(typeof data === 'object' ? data?.customColor : null);
+    if (customColor) entry.customColor = customColor;
+    else delete entry.customColor;
+
+    emitPlayerSession(socket, {
+      id: entry.playerId,
+      character: entry.character,
+      tokenId: entry.tokenId || null,
+      customColor: entry.customColor || null
+    });
+    emitLobbyUpdate();
+  });
+
   bindRoomHandler(socket, roomState, 'deselect-character', () => {
     const entry = getLobbyEntryBySocketId(socket.id);
     if (!entry) return;
     entry.character = null;
     entry.tokenId = null;
     entry.name = null;
-    emitPlayerSession(socket, { id: entry.playerId, character: null, tokenId: null });
+    emitPlayerSession(socket, {
+      id: entry.playerId,
+      character: null,
+      tokenId: null,
+      customColor: entry.customColor || null
+    });
     emitLobbyUpdate();
   });
 
@@ -2095,7 +2461,7 @@ io.on('connection', socket => {
       const playerRecord = gameState.addPlayer(
         entry.playerId,
         entry.character,
-        CHARACTER_COLORS[entry.character],
+        entry.customColor || CHARACTER_COLORS[entry.character],
         entry.isBot ? null : entry.sessionToken,
         {
           isBot: Boolean(entry.isBot),
@@ -2181,7 +2547,9 @@ io.on('connection', socket => {
       return;
     }
     const playerRecord = getSocketPlayer(socket);
-    handleRollDice(playerRecord?.id);
+    if (!handleRollDice(playerRecord?.id)) {
+      socket.emit('game-error', { message: 'You cannot roll dice right now.' });
+    }
   });
 
   bindRoomHandler(socket, roomState, 'move-complete', () => {
@@ -2190,6 +2558,43 @@ io.on('connection', socket => {
     const playerRecord = getSocketPlayer(socket);
     if (!currentPlayer || !playerRecord || currentPlayer.id !== playerRecord.id) return;
     resolveMoveCompletion(playerRecord.id);
+  });
+
+  bindRoomHandler(socket, roomState, 'declare-bankruptcy', () => {
+    if (!gameState || !gameState.isGameStarted) return;
+    const player = getSocketPlayer(socket);
+    if (!player) return;
+
+    if (!player.isActive) {
+      socket.emit('game-error', { message: 'You are already bankrupt.' });
+      return;
+    }
+
+    const currentPlayer = gameState.getCurrentPlayer();
+    const wasCurrentPlayer = currentPlayer?.id === player.id;
+    logEvent(`🏳️ ${player.character} surrendered and declared bankruptcy voluntarily.`, 'bankrupt');
+    executeBankruptcy(player);
+    if (wasCurrentPlayer && gameState && gameState.getActivePlayers().length > 1) {
+        advanceTurnGlobal();
+    }
+  });
+
+  bindRoomHandler(socket, roomState, 'end-turn', () => {
+    if (!gameState || !gameState.isGameStarted || auctionState || gameState.pauseState) return;
+    const currentPlayer = gameState.getCurrentPlayer();
+    const playerRecord = getSocketPlayer(socket);
+    if (!currentPlayer || !playerRecord || currentPlayer.id !== playerRecord.id) return;
+    if (gameState.turnPhase !== 'done') return;
+    if (currentPlayer.inJail) {
+      socket.emit('game-error', { message: 'Choose a jail action before ending your turn.' });
+      return;
+    }
+    if (currentPlayer.money < 0) {
+      socket.emit('game-error', { message: 'Recover from debt or use Declare Bankruptcy before ending your turn.' });
+      return;
+    }
+    checkBankruptcyRecovery(currentPlayer);
+    advanceTurnGlobal();
   });
 
   bindRoomHandler(socket, roomState, 'buy-property', data => {
@@ -2202,16 +2607,23 @@ io.on('connection', socket => {
 
     const playerRecord = getSocketPlayer(socket);
     if (!playerRecord || !playerRecord.inJail) return;
-    if (playerRecord.money < 50) {
-      socket.emit('game-error', { message: 'Not enough money to buy out of jail ($50)' });
+    // #10: Jail buyout costs $100 (changed from $50)
+    if (playerRecord.money < 100) {
+      socket.emit('game-error', { message: 'Not enough money to buy out of jail ($100)' });
+      return;
+    }
+    // #10: Must be current player and it must be their turn
+    const currentPlayer = gameState.getCurrentPlayer();
+    if (!currentPlayer || currentPlayer.id !== playerRecord.id) {
+      socket.emit('game-error', { message: 'You can only buy out of jail on your turn.' });
       return;
     }
 
-    playerRecord.money -= 50;
-    gameState.taxPool += 50;
+    playerRecord.money -= 100;
+    gameState.taxPool += 100;
     playerRecord.inJail = false;
     playerRecord.jailTurns = 0;
-    logEvent(`🔓 ${playerRecord.character} paid $50 to leave jail!`, 'tax');
+    logEvent(`🔓 ${playerRecord.character} paid $100 to leave jail!`, 'tax');
     invalidateStaleTrades();
 
     emitToRoom('jail-state-changed', {
@@ -2220,6 +2632,9 @@ io.on('connection', socket => {
       inJail: false,
       gameState: gameState.getState()
     });
+
+    // Leaving jail now waits for an explicit end-turn or timer expiry.
+    waitForTurnEndCurrentPlayer();
   });
 
   bindRoomHandler(socket, roomState, 'use-pardon', () => {
@@ -2227,6 +2642,11 @@ io.on('connection', socket => {
 
     const playerRecord = getSocketPlayer(socket);
     if (!playerRecord || !playerRecord.inJail || playerRecord.pardons <= 0) return;
+    const currentPlayer = gameState.getCurrentPlayer();
+    if (!currentPlayer || currentPlayer.id !== playerRecord.id) {
+      socket.emit('game-error', { message: 'You can only use a pardon card on your turn.' });
+      return;
+    }
 
     playerRecord.pardons--;
     playerRecord.inJail = false;
@@ -2239,6 +2659,8 @@ io.on('connection', socket => {
       inJail: false,
       gameState: gameState.getState()
     });
+
+    waitForTurnEndCurrentPlayer();
   });
 
   bindRoomHandler(socket, roomState, 'pass-property', () => {
@@ -2466,7 +2888,7 @@ io.on('connection', socket => {
 
     logEvent(`🔨 ${playerRecord.character} put ${tile.name} up for auction!`, 'auction');
     setTurnPhase('auctioning');
-    startAuction(data.tileIndex, Math.floor(tile.price / 2), playerRecord.id, {
+    startAuction(data.tileIndex, Math.max(1, Number.parseInt(data.startPrice, 10) || Math.floor(tile.price / 2)), playerRecord.id, {
       reason: 'own',
       returnPhase,
       returnPlayerId: playerRecord.id
@@ -2641,6 +3063,7 @@ io.on('connection', socket => {
     playerRecord.money += refund;
     playerRecord.stats.housesSold++;
     tile.houses--;
+    checkBankruptcyRecovery(playerRecord);
     logEvent(`🔻 ${playerRecord.character} sold a house on ${tile.name} (+$${refund})`, 'sell');
     invalidateStaleTrades();
 
@@ -2676,6 +3099,7 @@ io.on('connection', socket => {
     tile.isMortgaged = true;
     const mortgageValue = Math.floor(tile.price / 2);
     playerRecord.money += mortgageValue;
+    checkBankruptcyRecovery(playerRecord);
     logEvent(`🏦 ${playerRecord.character} mortgaged ${tile.name} (+$${mortgageValue})`, 'sell');
     invalidateStaleTrades();
 
@@ -2747,6 +3171,7 @@ io.on('connection', socket => {
     tile.houses = 0;
     tile.isMortgaged = false;
     playerRecord.properties = playerRecord.properties.filter(index => index !== data.tileIndex);
+    checkBankruptcyRecovery(playerRecord);
     logEvent(`💰 ${playerRecord.character} sold ${tile.name} to the bank (+$${sellValue})`, 'sell');
     invalidateStaleTrades();
 
@@ -2758,6 +3183,68 @@ io.on('connection', socket => {
       sellValue,
       gameState: gameState.getState()
     });
+  });
+
+  bindRoomHandler(socket, roomState, 'save-game', () => {
+    const playerRecord = getSocketPlayer(socket);
+    if (!isRoomHost(socket, roomState) || !playerRecord) {
+      socket.emit('game-error', { message: 'Only the host can save the game.' });
+      return;
+    }
+    if (!gameState || !gameState.isGameStarted) {
+      socket.emit('game-error', { message: 'No active game to save.' });
+      return;
+    }
+    const saveState = buildSavePayload();
+    socket.emit('game-saved', { saveState });
+    logEvent(`💾 ${playerRecord?.character || 'The host'} saved the game.`, 'system');
+  });
+
+  bindRoomHandler(socket, roomState, 'load-game', (data) => {
+    const playerRecord = getSocketPlayer(socket);
+    if (!isRoomHost(socket, roomState) || !playerRecord) {
+      socket.emit('game-error', { message: 'Only the host can load a game.' });
+      return;
+    }
+    if (gameState && gameState.isGameStarted) {
+      socket.emit('game-error', { message: 'Cannot load a game while one is already in progress. End the current game first.' });
+      return;
+    }
+    try {
+      const parsedState = typeof data.saveState === 'string' ? JSON.parse(data.saveState) : data.saveState;
+      const restored = restoreGameStateFromSave(parsedState);
+
+      clearPendingMoveResolution();
+      clearAllBotTimers();
+      stopTurnTimer(false);
+      if (auctionTimer) {
+        clearInterval(auctionTimer);
+        auctionTimer = null;
+      }
+      auctionState = null;
+      pausedTurnTimerState = null;
+      pendingTrades.clear();
+
+      gameState = restored.restoredGameState;
+      actionDeck = restored.restoredActionDeck;
+      eventHistory.length = 0;
+      restored.restoredEventHistory.forEach(event => eventHistory.push(event));
+      lastDiceTotal = restored.restoredLastDiceTotal;
+
+      gameState.players.forEach(player => {
+        const liveSocket = player.socketId ? io.sockets.sockets.get(player.socketId) : null;
+        player.isConnected = Boolean(player.isBot || liveSocket);
+        if (liveSocket) {
+          replaceSocketBinding(liveSocket, player);
+        }
+      });
+
+      logEvent(`📂 ${playerRecord?.character || 'The host'} loaded a saved game!`, 'system');
+      emitToRoom('game-loaded', { gameState: gameState.getState() });
+      emitGameStateSync({ restartTurnTimer: true });
+    } catch (err) {
+      socket.emit('game-error', { message: 'Failed to load save file: ' + err.message });
+    }
   });
 
   bindRoomHandler(socket, roomState, 'disconnect', () => {
@@ -2787,7 +3274,7 @@ io.on('connection', socket => {
     logEvent(`🚪 ${playerRecord.character} disconnected`, 'system');
 
     const isCurrentPlayer = gameState.getCurrentPlayer()?.id === playerRecord.id;
-    if (isCurrentPlayer && ['waiting', 'buying'].includes(gameState.turnPhase)) {
+    if (isCurrentPlayer && ['waiting', 'buying', 'done'].includes(gameState.turnPhase)) {
       pauseGameForDisconnect(playerRecord);
     }
 

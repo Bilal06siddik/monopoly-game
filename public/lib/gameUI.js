@@ -8,6 +8,8 @@ const GameUI = (() => {
     let currentHostPlayerId = null;
     let currentPlayers = [];
     let currentProperties = [];
+    let diceResultHideTimeout = null;
+    let overflowMenuOpen = false;
 
     function init(socketInstance) {
         socket = socketInstance;
@@ -20,14 +22,35 @@ const GameUI = (() => {
             rollBtn.textContent = 'Rolling...';
         });
 
+        const endTurnBtn = document.getElementById('end-turn-btn');
+        if (endTurnBtn) {
+            endTurnBtn.addEventListener('click', () => {
+                if (endTurnBtn.classList.contains('disabled')) return;
+                endTurnBtn.classList.add('disabled');
+                socket.emit('end-turn');
+            });
+        }
+
+        const jailRollBtn = document.getElementById('jail-roll-btn');
+        if (jailRollBtn) {
+            jailRollBtn.addEventListener('click', () => {
+                if (jailRollBtn.classList.contains('disabled')) return;
+                socket.emit('roll-dice');
+            });
+        }
+
         const startBtn = document.getElementById('start-game-btn');
         if (startBtn) {
             startBtn.addEventListener('click', () => socket.emit('requestStartGame'));
         }
 
-        const ownAucBtn = document.getElementById('own-auction-btn');
-        if (ownAucBtn) {
-            ownAucBtn.addEventListener('click', showOwnAuctionSelector);
+        const overflowBtn = document.getElementById('action-overflow-btn');
+        const overflowMenu = document.getElementById('action-overflow-menu');
+        if (overflowBtn && overflowMenu) {
+            overflowBtn.addEventListener('click', event => {
+                event.stopPropagation();
+                setOverflowMenuOpen(!overflowMenuOpen);
+            });
         }
 
         const tabHistory = document.getElementById('tab-history');
@@ -66,6 +89,10 @@ const GameUI = (() => {
         }
 
         document.addEventListener('click', e => {
+            if (overflowMenuOpen && !e.target.closest('.action-overflow')) {
+                setOverflowMenuOpen(false);
+            }
+
             if (e.target.matches('.oa-toggle-btn')) {
                 document.querySelectorAll('.oa-toggle-btn').forEach(button => button.classList.remove('active'));
                 e.target.classList.add('active');
@@ -90,10 +117,12 @@ const GameUI = (() => {
 
     function showGameUI() {
         document.getElementById('game-hud').classList.remove('hidden');
+        setOverflowMenuOpen(false);
     }
 
     function hideGameUI() {
         document.getElementById('game-hud').classList.add('hidden');
+        setOverflowMenuOpen(false);
     }
 
     function updateMyPlayerId(id) {
@@ -121,6 +150,17 @@ const GameUI = (() => {
         element.classList.toggle('warning', timerState.remainingSeconds <= 10);
     }
 
+    function setOverflowMenuOpen(isOpen) {
+        overflowMenuOpen = Boolean(isOpen);
+        const overflowBtn = document.getElementById('action-overflow-btn');
+        const overflowMenu = document.getElementById('action-overflow-menu');
+        if (!overflowBtn || !overflowMenu) return;
+
+        overflowBtn.setAttribute('aria-expanded', String(overflowMenuOpen));
+        overflowBtn.classList.toggle('active', overflowMenuOpen);
+        overflowMenu.classList.toggle('hidden', !overflowMenuOpen);
+    }
+
     function renderJailUI(gameState) {
         if (!gameState) return;
 
@@ -130,6 +170,7 @@ const GameUI = (() => {
         const pardonBtn = document.getElementById('jail-pardon-btn');
         const buyoutBtn = document.getElementById('jail-buyout-btn');
         const rollBtn = document.getElementById('roll-dice-btn');
+        const jailRollBtn = document.getElementById('jail-roll-btn');
 
         if (!jailDiv) return;
         if (gameState.pauseState) {
@@ -140,8 +181,17 @@ const GameUI = (() => {
         if (me && me.inJail && isMyTurn) {
             jailDiv.classList.remove('hidden');
 
+            if (rollBtn) {
+                rollBtn.classList.add('disabled');
+                rollBtn.textContent = 'Choose Jail Action';
+            }
+            if (jailRollBtn) {
+                jailRollBtn.classList.remove('disabled');
+                jailRollBtn.textContent = '🎲 Roll for Doubles';
+            }
+
             if (buyoutBtn) {
-                const disabled = me.money < 50;
+                const disabled = me.money < 100;
                 buyoutBtn.classList.toggle('disabled', disabled);
                 buyoutBtn.style.opacity = disabled ? '0.35' : '';
                 buyoutBtn.style.cursor = disabled ? 'not-allowed' : '';
@@ -159,19 +209,20 @@ const GameUI = (() => {
                 }
             }
 
-            if (rollBtn && !rollBtn.classList.contains('disabled')) {
-                rollBtn.textContent = '🎲 Roll for Doubles';
-            }
             return;
         }
 
         jailDiv.classList.add('hidden');
+        if (jailRollBtn) {
+            jailRollBtn.classList.add('disabled');
+        }
     }
 
     function updateTurnIndicator(currentPlayerId, currentCharacter, allPlayers, gameState) {
         const indicator = document.getElementById('turn-indicator');
         const rollBtn = document.getElementById('roll-dice-btn');
-        const ownAuctionBtn = document.getElementById('own-auction-btn');
+        const endTurnBtn = document.getElementById('end-turn-btn');
+        const me = gameState?.players?.find(player => player.id === myPlayerId) || null;
 
         if (!indicator || !rollBtn) return;
 
@@ -184,7 +235,7 @@ const GameUI = (() => {
             indicator.innerHTML = `<span class="turn-badge other-turn">⏸ Paused - waiting for ${gameState.pauseState.character} to reconnect</span>`;
             rollBtn.classList.add('disabled');
             rollBtn.textContent = 'Game Paused';
-            if (ownAuctionBtn) ownAuctionBtn.classList.add('disabled');
+            if (endTurnBtn) endTurnBtn.classList.add('disabled');
             renderJailUI(gameState);
             updateTurnTimer(null);
             return;
@@ -203,16 +254,38 @@ const GameUI = (() => {
             ? `<span class="turn-badge my-turn">🎲 Your Turn!${jailText}</span>`
             : `<span class="turn-badge other-turn">⏳ ${currentCharacter}'s Turn${jailText}</span>`;
 
-        if (isMyTurn) {
+        const canRoll = isMyTurn
+            && gameState?.turnPhase === 'waiting'
+            && !me?.inJail
+            && !me?.bankruptcyDeadline
+            && (typeof me?.money !== 'number' || me.money >= 0);
+
+        if (canRoll) {
             rollBtn.classList.remove('disabled');
             rollBtn.textContent = '🎲 Roll Dice';
         } else {
             rollBtn.classList.add('disabled');
-            rollBtn.textContent = `Waiting for ${currentCharacter}...`;
+            rollBtn.textContent = isMyTurn && me?.inJail
+                ? 'Choose Jail Action'
+                : isMyTurn && me?.bankruptcyDeadline
+                    ? 'Recover From Debt'
+                    : isMyTurn && gameState?.turnPhase === 'done'
+                        ? 'Turn Complete'
+                : `Waiting for ${currentCharacter}...`;
         }
 
-        if (ownAuctionBtn) {
-            ownAuctionBtn.classList.toggle('disabled', !isMyTurn);
+        // End Turn button: enabled when it's my turn and not blocked by jail.
+        if (endTurnBtn) {
+            const canEndTurn = isMyTurn
+                && gameState?.turnPhase === 'done'
+                && !me?.inJail
+                && (typeof me?.money !== 'number' || me.money >= 0);
+            endTurnBtn.classList.toggle('disabled', !canEndTurn);
+            endTurnBtn.textContent = '⏭ End Turn';
+        }
+
+        if (!me?.isActive) {
+            setOverflowMenuOpen(false);
         }
 
         renderJailUI(gameState);
@@ -243,7 +316,7 @@ const GameUI = (() => {
             const showKick = isHostViewer && player.id !== myPlayerId;
             const element = document.createElement('div');
             element.className = `lb-card${player.id === myPlayerId ? ' is-me' : ''}${!player.isActive ? ' bankrupt' : ''}`;
-            element.style.borderLeftColor = player.color;
+            element.style.setProperty('--card-color', player.color);
 
             if (!player.isActive) {
                 element.innerHTML = `
@@ -309,9 +382,17 @@ const GameUI = (() => {
       <span class="dr-dice">${getDiceFace(die1)} ${getDiceFace(die2)}</span>
       <span class="dr-total">= ${die1 + die2}${isDoubles ? ' 🔥' : ''}</span>
     `;
+        if (diceResultHideTimeout) {
+            clearTimeout(diceResultHideTimeout);
+            diceResultHideTimeout = null;
+        }
         element.classList.remove('hidden');
         element.classList.add('show');
-        setTimeout(() => element.classList.remove('show'), 3000);
+        diceResultHideTimeout = setTimeout(() => {
+            element.classList.remove('show');
+            element.classList.add('hidden');
+            diceResultHideTimeout = null;
+        }, 4000);
     }
 
     function getDiceFace(value) {
@@ -327,11 +408,6 @@ const GameUI = (() => {
     }
 
     function showOwnAuctionSelector() {
-        if (document.getElementById('own-auction-btn')?.classList.contains('disabled')) {
-            Notifications.show('Only the active player can start an own auction right now.', 'error', 2500);
-            return;
-        }
-
         const myProperties = currentProperties.filter(property => property.owner === myPlayerId);
         if (myProperties.length === 0) {
             Notifications.show('You do not own any properties to auction.', 'error', 3000);

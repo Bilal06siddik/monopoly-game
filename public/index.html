@@ -11,7 +11,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Press+Start+2P&display=swap" rel="stylesheet" />
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="stylesheet" href="style.css" />
-  <link rel="stylesheet" href="lib/lobby-arcade.css" />
+  <link rel="stylesheet" href="lib/lobby-tcg.css" />
+
 </head>
 
 <body>
@@ -21,10 +22,28 @@
   <div id="intro-screen" class="intro-screen">
     <div class="intro-logo-container" id="intro-logo-container">
       <img src="/images/bank-el-haz-logo.png" alt="Bank El Haz" class="intro-logo" />
-      <div class="intro-sheen"></div>
     </div>
     <div class="intro-credits">
       Developed By : Ahmed Osama and Bilal Siddik
+    </div>
+  </div>
+
+  <div id="host-controls-shell" class="host-controls-shell hidden">
+    <button id="host-controls-toggle" class="host-controls-toggle" type="button" aria-expanded="false">Host Controls</button>
+    <div id="persistent-host-controls" class="persistent-host-controls hidden">
+      <div class="host-controls-header">
+        <div>
+          <div class="host-controls-title">HOST CONTROLS</div>
+          <div class="host-controls-subtitle">Save the room state or manage players.</div>
+        </div>
+        <button id="host-controls-close" class="host-controls-close" type="button" aria-label="Close host controls">✕</button>
+      </div>
+      <div class="host-save-load">
+        <button id="save-game-btn" class="secondary-lobby-btn" type="button">💾 Save Game</button>
+        <input type="file" id="load-game-input" accept=".json" style="display: none;" />
+        <button id="load-game-btn" class="secondary-lobby-btn" type="button">📂 Load Game</button>
+      </div>
+      <div id="host-player-list" class="host-player-list"></div>
     </div>
   </div>
 
@@ -112,20 +131,24 @@
       <div id="leaderboard-panel" class="leaderboard-panel"></div>
     </div>
 
-    <div class="view-dock">
-      <button id="camera-topdown-btn" class="camera-action-btn" type="button" aria-pressed="false">⬆ Top Down</button>
+    <button id="view-dock-toggle" class="view-dock-toggle" type="button" aria-expanded="false" aria-controls="view-dock">👁 View</button>
+
+    <div id="view-dock" class="view-dock">
+      <button id="camera-iso-btn" class="camera-action-btn active" type="button" aria-pressed="true">🧭 Isometric</button>
       <button id="camera-view-btn" class="camera-view-btn" type="button" aria-pressed="false">🎥 Third Person</button>
+      <button id="camera-topdown-btn" class="camera-action-btn" type="button" aria-pressed="false">⬆ Top Down</button>
       <button id="camera-reset-btn" class="camera-action-btn" type="button">◎ Reset View</button>
     </div>
 
     <div class="action-dock">
-      <button id="own-auction-btn" class="own-auction-btn hud-action-btn">🔨 Own Auction</button>
       <button id="roll-dice-btn" class="roll-dice-btn hud-action-btn disabled">🎲 Roll Dice</button>
+      <button id="end-turn-btn" class="end-turn-btn hud-action-btn disabled">⏭ End Turn</button>
     </div>
 
     <!-- Bottom Center: Jail Actions (shown when in jail) -->
     <div id="jail-actions" class="jail-actions hidden">
-      <button id="jail-buyout-btn" class="jail-btn buyout">💸 Buy out for $50</button>
+      <button id="jail-roll-btn" class="jail-btn roll">🎲 Roll for Doubles</button>
+      <button id="jail-buyout-btn" class="jail-btn buyout">💸 Buy out for $100</button>
       <button id="jail-pardon-btn" class="jail-btn pardon disabled">🃏 Use pardon card</button>
     </div>
 
@@ -370,7 +393,7 @@
         <!-- 3-col stats grid -->
         <div class="pdm-stats-grid">
           <div class="pdm-stat">
-            <div class="pdm-stat-label">Price</div>
+            <div id="pdm-price-label" class="pdm-stat-label">Price</div>
             <div id="pd-price" class="pdm-stat-val">$0</div>
           </div>
           <div class="pdm-stat">
@@ -495,6 +518,28 @@
       <!-- Dynamically generated TCG cards will go here in a 3x2 grid -->
       <div id="character-grid" class="tcg-cards-grid"></div>
 
+      <div class="color-selection-panel">
+        <div class="color-selection-copy">
+          <div class="color-selection-title">TOKEN COLOR</div>
+          <div class="color-selection-subtitle">Stay with the default champion color or switch to a custom one.</div>
+        </div>
+        <label class="color-toggle" for="custom-color-toggle">
+          <input type="checkbox" id="custom-color-toggle" />
+          <span class="color-toggle-track" aria-hidden="true"></span>
+          <span class="color-toggle-labels">
+            <span>Default</span>
+            <span>Custom</span>
+          </span>
+        </label>
+        <div class="color-picker-stack">
+          <label for="custom-color-picker" class="color-picker-label">Custom value</label>
+          <div class="color-picker-row">
+            <input type="color" id="custom-color-picker" value="#ffffff" disabled />
+            <span id="custom-color-value" class="color-picker-value">Default</span>
+          </div>
+        </div>
+      </div>
+
       <section class="token-selection-panel">
         <div class="token-selection-header">
           <div>
@@ -521,10 +566,23 @@
           </div>
         </div>
 
-        <div id="host-controls" class="host-controls hidden">
-          <div class="host-controls-title">HOST CONTROLS</div>
-          <div id="host-player-list" class="host-player-list"></div>
-        </div>
+              </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════════════════
+       END STATS SCREEN — Full page post-game summary
+       ══════════════════════════════════════════════════════ -->
+  <div id="end-stats-screen" class="hidden">
+    <div class="end-stats-container">
+      <h1 class="end-stats-title" id="es-winner-title">PLAYER WINS!</h1>
+      <p class="end-stats-subtitle">Game Over Summary</p>
+      <div id="es-player-grid" class="end-stats-grid">
+        <!-- populated dynamically -->
+      </div>
+      <div class="end-stats-actions">
+        <button id="es-return-btn" class="end-stats-btn">Return to Lobby</button>
       </div>
     </div>
   </div>

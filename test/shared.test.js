@@ -231,3 +231,27 @@ test('players expose their selected token in serialized state', () => {
     assert.equal(payload.tokenId, 'top-hat');
     assert.equal(game.getState().players[0].tokenId, 'top-hat');
 });
+
+
+test('players serialize bankruptcy recovery state', () => {
+  const game = new GameState(BOARD_DATA);
+  const player = game.addPlayer('p1', 'Bilo', '#6c5ce7', 'session-1');
+  player.bankruptcyDeadline = 123456789;
+
+  const payload = player.toJSON();
+  assert.equal(payload.bankruptcyDeadline, 123456789);
+  assert.equal(game.getState().players[0].bankruptcyDeadline, 123456789);
+});
+
+test('inactive players remain out of turn rotation', () => {
+    const { game, p1, p2, p3 } = createGame();
+    p2.isActive = false;
+    game.currentPlayerIndex = 0;
+    game.doublesCount = 0;
+
+    const nextPlayer = game.nextTurn();
+
+    assert.equal(nextPlayer.id, p3.id);
+    assert.equal(game.currentPlayerIndex, 2);
+    assert.equal(p1.isActive, true);
+});
