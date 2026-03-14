@@ -2689,10 +2689,6 @@ io.on('connection', socket => {
     const playerRecord = getSocketPlayer(socket);
     if (!currentPlayer || !playerRecord || currentPlayer.id !== playerRecord.id) return;
     if (gameState.turnPhase !== 'done') return;
-    if (currentPlayer.inJail) {
-      socket.emit('game-error', { message: 'Choose a jail action before ending your turn.' });
-      return;
-    }
     if (currentPlayer.money < 0) {
       socket.emit('game-error', { message: 'Recover from debt or use Declare Bankruptcy before ending your turn.' });
       return;

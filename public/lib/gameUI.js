@@ -256,16 +256,20 @@ const GameUI = (() => {
         }
 
         if (me && me.inJail && isMyTurn) {
+            const canAttemptJailRoll = gameState?.turnPhase === 'waiting';
             jailDiv.classList.remove('hidden');
 
             if (rollBtn) {
                 rollBtn.classList.add('disabled');
-                rollBtn.textContent = 'Choose Jail Action';
+                rollBtn.textContent = canAttemptJailRoll ? 'Choose Jail Action' : 'Turn Complete';
             }
             if (jailRollBtn) {
-                jailRollBtn.classList.remove('disabled');
-                jailRollBtn.textContent = '🎲 Roll for Doubles';
-                setPromptedActionState(jailRollBtn, true);
+                jailRollBtn.classList.toggle('disabled', !canAttemptJailRoll);
+                jailRollBtn.textContent = canAttemptJailRoll ? '🎲 Roll for Doubles' : '🎲 Roll Used';
+                jailRollBtn.title = canAttemptJailRoll
+                    ? 'Roll once to try for doubles.'
+                    : 'You already used your jail roll this turn.';
+                setPromptedActionState(jailRollBtn, canAttemptJailRoll);
             }
 
             if (buyoutBtn) {
@@ -415,7 +419,6 @@ const GameUI = (() => {
     function getEndTurnState(isMyTurn, currentCharacter, gameState, me) {
         const canEndTurn = isMyTurn
             && gameState?.turnPhase === 'done'
-            && !me?.inJail
             && (typeof me?.money !== 'number' || me.money >= 0);
 
         if (canEndTurn) {
@@ -437,7 +440,9 @@ const GameUI = (() => {
         if (me?.inJail) {
             return {
                 canEndTurn,
-                title: 'Choose a jail action before ending your turn.'
+                title: canEndTurn
+                    ? 'Your jail action is complete. End your turn.'
+                    : 'Choose a jail action before ending your turn.'
             };
         }
 
