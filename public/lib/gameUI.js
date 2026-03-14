@@ -78,7 +78,7 @@ const GameUI = (() => {
             jailRollBtn.addEventListener('click', () => {
                 if (jailRollBtn.classList.contains('disabled')) return;
                 primeAudio();
-                socket.emit('roll-dice');
+                socket.emit('jail-roll');
             });
         }
 
@@ -96,6 +96,25 @@ const GameUI = (() => {
             overflowBtn.addEventListener('click', event => {
                 event.stopPropagation();
                 setOverflowMenuOpen(!overflowMenuOpen);
+            });
+        }
+
+        const ownAuctionBtn = document.getElementById('own-auction-btn');
+        if (ownAuctionBtn) {
+            ownAuctionBtn.addEventListener('click', () => {
+                if (ownAuctionBtn.classList.contains('disabled')) return;
+                setOverflowMenuOpen(false);
+                showOwnAuctionSelector();
+            });
+        }
+
+        const declareBankruptcyBtn = document.getElementById('declare-bankruptcy-btn');
+        if (declareBankruptcyBtn) {
+            declareBankruptcyBtn.addEventListener('click', () => {
+                if (declareBankruptcyBtn.classList.contains('disabled')) return;
+                setOverflowMenuOpen(false);
+                if (!window.confirm('Declare bankruptcy and leave the match? This cannot be undone.')) return;
+                socket.emit('declare-bankruptcy');
             });
         }
 
@@ -276,6 +295,45 @@ const GameUI = (() => {
         if (jailRollBtn) {
             jailRollBtn.classList.add('disabled');
             setPromptedActionState(jailRollBtn, false);
+        }
+    }
+
+    function updateOverflowActions(gameState, me) {
+        const ownAuctionBtn = document.getElementById('own-auction-btn');
+        const declareBankruptcyBtn = document.getElementById('declare-bankruptcy-btn');
+        const overflowWrapper = document.querySelector('.action-overflow');
+        if (!ownAuctionBtn || !declareBankruptcyBtn || !overflowWrapper) return;
+
+        const canManageAssets = Boolean(
+            me?.isActive
+            && myPlayerId
+            && typeof MonopolyRules !== 'undefined'
+            && typeof MonopolyRules.canManageAssets === 'function'
+            && MonopolyRules.canManageAssets({
+                currentPlayerId: gameState?.currentPlayerId || null,
+                pauseState: gameState?.pauseState || null,
+                turnPhase: gameState?.turnPhase || null
+            }, myPlayerId)
+        );
+        const hasAuctionableProperty = currentProperties.some(property => property.owner === myPlayerId && !isGroupLocked(property));
+        const canDeclareBankruptcy = Boolean(me?.isActive && (me?.bankruptcyDeadline || (typeof me?.money === 'number' && me.money < 0)));
+
+        overflowWrapper.classList.toggle('hidden', !me?.isActive);
+
+        ownAuctionBtn.classList.toggle('disabled', !canManageAssets || !hasAuctionableProperty);
+        ownAuctionBtn.title = !canManageAssets
+            ? 'You can start an own auction only on your turn.'
+            : !hasAuctionableProperty
+                ? 'You need an eligible property to auction.'
+                : 'Put one of your properties up for auction.';
+
+        declareBankruptcyBtn.classList.toggle('disabled', !canDeclareBankruptcy);
+        declareBankruptcyBtn.title = canDeclareBankruptcy
+            ? 'Leave the match and surrender your assets.'
+            : 'Declare bankruptcy when you are in debt.';
+
+        if (!me?.isActive) {
+            setOverflowMenuOpen(false);
         }
     }
 
@@ -486,6 +544,7 @@ const GameUI = (() => {
         }
 
         renderJailUI(gameState);
+        updateOverflowActions(gameState, me);
         if (shouldNotifyMyTurn) {
             notifyMyTurn(rollButtonState, endTurnState, me);
         }

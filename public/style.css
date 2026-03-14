@@ -1212,6 +1212,80 @@ body[data-view-mode="top-down"] .action-dock {
   width: auto;
 }
 
+.action-overflow {
+  position: relative;
+}
+
+.action-overflow-btn {
+  min-width: 64px;
+  min-height: 64px;
+  padding: 0 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(10, 14, 28, 0.9);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.action-overflow-btn:hover,
+.action-overflow-btn.active {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(18, 24, 42, 0.96);
+}
+
+.action-overflow-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 230px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(7, 10, 22, 0.96);
+  box-shadow: var(--shadow-glow), var(--shadow-deep);
+  backdrop-filter: blur(14px);
+}
+
+.action-overflow-item {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  transition: transform 0.18s ease, opacity 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+
+.action-overflow-item.disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+body[data-view-mode="top-down"] .action-overflow-btn {
+  min-width: 148px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-size: 18px;
+}
+
+body[data-view-mode="top-down"] .action-overflow-menu {
+  left: calc(100% + 10px);
+  bottom: auto;
+  top: 0;
+}
+
 @media (max-width: 720px) {
   body[data-view-mode="top-down"] .view-dock-toggle {
     left: 20px;
@@ -1286,7 +1360,7 @@ body[data-view-mode="top-down"] .jail-actions {
   cursor: pointer;
 }
 
-.own-auction-btn:hover {
+.own-auction-btn:hover:not(.disabled) {
   background: linear-gradient(135deg, rgba(253, 203, 110, 0.3), rgba(253, 203, 110, 0.1));
   transform: translateY(-3px);
 }

@@ -2626,6 +2626,36 @@ io.on('connection', socket => {
     }
   });
 
+  bindRoomHandler(socket, roomState, 'jail-roll', () => {
+    if (!gameState || !gameState.isGameStarted) return;
+    if (auctionState) {
+      socket.emit('game-error', { message: 'Auction in progress' });
+      return;
+    }
+
+    const playerRecord = getSocketPlayer(socket);
+    const currentPlayer = gameState.getCurrentPlayer();
+    if (!playerRecord || !currentPlayer || currentPlayer.id !== playerRecord.id) {
+      socket.emit('game-error', { message: 'You can only roll for doubles on your turn.' });
+      return;
+    }
+    if (!playerRecord.inJail) {
+      socket.emit('game-error', { message: 'You are not in jail.' });
+      return;
+    }
+    if (!['waiting', 'done'].includes(gameState.turnPhase)) {
+      socket.emit('game-error', { message: 'You cannot roll for doubles right now.' });
+      return;
+    }
+    if (gameState.turnPhase === 'done') {
+      setTurnPhase('waiting');
+    }
+
+    if (!handleRollDice(playerRecord.id)) {
+      socket.emit('game-error', { message: 'You cannot roll for doubles right now.' });
+    }
+  });
+
   bindRoomHandler(socket, roomState, 'move-complete', () => {
     if (!gameState || !gameState.isGameStarted) return;
     const currentPlayer = gameState.getCurrentPlayer();

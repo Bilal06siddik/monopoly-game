@@ -142,6 +142,26 @@
     <div class="action-dock">
       <button id="roll-dice-btn" class="roll-dice-btn hud-action-btn disabled">🎲 Roll Dice</button>
       <button id="end-turn-btn" class="end-turn-btn hud-action-btn disabled">⏭ End Turn</button>
+      <div class="action-overflow">
+        <button
+          id="action-overflow-btn"
+          class="action-overflow-btn"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-controls="action-overflow-menu"
+        >
+          ...
+        </button>
+        <div id="action-overflow-menu" class="action-overflow-menu hidden" role="menu">
+          <button id="own-auction-btn" class="action-overflow-item own-auction-btn" type="button" role="menuitem">
+            🔨 Own Auction
+          </button>
+          <button id="declare-bankruptcy-btn" class="action-overflow-item declare-bankruptcy-btn" type="button" role="menuitem">
+            🏳️ Declare Bankruptcy
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- Bottom Center: Jail Actions (shown when in jail) -->
