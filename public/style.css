@@ -123,6 +123,44 @@ body {
   }
 }
 
+@keyframes action-ready-jump {
+
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+
+  18% {
+    transform: translateY(-6px) scale(1.02);
+  }
+
+  32% {
+    transform: translateY(0) scale(1);
+  }
+
+  48% {
+    transform: translateY(-2px) scale(1.01);
+  }
+}
+
+@keyframes action-ready-glow {
+
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px var(--action-ready-border, rgba(255, 255, 255, 0.85)),
+      0 0 20px var(--action-ready-glow, rgba(255, 255, 255, 0.35)),
+      0 12px 22px rgba(0, 0, 0, 0.28);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 1px var(--action-ready-border, rgba(255, 255, 255, 0.85)),
+      0 0 34px var(--action-ready-glow, rgba(255, 255, 255, 0.48)),
+      0 16px 30px rgba(0, 0, 0, 0.36);
+  }
+}
+
 @keyframes slide-in-right {
   from {
     transform: translateX(100%);
@@ -1130,6 +1168,9 @@ body[data-view-mode="top-down"] .turn-timer {
   font-weight: 600;
   animation: dice-bounce 0.5s ease;
   transition: opacity 0.3s ease;
+  align-self: flex-end;
+  max-width: min(360px, calc(100vw - 32px));
+  box-shadow: var(--shadow-glow), var(--shadow-deep);
 }
 
 .dice-result.show {
@@ -1196,6 +1237,10 @@ body[data-view-mode="top-down"] .action-dock {
   border-radius: 30px;
   transition: all 0.3s ease;
   backdrop-filter: blur(10px);
+  --action-ready-border: rgba(255, 255, 255, 0.85);
+  --action-ready-glow: rgba(255, 255, 255, 0.35);
+  --action-ready-bg-start: rgba(255, 255, 255, 0.24);
+  --action-ready-bg-end: rgba(255, 255, 255, 0.08);
 }
 
 body[data-view-mode="top-down"] .hud-action-btn {
@@ -1210,6 +1255,10 @@ body[data-view-mode="top-down"] .hud-action-btn {
   border: 2px solid rgba(108, 92, 231, 0.4);
   color: var(--accent-secondary);
   cursor: pointer;
+  --action-ready-border: rgba(162, 155, 254, 0.94);
+  --action-ready-glow: rgba(162, 155, 254, 0.52);
+  --action-ready-bg-start: rgba(162, 155, 254, 0.44);
+  --action-ready-bg-end: rgba(108, 92, 231, 0.18);
 }
 
 .roll-dice-btn:hover:not(.disabled) {
@@ -1248,6 +1297,10 @@ body[data-view-mode="top-down"] .jail-actions {
   border: 2px solid rgba(85, 239, 196, 0.35);
   color: var(--accent-green);
   cursor: pointer;
+  --action-ready-border: rgba(85, 239, 196, 0.94);
+  --action-ready-glow: rgba(85, 239, 196, 0.5);
+  --action-ready-bg-start: rgba(85, 239, 196, 0.38);
+  --action-ready-bg-end: rgba(0, 184, 148, 0.18);
 }
 
 .end-turn-btn:hover:not(.disabled) {
@@ -1635,10 +1688,26 @@ body[data-view-mode="top-down"] .leaderboard-wrapper {
 /* ═══════════════════════════════════════════════════════════
    HISTORY LOG (Bottom Right)
    ═══════════════════════════════════════════════════════════ */
-.history-log {
+.hud-feed-stack {
   position: absolute;
-  bottom: 32px;
   right: 16px;
+  bottom: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.hud-feed-stack > * {
+  pointer-events: auto;
+}
+
+.hud-feed-stack .dice-result.hidden {
+  display: none;
+}
+
+.history-log {
+  position: relative;
   width: 360px;
   max-height: 300px;
   background: var(--bg-panel);
@@ -1648,9 +1717,12 @@ body[data-view-mode="top-down"] .leaderboard-wrapper {
   animation: slide-in-right 0.5s ease;
 }
 
-body[data-view-mode="top-down"] .history-log {
+body[data-view-mode="top-down"] .hud-feed-stack {
   right: 20px;
   bottom: 20px;
+}
+
+body[data-view-mode="top-down"] .history-log {
   width: 332px;
   max-height: 276px;
   background: rgba(12, 22, 40, 0.92);
@@ -2555,6 +2627,15 @@ body[data-view-mode="top-down"] #trades-content {
     max-height: 220px;
   }
 
+  .hud-feed-stack {
+    right: 12px;
+    bottom: 20px;
+  }
+
+  .dice-result {
+    max-width: 280px;
+  }
+
   .hl-list {
     max-height: 150px;
   }
@@ -2838,12 +2919,20 @@ body[data-view-mode="top-down"] #trades-content {
   cursor: pointer;
   transition: all 0.25s ease;
   letter-spacing: 0.4px;
+  --action-ready-border: rgba(255, 255, 255, 0.85);
+  --action-ready-glow: rgba(255, 255, 255, 0.35);
+  --action-ready-bg-start: rgba(255, 255, 255, 0.24);
+  --action-ready-bg-end: rgba(255, 255, 255, 0.08);
 }
 
 .jail-btn.roll {
   background: rgba(108, 92, 231, 0.22);
   border-color: rgba(108, 92, 231, 0.46);
   color: var(--accent-secondary);
+  --action-ready-border: rgba(162, 155, 254, 0.94);
+  --action-ready-glow: rgba(162, 155, 254, 0.52);
+  --action-ready-bg-start: rgba(162, 155, 254, 0.44);
+  --action-ready-bg-end: rgba(108, 92, 231, 0.16);
 }
 
 .jail-btn.roll:hover:not(.disabled) {
@@ -2885,6 +2974,37 @@ body[data-view-mode="top-down"] #trades-content {
   opacity: 0.32;
   cursor: not-allowed;
   filter: grayscale(0.5);
+}
+
+.hud-action-btn.prompting-action,
+.jail-btn.prompting-action {
+  background: linear-gradient(135deg, var(--action-ready-bg-start), var(--action-ready-bg-end));
+  border-color: var(--action-ready-border);
+  animation: action-ready-jump 1.18s cubic-bezier(0.34, 1.56, 0.64, 1) infinite, action-ready-glow 1.7s ease-in-out infinite;
+  will-change: transform, box-shadow;
+}
+
+.hud-action-btn.prompting-action:hover:not(.disabled),
+.jail-btn.prompting-action:hover:not(.disabled) {
+  filter: brightness(1.08);
+}
+
+.hud-action-btn.disabled.prompting-action,
+.jail-btn.disabled.prompting-action {
+  animation: none;
+  box-shadow: none;
+  filter: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .hud-action-btn.prompting-action,
+  .jail-btn.prompting-action {
+    animation: none;
+    box-shadow:
+      0 0 0 1px var(--action-ready-border, rgba(255, 255, 255, 0.85)),
+      0 0 22px var(--action-ready-glow, rgba(255, 255, 255, 0.35));
+  }
 }
 
 /* Thin separator inside the jail pill */

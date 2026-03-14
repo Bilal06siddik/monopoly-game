@@ -78,6 +78,7 @@ let turnTimerInterval = null;
 let pausedTurnTimerState = null;
 let pendingMoveResolution = null;
 let lastDiceTotal = null;
+let stateSequence = 0;
 
 function normalizeSessionToken(token) {
   const value = typeof token === 'string' ? token.trim() : '';
@@ -120,7 +121,8 @@ function createRoomState(roomCode, hostSessionToken) {
     turnTimerInterval: null,
     pausedTurnTimerState: null,
     pendingMoveResolution: null,
-    lastDiceTotal: 0
+    lastDiceTotal: 0,
+    stateSequence: 0
   };
 }
 
@@ -139,6 +141,7 @@ function assignRoomState(roomState) {
   pausedTurnTimerState = roomState?.pausedTurnTimerState || null;
   pendingMoveResolution = roomState?.pendingMoveResolution || null;
   lastDiceTotal = roomState?.lastDiceTotal ?? null;
+  stateSequence = roomState?.stateSequence ?? 0;
 }
 
 function persistRoomState(roomState) {
@@ -156,6 +159,7 @@ function persistRoomState(roomState) {
   roomState.pausedTurnTimerState = pausedTurnTimerState;
   roomState.pendingMoveResolution = pendingMoveResolution;
   roomState.lastDiceTotal = lastDiceTotal;
+  roomState.stateSequence = stateSequence;
 }
 
 function withRoomState(roomState, callback) {
@@ -173,7 +177,8 @@ function withRoomState(roomState, callback) {
     turnTimerInterval,
     pausedTurnTimerState,
     pendingMoveResolution,
-    lastDiceTotal
+    lastDiceTotal,
+    stateSequence
   };
 
   assignRoomState(roomState);
@@ -195,6 +200,7 @@ function withRoomState(roomState, callback) {
     pausedTurnTimerState = previous.pausedTurnTimerState;
     pendingMoveResolution = previous.pendingMoveResolution;
     lastDiceTotal = previous.lastDiceTotal;
+    stateSequence = previous.stateSequence;
   }
 }
 
@@ -525,14 +531,28 @@ function getViewerTrades(playerId) {
     .map(trade => ({ ...trade }));
 }
 
+function nextStateSequence() {
+  stateSequence += 1;
+  return stateSequence;
+}
+
+function snapshotGameState() {
+  if (!gameState) return null;
+  return {
+    ...gameState.getState(),
+    stateSequence: nextStateSequence()
+  };
+}
+
 function buildGameStatePayload(viewerPlayerId = null) {
   const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
-  const payload = gameState ? gameState.getState() : {
+  const payload = gameState ? snapshotGameState() : {
     players: [],
     properties: [],
     currentPlayerIndex: 0,
     currentPlayerId: null,
     isGameStarted: false,
+    hasPendingExtraRoll: false,
     turnPhase: 'waiting',
     taxPool: 0,
     turnTimer: null,
@@ -540,7 +560,8 @@ function buildGameStatePayload(viewerPlayerId = null) {
     matchEndedAt: null,
     turnCount: 0,
     pauseState: null,
-    eliminationOrder: []
+    eliminationOrder: [],
+    stateSequence: nextStateSequence()
   };
 
   payload.auctionState = auctionState ? { ...auctionState } : null;
@@ -1066,7 +1087,7 @@ function pauseGameForDisconnect(player) {
   };
   emitToRoom('game-paused', {
     pauseState: gameState.pauseState,
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
 }
 
@@ -1085,7 +1106,7 @@ function resumePausedGameIfPossible(player) {
     stopTurnTimer(false);
   }
 
-  emitToRoom('game-resumed', { gameState: gameState.getState() });
+  emitToRoom('game-resumed', { gameState: snapshotGameState() });
 }
 
 function setTurnPhase(phase, options = {}) {
@@ -1181,7 +1202,7 @@ function startAuction(tileIndex, startingBid, initiatorId, options = {}) {
   emitToRoom('auction-started', {
     auction: auctionState,
     players: gameState.players.map(player => player.toJSON()),
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
   queueBotAuctionBids();
 
@@ -1241,7 +1262,7 @@ function endAuction() {
     bid: finishedAuction.currentBid,
     tileName: finishedAuction.tileName,
     tileIndex: finishedAuction.tileIndex,
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
 
   if (finishedAuction.reason === 'pass') {
@@ -1270,7 +1291,7 @@ function endAuction() {
   emitToRoom('turn-changed', {
     currentPlayerId: currentPlayer.id,
     currentCharacter: currentPlayer.character,
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
   queueBotTurnIfNeeded(currentPlayer);
 }
@@ -1306,7 +1327,7 @@ function handlePlaceBid(playerId, amountInput) {
     amount,
     timeRemaining: auctionState.timeRemaining,
     auction: auctionState,
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
   queueBotAuctionBids();
   return { ok: true };
@@ -1330,9 +1351,20 @@ function advanceTurnGlobal() {
   emitToRoom('turn-changed', {
     currentPlayerId: nextPlayer.id,
     currentCharacter: nextPlayer.character,
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
   queueBotTurnIfNeeded(nextPlayer);
+}
+
+function shouldKeepTurnForDoubles(player = gameState?.getCurrentPlayer()) {
+  return Boolean(
+    gameState
+    && player
+    && player.isActive
+    && gameState.getCurrentPlayer()?.id === player.id
+    && gameState.hasPendingExtraRoll()
+    && !player.inJail
+  );
 }
 
 function waitForTurnEndCurrentPlayer() {
@@ -1345,6 +1377,17 @@ function waitForTurnEndCurrentPlayer() {
     return;
   }
 
+  if (shouldKeepTurnForDoubles(currentPlayer)) {
+    setTurnPhase('waiting');
+    emitToRoom('turn-changed', {
+      currentPlayerId: currentPlayer.id,
+      currentCharacter: currentPlayer.character,
+      gameState: snapshotGameState()
+    });
+    queueBotTurnIfNeeded(currentPlayer);
+    return;
+  }
+
   setTurnPhase('done');
   if (!currentPlayer.isConnected) {
     pauseGameForDisconnect(currentPlayer);
@@ -1352,10 +1395,44 @@ function waitForTurnEndCurrentPlayer() {
   emitToRoom('turn-changed', {
     currentPlayerId: currentPlayer.id,
     currentCharacter: currentPlayer.character,
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
   queueBotEndTurnIfNeeded(currentPlayer);
 }
+
+function resolveDevTeleport(player) {
+  if (!gameState || !player) return;
+
+  const currentPlayer = gameState.getCurrentPlayer();
+  if (!currentPlayer || currentPlayer.id !== player.id) {
+    return;
+  }
+
+  clearPendingMoveResolution();
+  gameState.doublesCount = 0;
+
+  const landingTile = gameState.properties[player.position];
+  const diceTotal = landingTile?.type === 'utility'
+    ? 7
+    : (typeof lastDiceTotal === 'number' ? lastDiceTotal : 0);
+
+  setTurnPhase('waiting');
+
+  const result = evaluateTile(player, diceTotal, {});
+  if (result === 'buying' || result === 'pending' || result === 'recovery') {
+    return;
+  }
+
+  if (result === 'bankrupt') {
+    if (gameState.getActivePlayers().length > 1) {
+      advanceTurnGlobal();
+    }
+    return;
+  }
+
+  waitForTurnEndCurrentPlayer();
+}
+
 function recordMoveStats(player, moveResult) {
   if (!player || !moveResult) return;
   if (moveResult.passedGo) {
@@ -1389,7 +1466,7 @@ function concludeGame(winner) {
   emitToRoom('game-over', {
     winner: winner.toJSON(),
     summary,
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
 
   clearRoomGameRuntime({ preserveLobby: true });
@@ -1425,7 +1502,7 @@ function handleBankruptcy(player) {
     playerId: player.id,
     character: player.character,
     money: player.money,
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
 
   emitGameStateSync({ restartTurnTimer: false });
@@ -1443,7 +1520,7 @@ function checkBankruptcyRecovery(player) {
       playerId: player.id,
       character: player.character,
       survived: true,
-      gameState: gameState.getState()
+      gameState: snapshotGameState()
     });
   }
 }
@@ -1482,7 +1559,7 @@ function executeBankruptcy(player) {
     playerId: player.id,
     character: player.character,
     returnedProperties: returnedProps,
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
 
   const activePlayers = gameState.getActivePlayers();
@@ -1502,7 +1579,7 @@ function emitBuyPrompt(player, tile) {
       price: tile.price,
       colorGroup: tile.colorGroup,
       canAfford: player.money >= tile.price,
-      gameState: gameState.getState()
+      gameState: snapshotGameState()
     });
   }
   emitToRoom('player-deciding', { character: player.character, tileName: tile.name });
@@ -1513,7 +1590,7 @@ function resolveActionCardAndMaybeMove(player) {
   // #27: Lucky Wheel removes 'roll again' doubles bonus
   if (lastDiceTotal && lastDiceTotal.isDoubles) {
       lastDiceTotal.isDoubles = false;
-      player.doublesCount = 0;
+      gameState.doublesCount = 0;
   }
   const card = drawActionCard();
   player.stats.cardsDrawn++;
@@ -1530,6 +1607,7 @@ function resolveActionCardAndMaybeMove(player) {
     recordMoveStats(player, result.moveResult);
   }
   if (result.sentToJail) {
+    gameState.doublesCount = 0;
     player.stats.jailVisits++;
   }
 
@@ -1538,7 +1616,7 @@ function resolveActionCardAndMaybeMove(player) {
     character: player.character,
     card,
     result,
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
 
   const playersBelowZero = gameState.players.filter(currentPlayer => currentPlayer.isActive && currentPlayer.money < 0);
@@ -1585,7 +1663,7 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
         playerId: player.id,
         character: player.character,
         amount: collected,
-        gameState: gameState.getState()
+        gameState: snapshotGameState()
       });
     }
     return 'done';
@@ -1595,12 +1673,13 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
     player.position = 10;
     player.inJail = true;
     player.jailTurns = 0;
+    gameState.doublesCount = 0;
     player.stats.jailVisits++;
     logEvent(`🚔 ${player.character} was sent to Jail!`, 'tax');
   emitToRoom('sent-to-jail', {
       playerId: player.id,
       character: player.character,
-      gameState: gameState.getState()
+      gameState: snapshotGameState()
     });
     return 'done';
   }
@@ -1615,7 +1694,7 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
       character: player.character,
       amount: taxAmount,
       tileName: tile.name,
-      gameState: gameState.getState()
+      gameState: snapshotGameState()
     });
 
     invalidateStaleTrades();
@@ -1657,7 +1736,7 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
           ownerCharacter: owner.character,
           amount: rent,
           tileName: tile.name,
-          gameState: gameState.getState()
+          gameState: snapshotGameState()
         });
       }
 
@@ -1722,6 +1801,7 @@ function handleRollDice(playerId) {
     if (diceResult.isDoubles) {
       currentPlayer.inJail = false;
       currentPlayer.jailTurns = 0;
+      gameState.doublesCount = 0;
       logEvent(`🔓 ${currentPlayer.character} rolled doubles and escaped jail!`, 'roll');
       // #7: Escaping jail by rolling doubles ends the turn (no move this turn)
       emitToRoom('dice-rolled', {
@@ -1737,7 +1817,7 @@ function handleRollDice(playerId) {
           steps: 0,
           passedGo: false
         },
-        gameState: gameState.getState(),
+        gameState: snapshotGameState(),
         jailRoll: true
       });
       // End turn after escaping jail — next turn they roll normally
@@ -1746,12 +1826,10 @@ function handleRollDice(playerId) {
     } else {
       currentPlayer.jailTurns++;
       if (currentPlayer.jailTurns >= 3) {
-        // #10: After 3 failed rolls, forced to pay $100
-        currentPlayer.money -= 100;
-        gameState.taxPool += 100;
+        // After 3 failed rolls, the player is released for free.
         currentPlayer.inJail = false;
         currentPlayer.jailTurns = 0;
-        logEvent(`🔓 ${currentPlayer.character} paid $100 to leave jail (3 failed rolls).`, 'tax');
+        logEvent(`🔓 ${currentPlayer.character} was released from jail after 3 failed rolls.`, 'roll');
         emitToRoom('dice-rolled', {
           playerId,
           character: currentPlayer.character,
@@ -1765,13 +1843,9 @@ function handleRollDice(playerId) {
             steps: 0,
             passedGo: false
           },
-          gameState: gameState.getState(),
+          gameState: snapshotGameState(),
           jailRoll: true
         });
-        if (currentPlayer.money < 0) {
-          handleBankruptcy(currentPlayer);
-          return true;
-        }
         scheduleMoveResolution(playerId, 0, 0, { action: 'finish-turn' });
         return true;
       } else {
@@ -1789,7 +1863,7 @@ function handleRollDice(playerId) {
             steps: 0,
             passedGo: false
           },
-          gameState: gameState.getState(),
+          gameState: snapshotGameState(),
           jailRoll: true
         });
         // End turn — stay in jail
@@ -1821,7 +1895,7 @@ function handleRollDice(playerId) {
       steps: moveResult.steps,
       passedGo: moveResult.passedGo
     },
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
 
   scheduleMoveResolution(playerId, moveResult.steps, 0, { action: 'evaluate', diceTotal: lastDiceTotal, rentContext: {} });
@@ -1884,7 +1958,7 @@ function handleBuyProperty(playerId, tileIndex) {
     tileIndex: tile.index,
     tileName: tile.name,
     price: tile.price,
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   });
   waitForTurnEndCurrentPlayer();
   return true;
@@ -2078,7 +2152,7 @@ function executeAcceptedTrade(trade, accepter) {
     toId: accepter.id,
     fromCharacter: offerer.character,
     toCharacter: accepter.character,
-    gameState: gameState.getState()
+    gameState: snapshotGameState()
   };
   emitToRoom('trade-completed', payload);
   return payload;
@@ -2607,33 +2681,32 @@ io.on('connection', socket => {
 
     const playerRecord = getSocketPlayer(socket);
     if (!playerRecord || !playerRecord.inJail) return;
-    // #10: Jail buyout costs $100 (changed from $50)
-    if (playerRecord.money < 100) {
-      socket.emit('game-error', { message: 'Not enough money to buy out of jail ($100)' });
+    if (playerRecord.money < 50) {
+      socket.emit('game-error', { message: 'Not enough money to buy out of jail ($50)' });
       return;
     }
-    // #10: Must be current player and it must be their turn
     const currentPlayer = gameState.getCurrentPlayer();
     if (!currentPlayer || currentPlayer.id !== playerRecord.id) {
       socket.emit('game-error', { message: 'You can only buy out of jail on your turn.' });
       return;
     }
 
-    playerRecord.money -= 100;
-    gameState.taxPool += 100;
+    playerRecord.money -= 50;
+    gameState.taxPool += 50;
     playerRecord.inJail = false;
     playerRecord.jailTurns = 0;
-    logEvent(`🔓 ${playerRecord.character} paid $100 to leave jail!`, 'tax');
+    gameState.doublesCount = 0;
+    logEvent(`🔓 ${playerRecord.character} paid $50 to leave jail and must end the turn.`, 'tax');
     invalidateStaleTrades();
 
     emitToRoom('jail-state-changed', {
       playerId: playerRecord.id,
       character: playerRecord.character,
       inJail: false,
-      gameState: gameState.getState()
+      gameState: snapshotGameState()
     });
 
-    // Leaving jail now waits for an explicit end-turn or timer expiry.
+    // Paying to leave jail ends the rolling option for this turn.
     waitForTurnEndCurrentPlayer();
   });
 
@@ -2657,7 +2730,7 @@ io.on('connection', socket => {
       playerId: playerRecord.id,
       character: playerRecord.character,
       inJail: false,
-      gameState: gameState.getState()
+      gameState: snapshotGameState()
     });
 
     waitForTurnEndCurrentPlayer();
@@ -2731,8 +2804,9 @@ io.on('connection', socket => {
         }
 
         if (gameState.getCurrentPlayer()?.id === playerRecord.id) {
-          gameState.turnPhase = 'waiting';
-          restartTurnTimer = true;
+          resolveDevTeleport(playerRecord);
+        } else {
+          restartTurnTimer = gameState.getCurrentPlayer()?.isActive && ['waiting', 'buying', 'done'].includes(gameState.turnPhase);
         }
 
         logEvent(`🛠️ DEV moved ${playerRecord.character} to ${gameState.properties[tileIndex].name}.`, 'system');
@@ -3038,7 +3112,7 @@ io.on('connection', socket => {
       tileName: tile.name,
       houses: tile.houses,
       cost: upgradeCost,
-      gameState: gameState.getState()
+      gameState: snapshotGameState()
     });
   });
 
@@ -3074,7 +3148,7 @@ io.on('connection', socket => {
       tileName: tile.name,
       houses: tile.houses,
       refund,
-      gameState: gameState.getState()
+      gameState: snapshotGameState()
     });
   });
 
@@ -3109,7 +3183,7 @@ io.on('connection', socket => {
       tileIndex: tile.index,
       tileName: tile.name,
       mortgageValue,
-      gameState: gameState.getState()
+      gameState: snapshotGameState()
     });
   });
 
@@ -3144,7 +3218,7 @@ io.on('connection', socket => {
       tileIndex: tile.index,
       tileName: tile.name,
       cost: unmortgageCost,
-      gameState: gameState.getState()
+      gameState: snapshotGameState()
     });
   });
 
@@ -3181,7 +3255,7 @@ io.on('connection', socket => {
       tileIndex: tile.index,
       tileName: tile.name,
       sellValue,
-      gameState: gameState.getState()
+      gameState: snapshotGameState()
     });
   });
 
@@ -3240,7 +3314,7 @@ io.on('connection', socket => {
       });
 
       logEvent(`📂 ${playerRecord?.character || 'The host'} loaded a saved game!`, 'system');
-      emitToRoom('game-loaded', { gameState: gameState.getState() });
+      emitToRoom('game-loaded', { gameState: snapshotGameState() });
       emitGameStateSync({ restartTurnTimer: true });
     } catch (err) {
       socket.emit('game-error', { message: 'Failed to load save file: ' + err.message });

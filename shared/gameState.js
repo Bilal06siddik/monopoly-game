@@ -233,8 +233,9 @@ class GameState {
     }
 
     nextTurn() {
-        if (this.doublesCount > 0 && this.doublesCount < 3) {
-            return this.getCurrentPlayer();
+        const currentPlayer = this.getCurrentPlayer();
+        if (this.hasPendingExtraRoll() && currentPlayer?.isActive) {
+            return currentPlayer;
         }
 
         this.doublesCount = 0;
@@ -249,6 +250,10 @@ class GameState {
         return this.getCurrentPlayer();
     }
 
+    hasPendingExtraRoll() {
+        return this.doublesCount > 0 && this.doublesCount < 3;
+    }
+
     getState() {
         return {
             players: this.players.map(player => player.toJSON()),
@@ -256,6 +261,7 @@ class GameState {
             currentPlayerIndex: this.currentPlayerIndex,
             currentPlayerId: this.getCurrentPlayer()?.id || null,
             isGameStarted: this.isGameStarted,
+            hasPendingExtraRoll: this.hasPendingExtraRoll(),
             turnPhase: this.turnPhase,
             taxPool: this.taxPool,
             turnTimer: this.turnTimer,

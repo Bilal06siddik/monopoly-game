@@ -7,6 +7,10 @@ const Rules = require('../shared/rules');
 const TradeUtils = require('../shared/tradeUtils');
 const CardUtils = require('../shared/cardUtils');
 const SummaryUtils = require('../shared/summary');
+const {
+    normalizeSerializedGameState,
+    isStaleSerializedGameState
+} = require('../shared/stateSync');
 
 function createGame() {
     const game = new GameState(BOARD_DATA);
@@ -243,6 +247,29 @@ test('players serialize bankruptcy recovery state', () => {
   assert.equal(game.getState().players[0].bankruptcyDeadline, 123456789);
 });
 
+test('state exposes when a doubles bonus roll is pending', () => {
+    const { game } = createGame();
+    game.doublesCount = 1;
+
+    assert.equal(game.hasPendingExtraRoll(), true);
+    assert.equal(game.getState().hasPendingExtraRoll, true);
+
+    game.doublesCount = 3;
+    assert.equal(game.hasPendingExtraRoll(), false);
+    assert.equal(game.getState().hasPendingExtraRoll, false);
+});
+
+test('active players keep the turn after doubles', () => {
+    const { game, p1 } = createGame();
+    game.currentPlayerIndex = 0;
+    game.doublesCount = 1;
+
+    const nextPlayer = game.nextTurn();
+
+    assert.equal(nextPlayer.id, p1.id);
+    assert.equal(game.currentPlayerIndex, 0);
+});
+
 test('inactive players remain out of turn rotation', () => {
     const { game, p1, p2, p3 } = createGame();
     p2.isActive = false;
@@ -254,4 +281,43 @@ test('inactive players remain out of turn rotation', () => {
     assert.equal(nextPlayer.id, p3.id);
     assert.equal(game.currentPlayerIndex, 2);
     assert.equal(p1.isActive, true);
+});
+
+test('inactive players do not keep a doubles bonus turn', () => {
+    const { game, p1, p2 } = createGame();
+    p1.isActive = false;
+    game.currentPlayerIndex = 0;
+    game.doublesCount = 1;
+
+    const nextPlayer = game.nextTurn();
+
+    assert.equal(nextPlayer.id, p2.id);
+    assert.equal(game.currentPlayerIndex, 1);
+    assert.equal(game.doublesCount, 0);
+});
+
+test('serialized state keeps current player id and index aligned', () => {
+    const normalized = normalizeSerializedGameState({
+        players: [
+            { id: 'p1', isActive: true },
+            { id: 'p2', isActive: true }
+        ],
+        currentPlayerIndex: 0,
+        currentPlayerId: 'p2',
+        stateSequence: 5
+    });
+
+    assert.equal(normalized.currentPlayerId, 'p2');
+    assert.equal(normalized.currentPlayerIndex, 1);
+});
+
+test('older serialized snapshots are treated as stale', () => {
+    assert.equal(
+        isStaleSerializedGameState({ stateSequence: 3 }, { stateSequence: 4 }),
+        true
+    );
+    assert.equal(
+        isStaleSerializedGameState({ stateSequence: 5 }, { stateSequence: 4 }),
+        false
+    );
 });

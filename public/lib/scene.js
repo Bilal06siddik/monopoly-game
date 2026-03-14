@@ -37,6 +37,16 @@ const GameScene = (() => {
     const quadrantVector = new THREE.Vector3();
     const boardCenter = new THREE.Vector3(0, 0, 0);
     const boardSpherical = new THREE.Spherical().setFromVector3(boardCameraOffset);
+    const boardMouseButtons = {
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.PAN
+    };
+    const thirdPersonMouseButtons = {
+        LEFT: null,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.ROTATE
+    };
     let thirdPersonNeedsSnap = true;
     let hasThirdPersonAnchor = false;
 
@@ -91,10 +101,12 @@ const GameScene = (() => {
         controls.minDistance = BOARD_MIN_DISTANCE;
         controls.maxDistance = BOARD_MAX_DISTANCE;
         controls.zoomSpeed = 0.9;
+        controls.mouseButtons = { ...boardMouseButtons };
         controls.update();
 
         canvas.addEventListener('wheel', onCanvasWheel, { passive: false });
         canvas.addEventListener('pointerdown', onCanvasPointerDown, true);
+        canvas.addEventListener('contextmenu', event => event.preventDefault());
 
         const hemisphereLight = new THREE.HemisphereLight(0x5f769d, 0x09111d, 0.56);
         scene.add(hemisphereLight);
@@ -223,6 +235,7 @@ const GameScene = (() => {
         controls.minDistance = BOARD_MIN_DISTANCE;
         controls.maxDistance = BOARD_MAX_DISTANCE;
         controls.enableRotate = false;
+        controls.mouseButtons = { ...boardMouseButtons };
         controls.minPolarAngle = boardSpherical.phi;
         controls.maxPolarAngle = boardSpherical.phi;
         controls.minAzimuthAngle = boardSpherical.theta;
@@ -307,6 +320,7 @@ const GameScene = (() => {
         controls.enabled = true;
         controls.enableRotate = true;
         controls.enablePan = false;
+        controls.mouseButtons = { ...thirdPersonMouseButtons };
         controls.minDistance = THIRD_PERSON_MIN_DISTANCE;
         controls.maxDistance = THIRD_PERSON_MAX_DISTANCE;
         controls.minPolarAngle = 0.4;

@@ -36,6 +36,10 @@
     const sessionToken = getOrCreateSessionToken();
     const initialRoomCode = resolveInitialRoomCode();
     const socket = io({ autoConnect: false, auth: { sessionToken, roomCode: initialRoomCode || undefined } });
+    const {
+        normalizeSerializedGameState = (state) => state,
+        isStaleSerializedGameState = () => false
+    } = window.MonopolyStateSync || {};
     let myPlayerId = null;
     let currentGameState = null;
     let activeRoomCode = initialRoomCode;
@@ -55,13 +59,28 @@
     const loadGameInput = document.getElementById('load-game-input');
     let topBarResizeObserver = null;
 
+    function getStoredValue(key) {
+        return sessionStorage.getItem(key) || localStorage.getItem(key);
+    }
+
+    function persistValue(key, value) {
+        if (!value) return;
+        sessionStorage.setItem(key, value);
+        localStorage.setItem(key, value);
+    }
+
+    function clearStoredValue(key) {
+        sessionStorage.removeItem(key);
+        localStorage.removeItem(key);
+    }
+
     function getOrCreateSessionToken() {
-        let token = sessionStorage.getItem(SESSION_TOKEN_KEY);
+        let token = getStoredValue(SESSION_TOKEN_KEY);
         if (!token) {
             token = window.crypto?.randomUUID?.() || `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-            sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+            persistValue(SESSION_TOKEN_KEY, token);
         }
-        localStorage.removeItem(SESSION_TOKEN_KEY);
+        persistValue(SESSION_TOKEN_KEY, token);
         return token;
     }
 
@@ -77,11 +96,11 @@
         const params = new URLSearchParams(window.location.search);
         const roomFromUrl = normalizeRoomCode(params.get('room'));
         if (roomFromUrl) {
-            sessionStorage.setItem(ROOM_CODE_KEY, roomFromUrl);
+            persistValue(ROOM_CODE_KEY, roomFromUrl);
             return roomFromUrl;
         }
 
-        return normalizeRoomCode(sessionStorage.getItem(ROOM_CODE_KEY));
+        return normalizeRoomCode(getStoredValue(ROOM_CODE_KEY));
     }
 
     function generateRoomCode() {
@@ -95,7 +114,7 @@
     function setRoomCode(roomCode) {
         activeRoomCode = normalizeRoomCode(roomCode);
         if (!activeRoomCode) return;
-        sessionStorage.setItem(ROOM_CODE_KEY, activeRoomCode);
+        persistValue(ROOM_CODE_KEY, activeRoomCode);
         const url = new URL(window.location.href);
         url.searchParams.set('room', activeRoomCode);
         window.history.replaceState({}, '', url);
@@ -104,7 +123,7 @@
 
     function clearRoomCode() {
         activeRoomCode = null;
-        sessionStorage.removeItem(ROOM_CODE_KEY);
+        clearStoredValue(ROOM_CODE_KEY);
         const url = new URL(window.location.href);
         url.searchParams.delete('room');
         window.history.replaceState({}, '', url);
@@ -295,13 +314,19 @@
     }
 
     function setCurrentGameState(state) {
-        currentGameState = state;
-        GameUI.updateHostPlayerId(state?.hostPlayerId || null);
-        if (typeof DevPanel !== 'undefined' && DevPanel.updateState) {
-            DevPanel.updateState(state);
+        const normalizedState = normalizeSerializedGameState(state);
+        if (isStaleSerializedGameState(normalizedState, currentGameState)) {
+            return false;
         }
-        syncRoomChrome(state);
+
+        currentGameState = normalizedState;
+        GameUI.updateHostPlayerId(normalizedState?.hostPlayerId || null);
+        if (typeof DevPanel !== 'undefined' && DevPanel.updateState) {
+            DevPanel.updateState(normalizedState);
+        }
+        syncRoomChrome(normalizedState);
         syncCameraViewState();
+        return true;
     }
 
     function getCurrentPlayerTokenGroup() {
@@ -479,22 +504,25 @@
 
     function applyState(state, { syncWorld = true, syncHistory = true, syncTrades = true, syncAuction = true, syncBuyPrompt = true } = {}) {
         if (!state) return;
-        setCurrentGameState(state);
-        if (syncWorld) syncWorldFromState(state);
+        // Ignore any snapshot that finished animating after a newer authoritative state already arrived.
+        if (!setCurrentGameState(state)) return;
+
+        const appliedState = currentGameState;
+        if (syncWorld) syncWorldFromState(appliedState);
         else {
-            GameTokens.layoutTokens(state.players || []);
+            GameTokens.layoutTokens(appliedState.players || []);
             syncCameraViewState();
         }
-        if (syncHistory) syncHistoryFromState(state);
-        if (syncTrades) syncPendingTrades(state);
-        if (syncAuction) syncAuctionFromState(state);
-        if (state.isGameStarted) {
+        if (syncHistory) syncHistoryFromState(appliedState);
+        if (syncTrades) syncPendingTrades(appliedState);
+        if (syncAuction) syncAuctionFromState(appliedState);
+        if (appliedState.isGameStarted) {
             Lobby.hideLobby();
             GameUI.showGameUI();
-            GameUI.updateLeaderboard(state.players, state.properties);
-            const currentPlayer = state.players[state.currentPlayerIndex];
+            GameUI.updateLeaderboard(appliedState.players, appliedState.properties);
+            const currentPlayer = appliedState.players[appliedState.currentPlayerIndex];
             if (currentPlayer) {
-                GameUI.updateTurnIndicator(currentPlayer.id, currentPlayer.character, state.players, state);
+                GameUI.updateTurnIndicator(currentPlayer.id, currentPlayer.character, appliedState.players, appliedState);
             }
         } else {
             Lobby.showLobby();
@@ -503,8 +531,8 @@
             GameUI.updateTurnTimer(null);
             hideSummaryModal();
         }
-        if (syncBuyPrompt) maybeRestoreBuyPrompt(state);
-        syncTurnTimerUI(state);
+        if (syncBuyPrompt) maybeRestoreBuyPrompt(appliedState);
+        syncTurnTimerUI(appliedState);
     }
 
     function ownsFullColorGroup(playerId, tile) {
@@ -609,14 +637,18 @@
 
     socket.on('player-session', (data) => {
         if (data.sessionToken) {
-            sessionStorage.setItem(SESSION_TOKEN_KEY, data.sessionToken);
+            persistValue(SESSION_TOKEN_KEY, data.sessionToken);
         }
         myPlayerId = data.playerId || null;
         GameUI.updateMyPlayerId(myPlayerId);
         TradeSystem.updatePlayerId(myPlayerId);
         AuctionSystem.updatePlayerId(myPlayerId);
-        syncRoomChrome();
-        syncCameraViewState();
+        if (currentGameState) {
+            applyState(currentGameState, { syncWorld: false, syncHistory: false });
+        } else {
+            syncRoomChrome();
+            syncCameraViewState();
+        }
     });
 
     socket.on('lobby-update', (state) => {
@@ -830,9 +862,12 @@
     });
 
     socket.on('dice-rolled', (data) => {
-        setCurrentGameState(data.gameState);
+        if (!setCurrentGameState(data.gameState)) return;
         GameUI.showDiceResult(data.die1, data.die2, data.character, data.isDoubles);
         if (data.isDoubles) Notifications.notifyDoubles();
+        if (typeof GameAudio !== 'undefined' && typeof GameAudio.playDiceRoll === 'function') {
+            GameAudio.playDiceRoll({ isDoubles: data.isDoubles });
+        }
 
         GameDice.roll(data.die1, data.die2, () => {
             GameTokens.animateMove(
@@ -854,9 +889,9 @@
     });
 
     socket.on('buy-prompt', (data) => {
-        setCurrentGameState(data.gameState);
+        if (!setCurrentGameState(data.gameState)) return;
         GameModals.showBuyModal(data);
-        syncTurnTimerUI(data.gameState);
+        syncTurnTimerUI(currentGameState);
     });
 
     socket.on('player-deciding', () => { });
@@ -879,7 +914,7 @@
     });
 
     socket.on('card-drawn', (data) => {
-        setCurrentGameState(data.gameState);
+        if (!setCurrentGameState(data.gameState)) return;
         const onAfterCard = () => {
             if (data.result?.moveResult) {
                 GameTokens.animateMove(

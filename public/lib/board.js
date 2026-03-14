@@ -356,16 +356,6 @@ const GameBoard = (() => {
                 ctx.globalAlpha = 0.88;
                 ctx.fillRect(0, canvas.height - footerHeight, canvas.width, footerHeight);
                 ctx.globalAlpha = 1;
-
-                ctx.save();
-                ctx.fillStyle = ownerColor;
-                ctx.beginPath();
-                ctx.moveTo(canvas.width - 112, 0);
-                ctx.lineTo(canvas.width, 0);
-                ctx.lineTo(canvas.width, 112);
-                ctx.closePath();
-                ctx.fill();
-                ctx.restore();
             } else {
                 const footerGradient = ctx.createLinearGradient(0, canvas.height - footerHeight, 0, canvas.height);
                 footerGradient.addColorStop(0, '#182235');

@@ -122,7 +122,6 @@
       </div>
       <div id="turn-indicator" class="turn-indicator"></div>
       <div id="turn-timer" class="turn-timer hidden"></div>
-      <div id="dice-result" class="dice-result hidden"></div>
     </div>
 
     <!-- Right Side: Leaderboard Panel -->
@@ -148,24 +147,27 @@
     <!-- Bottom Center: Jail Actions (shown when in jail) -->
     <div id="jail-actions" class="jail-actions hidden">
       <button id="jail-roll-btn" class="jail-btn roll">🎲 Roll for Doubles</button>
-      <button id="jail-buyout-btn" class="jail-btn buyout">💸 Buy out for $100</button>
+      <button id="jail-buyout-btn" class="jail-btn buyout">💸 Pay $50 and End Turn</button>
       <button id="jail-pardon-btn" class="jail-btn pardon disabled">🃏 Use pardon card</button>
     </div>
 
-    <!-- Bottom Right: Trades & History Panel -->
-    <div class="history-log">
-      <div class="history-log-toolbar">
-        <div class="panel-tabs">
-          <div id="tab-history" class="panel-tab active">📜 History</div>
-          <div id="tab-trades" class="panel-tab">🤝 Trades (<span id="trades-count">0</span>)</div>
+    <!-- Bottom Right: Dice HUD + Trades & History Panel -->
+    <div class="hud-feed-stack">
+      <div id="dice-result" class="dice-result hidden"></div>
+      <div class="history-log">
+        <div class="history-log-toolbar">
+          <div class="panel-tabs">
+            <div id="tab-history" class="panel-tab active">📜 History</div>
+            <div id="tab-trades" class="panel-tab">🤝 Trades (<span id="trades-count">0</span>)</div>
+          </div>
+          <button id="history-expand-btn" class="panel-toggle-btn" type="button" aria-expanded="false">Expand</button>
         </div>
-        <button id="history-expand-btn" class="panel-toggle-btn" type="button" aria-expanded="false">Expand</button>
-      </div>
-      <div id="history-content" class="panel-content active">
-        <div id="history-log-list" class="hl-list"></div>
-      </div>
-      <div id="trades-content" class="panel-content hidden">
-        <!-- Trade cards appended here dynamically -->
+        <div id="history-content" class="panel-content active">
+          <div id="history-log-list" class="hl-list"></div>
+        </div>
+        <div id="trades-content" class="panel-content hidden">
+          <!-- Trade cards appended here dynamically -->
+        </div>
       </div>
     </div>
   </div>
@@ -606,7 +608,9 @@
   <script src="/shared/gameState.js"></script>
   <script src="/shared/actionCards.js"></script>
   <script src="/shared/rules.js"></script>
+  <script src="/shared/stateSync.js"></script>
   <script src="lib/notifications.js"></script>
+  <script src="lib/audio.js"></script>
   <script src="lib/scene.js"></script>
   <script src="lib/board.js"></script>
   <script src="lib/dice.js"></script>

@@ -10,23 +10,65 @@ const GameUI = (() => {
     let currentProperties = [];
     let diceResultHideTimeout = null;
     let overflowMenuOpen = false;
+    let lastRenderedTurnOwnerId = null;
+    let hasRenderedTurnState = false;
+
+    function resetTurnAwareness() {
+        lastRenderedTurnOwnerId = null;
+        hasRenderedTurnState = false;
+    }
+
+    function primeAudio() {
+        if (typeof GameAudio !== 'undefined' && typeof GameAudio.prime === 'function') {
+            GameAudio.prime();
+        }
+    }
+
+    function notifyMyTurn(rollButtonState, endTurnState, me) {
+        if (typeof GameAudio !== 'undefined' && typeof GameAudio.playTurnAlert === 'function') {
+            GameAudio.playTurnAlert();
+        }
+
+        if (typeof Notifications !== 'undefined' && typeof Notifications.show === 'function') {
+            const message = rollButtonState?.canRoll
+                ? 'Your turn! Roll the dice.'
+                : endTurnState?.canEndTurn
+                    ? 'Your turn! End your turn when ready.'
+                    : me?.inJail
+                        ? 'Your turn! Choose a jail action.'
+                        : 'Your turn!';
+            Notifications.show(message, 'success', 2200);
+        }
+    }
+
+    function setPromptedActionState(button, isPrompted) {
+        if (!button) return;
+        button.classList.toggle('prompting-action', Boolean(isPrompted) && !button.classList.contains('disabled'));
+    }
 
     function init(socketInstance) {
         socket = socketInstance;
+        if (typeof GameAudio !== 'undefined' && typeof GameAudio.init === 'function') {
+            GameAudio.init();
+        }
 
         const rollBtn = document.getElementById('roll-dice-btn');
         rollBtn.addEventListener('click', () => {
             if (rollBtn.classList.contains('disabled')) return;
+            primeAudio();
             socket.emit('roll-dice');
             rollBtn.classList.add('disabled');
             rollBtn.textContent = 'Rolling...';
+            setPromptedActionState(rollBtn, false);
         });
 
         const endTurnBtn = document.getElementById('end-turn-btn');
         if (endTurnBtn) {
             endTurnBtn.addEventListener('click', () => {
                 if (endTurnBtn.classList.contains('disabled')) return;
+                primeAudio();
                 endTurnBtn.classList.add('disabled');
+                setPromptedActionState(endTurnBtn, false);
                 socket.emit('end-turn');
             });
         }
@@ -35,13 +77,17 @@ const GameUI = (() => {
         if (jailRollBtn) {
             jailRollBtn.addEventListener('click', () => {
                 if (jailRollBtn.classList.contains('disabled')) return;
+                primeAudio();
                 socket.emit('roll-dice');
             });
         }
 
         const startBtn = document.getElementById('start-game-btn');
         if (startBtn) {
-            startBtn.addEventListener('click', () => socket.emit('requestStartGame'));
+            startBtn.addEventListener('click', () => {
+                primeAudio();
+                socket.emit('requestStartGame');
+            });
         }
 
         const overflowBtn = document.getElementById('action-overflow-btn');
@@ -76,13 +122,17 @@ const GameUI = (() => {
 
         const buyoutBtn = document.getElementById('jail-buyout-btn');
         if (buyoutBtn) {
-            buyoutBtn.addEventListener('click', () => socket.emit('buy-out-jail'));
+            buyoutBtn.addEventListener('click', () => {
+                primeAudio();
+                socket.emit('buy-out-jail');
+            });
         }
 
         const pardonBtn = document.getElementById('jail-pardon-btn');
         if (pardonBtn) {
             pardonBtn.addEventListener('click', () => {
                 if (!pardonBtn.classList.contains('disabled')) {
+                    primeAudio();
                     socket.emit('use-pardon');
                 }
             });
@@ -123,9 +173,16 @@ const GameUI = (() => {
     function hideGameUI() {
         document.getElementById('game-hud').classList.add('hidden');
         setOverflowMenuOpen(false);
+        resetTurnAwareness();
+        setPromptedActionState(document.getElementById('roll-dice-btn'), false);
+        setPromptedActionState(document.getElementById('end-turn-btn'), false);
+        setPromptedActionState(document.getElementById('jail-roll-btn'), false);
     }
 
     function updateMyPlayerId(id) {
+        if (myPlayerId !== id) {
+            resetTurnAwareness();
+        }
         myPlayerId = id;
     }
 
@@ -175,6 +232,7 @@ const GameUI = (() => {
         if (!jailDiv) return;
         if (gameState.pauseState) {
             jailDiv.classList.add('hidden');
+            setPromptedActionState(jailRollBtn, false);
             return;
         }
 
@@ -188,13 +246,15 @@ const GameUI = (() => {
             if (jailRollBtn) {
                 jailRollBtn.classList.remove('disabled');
                 jailRollBtn.textContent = '🎲 Roll for Doubles';
+                setPromptedActionState(jailRollBtn, true);
             }
 
             if (buyoutBtn) {
-                const disabled = me.money < 100;
+                const disabled = me.money < 50;
                 buyoutBtn.classList.toggle('disabled', disabled);
                 buyoutBtn.style.opacity = disabled ? '0.35' : '';
                 buyoutBtn.style.cursor = disabled ? 'not-allowed' : '';
+                buyoutBtn.textContent = '💸 Pay $50 and End Turn';
             }
 
             if (pardonBtn) {
@@ -215,6 +275,148 @@ const GameUI = (() => {
         jailDiv.classList.add('hidden');
         if (jailRollBtn) {
             jailRollBtn.classList.add('disabled');
+            setPromptedActionState(jailRollBtn, false);
+        }
+    }
+
+    function getRollButtonState(isMyTurn, currentCharacter, gameState, me) {
+        const activeCharacter = currentCharacter || 'current player';
+
+        if (!isMyTurn) {
+            return {
+                canRoll: false,
+                text: `Waiting for ${activeCharacter}...`,
+                title: `It is ${activeCharacter}'s turn.`
+            };
+        }
+
+        if (me?.inJail) {
+            return {
+                canRoll: false,
+                text: 'Choose Jail Action',
+                title: 'Use a jail action to continue.'
+            };
+        }
+
+        if (me?.bankruptcyDeadline || (typeof me?.money === 'number' && me.money < 0)) {
+            return {
+                canRoll: false,
+                text: 'Recover From Debt',
+                title: 'Recover from debt or declare bankruptcy before continuing.'
+            };
+        }
+
+        switch (gameState?.turnPhase) {
+            case 'waiting':
+                return {
+                    canRoll: true,
+                    text: gameState?.hasPendingExtraRoll ? '🎲 Roll Again' : '🎲 Roll Dice',
+                    title: gameState?.hasPendingExtraRoll
+                        ? 'You rolled doubles. Roll again.'
+                        : 'Roll the dice to start your move.'
+                };
+            case 'rolling':
+                return {
+                    canRoll: false,
+                    text: 'Rolling...',
+                    title: 'The dice are already rolling.'
+                };
+            case 'moving':
+                return {
+                    canRoll: false,
+                    text: 'Resolving Move...',
+                    title: 'Wait for your move to finish resolving.'
+                };
+            case 'buying':
+                return {
+                    canRoll: false,
+                    text: 'Choose Buy or Pass',
+                    title: 'Buy the property or pass before you can end the turn.'
+                };
+            case 'auctioning':
+                return {
+                    canRoll: false,
+                    text: 'Auction in Progress',
+                    title: 'Finish the auction before continuing.'
+                };
+            case 'done':
+                return {
+                    canRoll: false,
+                    text: 'Turn Complete',
+                    title: 'You can end your turn now.'
+                };
+            default:
+                return {
+                    canRoll: false,
+                    text: 'Action In Progress',
+                    title: 'Finish the current action before continuing.'
+                };
+        }
+    }
+
+    function getEndTurnState(isMyTurn, currentCharacter, gameState, me) {
+        const canEndTurn = isMyTurn
+            && gameState?.turnPhase === 'done'
+            && !me?.inJail
+            && (typeof me?.money !== 'number' || me.money >= 0);
+
+        if (canEndTurn) {
+            return {
+                canEndTurn,
+                title: 'End your turn.'
+            };
+        }
+
+        if (!isMyTurn) {
+            return {
+                canEndTurn,
+                title: currentCharacter
+                    ? `Wait for ${currentCharacter} to finish their turn.`
+                    : 'Wait for the active player to finish their turn.'
+            };
+        }
+
+        if (me?.inJail) {
+            return {
+                canEndTurn,
+                title: 'Choose a jail action before ending your turn.'
+            };
+        }
+
+        if (me?.bankruptcyDeadline || (typeof me?.money === 'number' && me.money < 0)) {
+            return {
+                canEndTurn,
+                title: 'Recover from debt or declare bankruptcy before ending your turn.'
+            };
+        }
+
+        switch (gameState?.turnPhase) {
+            case 'waiting':
+                return {
+                    canEndTurn,
+                    title: 'Roll the dice before ending your turn.'
+                };
+            case 'rolling':
+            case 'moving':
+                return {
+                    canEndTurn,
+                    title: 'Wait for the move to finish before ending your turn.'
+                };
+            case 'buying':
+                return {
+                    canEndTurn,
+                    title: 'Buy the property or pass before ending your turn.'
+                };
+            case 'auctioning':
+                return {
+                    canEndTurn,
+                    title: 'Finish the auction before ending your turn.'
+                };
+            default:
+                return {
+                    canEndTurn,
+                    title: 'Finish the current action before ending your turn.'
+                };
         }
     }
 
@@ -235,13 +437,21 @@ const GameUI = (() => {
             indicator.innerHTML = `<span class="turn-badge other-turn">⏸ Paused - waiting for ${gameState.pauseState.character} to reconnect</span>`;
             rollBtn.classList.add('disabled');
             rollBtn.textContent = 'Game Paused';
-            if (endTurnBtn) endTurnBtn.classList.add('disabled');
+            setPromptedActionState(rollBtn, false);
+            if (endTurnBtn) {
+                endTurnBtn.classList.add('disabled');
+                endTurnBtn.classList.remove('hidden');
+                setPromptedActionState(endTurnBtn, false);
+            }
             renderJailUI(gameState);
             updateTurnTimer(null);
+            lastRenderedTurnOwnerId = currentPlayerId || null;
+            hasRenderedTurnState = true;
             return;
         }
 
         const isMyTurn = currentPlayerId === myPlayerId;
+        const shouldNotifyMyTurn = isMyTurn && (!hasRenderedTurnState || lastRenderedTurnOwnerId !== currentPlayerId);
         let jailText = '';
         if (gameState) {
             const currentPlayer = gameState.players.find(player => player.id === currentPlayerId);
@@ -251,37 +461,24 @@ const GameUI = (() => {
         }
 
         indicator.innerHTML = isMyTurn
-            ? `<span class="turn-badge my-turn">🎲 Your Turn!${jailText}</span>`
+            ? `<span class="turn-badge my-turn">${gameState?.hasPendingExtraRoll ? '🎲 Roll Again!' : '🎲 Your Turn!'}${jailText}</span>`
             : `<span class="turn-badge other-turn">⏳ ${currentCharacter}'s Turn${jailText}</span>`;
 
-        const canRoll = isMyTurn
-            && gameState?.turnPhase === 'waiting'
-            && !me?.inJail
-            && !me?.bankruptcyDeadline
-            && (typeof me?.money !== 'number' || me.money >= 0);
-
-        if (canRoll) {
-            rollBtn.classList.remove('disabled');
-            rollBtn.textContent = '🎲 Roll Dice';
-        } else {
-            rollBtn.classList.add('disabled');
-            rollBtn.textContent = isMyTurn && me?.inJail
-                ? 'Choose Jail Action'
-                : isMyTurn && me?.bankruptcyDeadline
-                    ? 'Recover From Debt'
-                    : isMyTurn && gameState?.turnPhase === 'done'
-                        ? 'Turn Complete'
-                : `Waiting for ${currentCharacter}...`;
-        }
+        const rollButtonState = getRollButtonState(isMyTurn, currentCharacter, gameState, me);
+        rollBtn.classList.toggle('disabled', !rollButtonState.canRoll);
+        rollBtn.textContent = rollButtonState.text;
+        rollBtn.title = rollButtonState.title;
+        setPromptedActionState(rollBtn, rollButtonState.canRoll);
 
         // End Turn button: enabled when it's my turn and not blocked by jail.
+        let endTurnState = null;
         if (endTurnBtn) {
-            const canEndTurn = isMyTurn
-                && gameState?.turnPhase === 'done'
-                && !me?.inJail
-                && (typeof me?.money !== 'number' || me.money >= 0);
-            endTurnBtn.classList.toggle('disabled', !canEndTurn);
+            endTurnState = getEndTurnState(isMyTurn, currentCharacter, gameState, me);
+            endTurnBtn.classList.toggle('hidden', Boolean(isMyTurn && gameState?.hasPendingExtraRoll));
+            endTurnBtn.classList.toggle('disabled', !endTurnState.canEndTurn);
             endTurnBtn.textContent = '⏭ End Turn';
+            endTurnBtn.title = endTurnState.title;
+            setPromptedActionState(endTurnBtn, endTurnState.canEndTurn);
         }
 
         if (!me?.isActive) {
@@ -289,6 +486,11 @@ const GameUI = (() => {
         }
 
         renderJailUI(gameState);
+        if (shouldNotifyMyTurn) {
+            notifyMyTurn(rollButtonState, endTurnState, me);
+        }
+        lastRenderedTurnOwnerId = currentPlayerId || null;
+        hasRenderedTurnState = true;
         updateTurnTimer(gameState?.turnTimer || null);
     }
 
