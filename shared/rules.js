@@ -58,7 +58,7 @@
     function canManageAssets(gameState, playerId) {
         if (!gameState || !playerId) return false;
         if (gameState.pauseState) return false;
-        if (!['waiting', 'buying'].includes(gameState.turnPhase)) return false;
+        if (!['waiting', 'buying', 'done'].includes(gameState.turnPhase)) return false;
         return gameState.currentPlayerId === playerId;
     }
 

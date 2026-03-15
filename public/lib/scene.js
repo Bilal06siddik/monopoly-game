@@ -15,6 +15,8 @@ const GameScene = (() => {
     const TOP_DOWN_FOV = 24;
     const TOP_DOWN_BOARD_HEADING = Math.PI / 2;
     const BOARD_PAN_LIMIT = 6.2;
+    const BOARD_MIN_DISTANCE = 12;
+    const BOARD_MAX_DISTANCE = 46;
     const THIRD_PERSON_MIN_DISTANCE = 2.8;
     const THIRD_PERSON_MAX_DISTANCE = 9.5;
     const DEFAULT_BOARD_TARGET = new THREE.Vector3(0, 1.55, 1.2);
@@ -29,10 +31,24 @@ const GameScene = (() => {
     const smoothedFollowTarget = new THREE.Vector3();
     const desiredBoardTarget = new THREE.Vector3();
     const boardTargetDelta = new THREE.Vector3();
+    const thirdPersonOffset = new THREE.Vector3();
+    const thirdPersonTargetDelta = new THREE.Vector3();
     const outwardVector = new THREE.Vector3();
     const quadrantVector = new THREE.Vector3();
     const boardCenter = new THREE.Vector3(0, 0, 0);
     const boardSpherical = new THREE.Spherical().setFromVector3(boardCameraOffset);
+    const boardMouseButtons = {
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.PAN
+    };
+    const thirdPersonMouseButtons = {
+        LEFT: null,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.ROTATE
+    };
+    let thirdPersonNeedsSnap = true;
+    let hasThirdPersonAnchor = false;
 
     function init() {
         const canvas = document.getElementById('game-canvas');
@@ -40,6 +56,10 @@ const GameScene = (() => {
         scene = new THREE.Scene();
         scene.background = new THREE.Color(0x070c16);
         scene.fog = new THREE.Fog(0x070c16, 26, 78);
+        scene.userData.defaultBackground = new THREE.Color(0x070c16);
+        scene.userData.topDownBackground = new THREE.Color(0x111f34);
+        scene.userData.defaultFogNear = 26;
+        scene.userData.defaultFogFar = 78;
 
         worldRoot = new THREE.Group();
         scene.add(worldRoot);
@@ -78,13 +98,15 @@ const GameScene = (() => {
         controls.maxPolarAngle = boardSpherical.phi;
         controls.minAzimuthAngle = boardSpherical.theta;
         controls.maxAzimuthAngle = boardSpherical.theta;
-        controls.minDistance = 18;
-        controls.maxDistance = 46;
+        controls.minDistance = BOARD_MIN_DISTANCE;
+        controls.maxDistance = BOARD_MAX_DISTANCE;
         controls.zoomSpeed = 0.9;
+        controls.mouseButtons = { ...boardMouseButtons };
         controls.update();
 
         canvas.addEventListener('wheel', onCanvasWheel, { passive: false });
         canvas.addEventListener('pointerdown', onCanvasPointerDown, true);
+        canvas.addEventListener('contextmenu', event => event.preventDefault());
 
         const hemisphereLight = new THREE.HemisphereLight(0x5f769d, 0x09111d, 0.56);
         scene.add(hemisphereLight);
@@ -156,36 +178,25 @@ const GameScene = (() => {
         function loop() {
             requestAnimationFrame(loop);
             if (callback) callback();
-            if (controls.enabled) {
+            if (controls.enabled && viewMode !== 'third-person') {
                 controls.update();
             }
             updateCameraMode();
+            if (controls.enabled && viewMode === 'third-person') {
+                controls.update();
+            }
             renderer.render(scene, camera);
         }
         loop();
     }
 
     function onCanvasWheel(event) {
-        if (viewMode !== 'third-person') return;
-
-        event.preventDefault();
-        const zoomDelta = event.deltaY * 0.01;
-        thirdPersonDistance = THREE.MathUtils.clamp(
-            thirdPersonDistance + zoomDelta,
-            THIRD_PERSON_MIN_DISTANCE,
-            THIRD_PERSON_MAX_DISTANCE
-        );
+        if (viewMode === 'third-person') return;
     }
 
     function onCanvasPointerDown(event) {
-        if (event.button !== 2 || viewMode !== 'third-person') return;
-
-        // Switch early in the capture phase so OrbitControls can treat the same
-        // right-click drag as a board pan instead of ignoring it in follow mode.
-        setViewMode('isometric');
-        if (controls) {
-            controls.enabled = true;
-        }
+        // #16: In third-person, right-click is now ignored (OrbitControls handles orbit)
+        // No longer switches to isometric
     }
 
     function setCameraFov(nextFov) {
@@ -220,6 +231,23 @@ const GameScene = (() => {
         camera.up.set(0, 1, 0);
         if (worldRoot) worldRoot.rotation.y = 0;
         controls.enabled = true;
+        controls.enablePan = true;
+        controls.minDistance = BOARD_MIN_DISTANCE;
+        controls.maxDistance = BOARD_MAX_DISTANCE;
+        controls.enableRotate = false;
+        controls.mouseButtons = { ...boardMouseButtons };
+        controls.minPolarAngle = boardSpherical.phi;
+        controls.maxPolarAngle = boardSpherical.phi;
+        controls.minAzimuthAngle = boardSpherical.theta;
+        controls.maxAzimuthAngle = boardSpherical.theta;
+        // Restore fog to defaults in board view
+        if (scene.fog) {
+            scene.fog.near = scene.userData.defaultFogNear || 26;
+            scene.fog.far = scene.userData.defaultFogFar || 78;
+        }
+        if (scene.background?.isColor) {
+            scene.background.copy(scene.userData.defaultBackground || new THREE.Color(0x070c16));
+        }
 
         if (shouldResetBoardView) {
             desiredBoardTarget.copy(DEFAULT_BOARD_TARGET);
@@ -250,6 +278,14 @@ const GameScene = (() => {
         controls.target.copy(topDownLookTarget);
         controls.enabled = false;
         camera.lookAt(topDownLookTarget);
+        // #11: Disable fog in top-down view for brighter appearance
+        if (scene.fog) {
+            scene.fog.near = 200;
+            scene.fog.far = 400;
+        }
+        if (scene.background?.isColor) {
+            scene.background.copy(scene.userData.topDownBackground || new THREE.Color(0x111f34));
+        }
     }
 
     function updateThirdPersonCamera() {
@@ -278,16 +314,59 @@ const GameScene = (() => {
         }
         outwardVector.normalize();
 
-        desiredCameraPosition.copy(smoothedFollowTarget).addScaledVector(outwardVector, thirdPersonDistance);
-        desiredCameraPosition.y += Math.max(2.6, thirdPersonDistance * 0.7);
-
         currentLookTarget.copy(smoothedFollowTarget);
         currentLookTarget.y += 0.85;
 
-        camera.position.lerp(desiredCameraPosition, 0.12);
-        controls.target.lerp(currentLookTarget, 0.18);
-        controls.enabled = false;
-        camera.lookAt(currentLookTarget);
+        controls.enabled = true;
+        controls.enableRotate = true;
+        controls.enablePan = false;
+        controls.mouseButtons = { ...thirdPersonMouseButtons };
+        controls.minDistance = THIRD_PERSON_MIN_DISTANCE;
+        controls.maxDistance = THIRD_PERSON_MAX_DISTANCE;
+        controls.minPolarAngle = 0.4;
+        controls.maxPolarAngle = Math.PI / 2.1;
+        controls.minAzimuthAngle = -Infinity;
+        controls.maxAzimuthAngle = Infinity;
+
+        if (thirdPersonNeedsSnap || !hasThirdPersonAnchor) {
+            desiredCameraPosition.copy(smoothedFollowTarget).addScaledVector(outwardVector, thirdPersonDistance);
+            desiredCameraPosition.y += Math.max(2.6, thirdPersonDistance * 0.7);
+            controls.target.copy(currentLookTarget);
+            camera.position.copy(desiredCameraPosition);
+            thirdPersonNeedsSnap = false;
+            hasThirdPersonAnchor = true;
+        } else {
+            thirdPersonTargetDelta.copy(currentLookTarget).sub(controls.target);
+            camera.position.add(thirdPersonTargetDelta);
+            controls.target.copy(currentLookTarget);
+        }
+
+        thirdPersonOffset.copy(camera.position).sub(controls.target);
+        if (thirdPersonOffset.lengthSq() < 0.0001) {
+            thirdPersonOffset.set(outwardVector.x, 0.6, outwardVector.z).setLength(thirdPersonDistance);
+        }
+
+        thirdPersonOffset.setLength(THREE.MathUtils.clamp(
+            thirdPersonOffset.length(),
+            THIRD_PERSON_MIN_DISTANCE,
+            THIRD_PERSON_MAX_DISTANCE
+        ));
+        thirdPersonOffset.y = Math.max(1.2, thirdPersonOffset.y);
+        thirdPersonDistance = THREE.MathUtils.clamp(
+            thirdPersonOffset.length(),
+            THIRD_PERSON_MIN_DISTANCE,
+            THIRD_PERSON_MAX_DISTANCE
+        );
+        camera.position.copy(controls.target).add(thirdPersonOffset);
+        camera.lookAt(controls.target);
+        // Restore fog to defaults in third-person
+        if (scene.fog) {
+            scene.fog.near = scene.userData.defaultFogNear || 26;
+            scene.fog.far = scene.userData.defaultFogFar || 78;
+        }
+        if (scene.background?.isColor) {
+            scene.background.copy(scene.userData.defaultBackground || new THREE.Color(0x070c16));
+        }
     }
 
     function updateCameraMode() {
@@ -307,8 +386,15 @@ const GameScene = (() => {
     }
 
     function setFollowTarget(target) {
-        followTarget = target || null;
+        const nextTarget = target || null;
+        if (nextTarget === followTarget) {
+            return;
+        }
+
+        followTarget = nextTarget;
         smoothedFollowTarget.set(0, 0, 0);
+        thirdPersonNeedsSnap = true;
+        hasThirdPersonAnchor = false;
         if (!followTarget && viewMode === 'third-person') {
             setViewMode('isometric');
         }
@@ -327,6 +413,10 @@ const GameScene = (() => {
 
         viewMode = normalizedMode;
         shouldResetBoardView = normalizedMode === 'isometric';
+        thirdPersonNeedsSnap = normalizedMode === 'third-person';
+        if (normalizedMode !== 'third-person') {
+            hasThirdPersonAnchor = false;
+        }
         notifyViewModeChange();
         return true;
     }

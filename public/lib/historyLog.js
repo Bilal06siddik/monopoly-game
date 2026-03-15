@@ -25,7 +25,9 @@ const HistoryLog = (() => {
         if (!container) return;
 
         container.innerHTML = '';
-        const visibleEvents = isExpanded ? events : events.slice(-COLLAPSED_COUNT);
+        const visibleEvents = isExpanded
+            ? [...events]
+            : events.slice(-COLLAPSED_COUNT);
         visibleEvents.forEach(({ text, type }) => {
             const el = document.createElement('div');
             el.className = `history-item history-${type}`;

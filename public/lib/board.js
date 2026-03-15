@@ -9,7 +9,6 @@ const GameBoard = (() => {
     const TILE_H = 0.22;
     const CORNER_SIZE = 2.1;
     const GAP = 0.06;
-    const BUILDING_INSET = 0.4;
 
     const tilePositions = {};
     const tileMeshes = {};
@@ -244,6 +243,7 @@ const GameBoard = (() => {
                 })
             );
             logoPlane.rotation.x = -Math.PI / 2;
+            logoPlane.rotation.z = Math.PI; // Flip logo 180°
             logoPlane.position.y = 0.045; // Slightly above the rings
             boardGroup.add(logoPlane);
         });
@@ -289,6 +289,26 @@ const GameBoard = (() => {
 
     function getProfileTextScale() {
         return currentTextProfile === 'top-down' ? 1.28 : 1.12;
+    }
+
+    function getOwnedTileDisplayValue(tile, propertyState = null) {
+        if (!propertyState) {
+            return {
+                label: tile.rent > 0 ? `$${tile.rent}` : tile.price > 0 ? `$${tile.price}` : ''
+            };
+        }
+
+        if (propertyState.displayRentLabel) {
+            return { label: propertyState.displayRentLabel };
+        }
+
+        if (Number.isFinite(propertyState.displayRent)) {
+            return { label: `$${propertyState.displayRent}` };
+        }
+
+        return {
+            label: tile.rent > 0 ? `$${tile.rent}` : tile.price > 0 ? `$${tile.price}` : ''
+        };
     }
 
     function createTileTexture(tile, tileIndex, width, height, ownerColor = null, propertyState = null) {
@@ -344,16 +364,6 @@ const GameBoard = (() => {
                 ctx.globalAlpha = 0.88;
                 ctx.fillRect(0, canvas.height - footerHeight, canvas.width, footerHeight);
                 ctx.globalAlpha = 1;
-
-                ctx.save();
-                ctx.fillStyle = ownerColor;
-                ctx.beginPath();
-                ctx.moveTo(canvas.width - 112, 0);
-                ctx.lineTo(canvas.width, 0);
-                ctx.lineTo(canvas.width, 112);
-                ctx.closePath();
-                ctx.fill();
-                ctx.restore();
             } else {
                 const footerGradient = ctx.createLinearGradient(0, canvas.height - footerHeight, 0, canvas.height);
                 footerGradient.addColorStop(0, '#182235');
@@ -435,9 +445,12 @@ const GameBoard = (() => {
             if (tile.price > 0) {
                 const priceSize = Math.floor(canvas.width * 0.145 * textScale);
                 ctx.font = `800 ${priceSize}px 'Segoe UI', Arial, sans-serif`;
+                const displayLabel = ownerColor
+                    ? getOwnedTileDisplayValue(tile, propertyState).label
+                    : `$${tile.price}`;
                 ctx.fillStyle = ownerColor ? '#ffffff' : '#ffd87f';
-                ctx.strokeText(`$${tile.price}`, canvas.width / 2, canvas.height - (footerHeight * 0.5));
-                ctx.fillText(`$${tile.price}`, canvas.width / 2, canvas.height - (footerHeight * 0.5));
+                ctx.strokeText(displayLabel, canvas.width / 2, canvas.height - (footerHeight * 0.5));
+                ctx.fillText(displayLabel, canvas.width / 2, canvas.height - (footerHeight * 0.5));
             }
         });
 
@@ -529,6 +542,26 @@ const GameBoard = (() => {
                 ctx.font = `800 ${Math.floor(canvas.width * 0.09 * textScale)}px 'Segoe UI', Arial, sans-serif`;
                 ctx.strokeText(amountLabel, canvas.width / 2, canvas.height * 0.86);
                 ctx.fillText(amountLabel, canvas.width / 2, canvas.height * 0.86);
+            }
+
+            // Show GO money amounts
+            const isGoTile = tile.name.toLowerCase() === 'go';
+            if (isGoTile) {
+                ctx.fillStyle = 'rgba(8, 13, 24, 0.72)';
+                ctx.beginPath();
+                addRoundedRectPath(
+                    ctx,
+                    canvas.width * 0.08,
+                    canvas.height * 0.74,
+                    canvas.width * 0.84,
+                    canvas.height * 0.16,
+                    28
+                );
+                ctx.fill();
+
+                ctx.fillStyle = '#7dff98';
+                ctx.font = `700 ${Math.floor(canvas.width * 0.048 * textScale)}px 'Segoe UI', Arial, sans-serif`;
+                ctx.fillText('LAND $400 · PASS $200', canvas.width / 2, canvas.height * 0.82);
             }
         });
 
@@ -628,14 +661,10 @@ const GameBoard = (() => {
 
     function getTileIconText(tile) {
         const name = typeof tile.name === 'string' ? tile.name.toLowerCase() : '';
-        if (name.includes('lucky wheel')) return 'WHEEL';
-        if (name.includes('happy birthday')) return 'BDAY';
+        if (name.includes('lucky wheel')) return '🎰';
+        if (name.includes('happy birthday')) return '🎂';
         if (name.includes('income tax')) return '10%';
-        if (tile.type === 'chance') return 'CHANCE';
-        if (tile.type === 'chest') return 'CHEST';
-        if (tile.type === 'tax') return 'TAX';
-        if (tile.type === 'railroad') return 'RR';
-        if (tile.type === 'utility') return 'UTILITY';
+        // Only show type badges for property tiles, not for non-city tiles
         return '';
     }
 
@@ -985,11 +1014,11 @@ const GameBoard = (() => {
         const renderToken = Symbol(`house-${tileIndex}-${houseCount}`);
         houseRenderTokens[tileIndex] = renderToken;
         const cluster = new THREE.Group();
-        const { inward, rotationY } = getBuildingOrientation(tileIndex);
+        const { rotationY } = getBuildingOrientation(tileIndex);
         cluster.position.set(
-            position.x + (inward.x * BUILDING_INSET),
+            position.x,
             (TILE_H / 2) + 0.04,
-            position.z + (inward.z * BUILDING_INSET)
+            position.z
         );
         cluster.rotation.y = rotationY;
 
@@ -1286,6 +1315,43 @@ const GameBoard = (() => {
         refreshTileInteractionStates();
     }
 
+    // -- #17: Building transparency when player stands on tile --
+    const occupiedTiles = new Set();
+
+    function setTileOccupied(tileIndex, isOccupied) {
+        if (isOccupied) {
+            occupiedTiles.add(tileIndex);
+        } else {
+            occupiedTiles.delete(tileIndex);
+        }
+        updateBuildingTransparency(tileIndex);
+    }
+
+    function updateBuildingTransparency(tileIndex) {
+        const meshes = houseMeshes[tileIndex];
+        if (!meshes || meshes.length === 0) return;
+        const isOccupied = occupiedTiles.has(tileIndex);
+        const targetOpacity = isOccupied ? 0.4 : 1.0;
+        meshes.forEach(cluster => {
+            cluster.traverse(child => {
+                if (!child?.isMesh) return;
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(mat => {
+                            mat.transparent = isOccupied;
+                            mat.opacity = targetOpacity;
+                            mat.needsUpdate = true;
+                        });
+                    } else {
+                        child.material.transparent = isOccupied;
+                        child.material.opacity = targetOpacity;
+                        child.material.needsUpdate = true;
+                    }
+                }
+            });
+        });
+    }
+
     return {
         build,
         getTileData,
@@ -1301,6 +1367,7 @@ const GameBoard = (() => {
         updateBailoutAmount,
         setTextProfile,
         setHoveredTile,
-        setFocusedTile
+        setFocusedTile,
+        setTileOccupied
     };
 })();

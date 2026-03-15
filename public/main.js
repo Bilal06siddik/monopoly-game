@@ -8,17 +8,11 @@
     // --- INTRO ANIMATION SEQUENCE ---
     (function initIntro() {
         const introScreen = document.getElementById('intro-screen');
-        const introContainer = document.getElementById('intro-logo-container');
-        if (!introScreen || !introContainer) return;
+        if (!introScreen) return;
 
         // Sequence: 
         // 1. Pop-in completes (2s)
-        // 2. Trigger Sheen (after 2.2s)
-        // 3. Fade out entire screen (after 5.5s)
-        
-        setTimeout(() => {
-            introContainer.classList.add('active-sheen');
-        }, 2200);
+        // 2. Fade out entire screen (after 5.5s)
 
         setTimeout(() => {
             introScreen.classList.add('fade-out');
@@ -42,26 +36,51 @@
     const sessionToken = getOrCreateSessionToken();
     const initialRoomCode = resolveInitialRoomCode();
     const socket = io({ autoConnect: false, auth: { sessionToken, roomCode: initialRoomCode || undefined } });
+    const {
+        normalizeSerializedGameState = (state) => state,
+        isStaleSerializedGameState = () => false
+    } = window.MonopolyStateSync || {};
     let myPlayerId = null;
     let currentGameState = null;
     let activeRoomCode = initialRoomCode;
     let focusedTileIndex = null;
     const cameraViewBtn = document.getElementById('camera-view-btn');
     const cameraTopdownBtn = document.getElementById('camera-topdown-btn');
+    const cameraIsoBtn = document.getElementById('camera-iso-btn');
     const cameraResetBtn = document.getElementById('camera-reset-btn');
+    const viewDockToggle = document.getElementById('view-dock-toggle');
+    const viewDock = document.getElementById('view-dock');
     const roomGate = document.getElementById('room-gate');
     const roomGateStatus = document.getElementById('room-gate-status');
     const roomCodeInput = document.getElementById('room-code-input');
     const topBar = document.querySelector('.top-bar');
+    const saveGameBtn = document.getElementById('save-game-btn');
+    const loadGameBtn = document.getElementById('load-game-btn');
+    const loadGameInput = document.getElementById('load-game-input');
     let topBarResizeObserver = null;
 
+    function getStoredValue(key) {
+        return sessionStorage.getItem(key) || localStorage.getItem(key);
+    }
+
+    function persistValue(key, value) {
+        if (!value) return;
+        sessionStorage.setItem(key, value);
+        localStorage.setItem(key, value);
+    }
+
+    function clearStoredValue(key) {
+        sessionStorage.removeItem(key);
+        localStorage.removeItem(key);
+    }
+
     function getOrCreateSessionToken() {
-        let token = sessionStorage.getItem(SESSION_TOKEN_KEY);
+        let token = getStoredValue(SESSION_TOKEN_KEY);
         if (!token) {
             token = window.crypto?.randomUUID?.() || `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-            sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+            persistValue(SESSION_TOKEN_KEY, token);
         }
-        localStorage.removeItem(SESSION_TOKEN_KEY);
+        persistValue(SESSION_TOKEN_KEY, token);
         return token;
     }
 
@@ -77,11 +96,11 @@
         const params = new URLSearchParams(window.location.search);
         const roomFromUrl = normalizeRoomCode(params.get('room'));
         if (roomFromUrl) {
-            sessionStorage.setItem(ROOM_CODE_KEY, roomFromUrl);
+            persistValue(ROOM_CODE_KEY, roomFromUrl);
             return roomFromUrl;
         }
 
-        return normalizeRoomCode(sessionStorage.getItem(ROOM_CODE_KEY));
+        return normalizeRoomCode(getStoredValue(ROOM_CODE_KEY));
     }
 
     function generateRoomCode() {
@@ -95,7 +114,7 @@
     function setRoomCode(roomCode) {
         activeRoomCode = normalizeRoomCode(roomCode);
         if (!activeRoomCode) return;
-        sessionStorage.setItem(ROOM_CODE_KEY, activeRoomCode);
+        persistValue(ROOM_CODE_KEY, activeRoomCode);
         const url = new URL(window.location.href);
         url.searchParams.set('room', activeRoomCode);
         window.history.replaceState({}, '', url);
@@ -104,7 +123,7 @@
 
     function clearRoomCode() {
         activeRoomCode = null;
-        sessionStorage.removeItem(ROOM_CODE_KEY);
+        clearStoredValue(ROOM_CODE_KEY);
         const url = new URL(window.location.href);
         url.searchParams.delete('room');
         window.history.replaceState({}, '', url);
@@ -150,6 +169,83 @@
         }
     }
 
+    function setTopDownViewOptionsOpen(isOpen) {
+        const nextState = Boolean(isOpen);
+        document.body.classList.toggle('top-down-view-options-open', nextState);
+        if (viewDockToggle) {
+            viewDockToggle.setAttribute('aria-expanded', String(nextState));
+            viewDockToggle.textContent = nextState ? '✕ View' : '👁 View';
+        }
+        syncTopDownHudLayout();
+    }
+
+    function downloadSaveState(saveState) {
+        const jsonString = JSON.stringify(saveState, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `monopoly-save-${Date.now()}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
+
+    function getTileDisplayRent(prop, properties = currentGameState?.properties || []) {
+        if (!prop || !prop.owner) {
+            return { amount: prop?.price ?? 0, label: prop?.price > 0 ? `$${prop.price}` : '—' };
+        }
+
+        if (prop.type === 'utility') {
+            const ownedUtilities = MonopolyRules.getOwnedPropertyCount(properties, prop.owner, 'utility');
+            const label = ownedUtilities >= 2 ? 'Dice x10' : 'Dice x4';
+            return { amount: null, label };
+        }
+
+        if (prop.type === 'railroad') {
+            const ownedRailroads = MonopolyRules.getOwnedPropertyCount(properties, prop.owner, 'railroad');
+            const amount = 25 * Math.pow(2, Math.max(ownedRailroads - 1, 0));
+            return { amount, label: `$${amount}` };
+        }
+
+        const amount = MonopolyRules.calculateRent(properties, prop, 7);
+        return { amount, label: amount > 0 ? `$${amount}` : '—' };
+    }
+
+    function hideEndStatsScreen() {
+        const screen = document.getElementById('end-stats-screen');
+        if (!screen) return;
+        screen.classList.remove('visible');
+        screen.classList.add('hidden');
+    }
+
+    function showEndStatsScreen(summary, winner) {
+        const screen = document.getElementById('end-stats-screen');
+        const titleEl = document.getElementById('es-winner-title');
+        const gridEl = document.getElementById('es-player-grid');
+        if (!screen || !titleEl || !gridEl || !summary) return;
+
+        const placements = Array.isArray(summary.placements) ? summary.placements : [];
+        const winnerName = winner?.character || placements.find(player => player.isWinner)?.character || 'Winner';
+        titleEl.textContent = winner?.id === myPlayerId ? 'You Win!' : `${winnerName} Wins!`;
+
+        gridEl.innerHTML = placements.map(player => `
+            <div class="end-stats-card${player.isWinner ? ' winner' : ''}">
+                <div class="esc-avatar">${player.isWinner ? '👑' : player.isActive ? '👤' : '💀'}</div>
+                <div class="esc-name" style="color:${player.color}">${player.character}</div>
+                <div class="esc-stat"><span class="esc-stat-label">Placement</span><span class="esc-stat-value">#${player.placement}</span></div>
+                <div class="esc-stat"><span class="esc-stat-label">Net Worth</span><span class="esc-stat-value money">$${player.netWorth}</span></div>
+                <div class="esc-stat"><span class="esc-stat-label">Properties</span><span class="esc-stat-value">${player.propertiesOwned}</span></div>
+                <div class="esc-stat"><span class="esc-stat-label">Rent Paid</span><span class="esc-stat-value">$${player.stats?.rentPaid ?? 0}</span></div>
+                <div class="esc-stat"><span class="esc-stat-label">Rent Recv</span><span class="esc-stat-value">$${player.stats?.rentReceived ?? 0}</span></div>
+            </div>
+        `).join('');
+
+        screen.classList.remove('hidden');
+        screen.classList.add('visible');
+    }
+
     function syncRoomChrome(state = currentGameState) {
         const roomCode = normalizeRoomCode(state?.roomCode || activeRoomCode);
         const isHost = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
@@ -169,6 +265,8 @@
         lobbyEndBtn?.classList.toggle('hidden', !isHost);
         hudEndGameBtn?.classList.toggle('hidden', !isHost || !isGameStarted);
         hudEndBtn?.classList.toggle('hidden', !isHost);
+        if (saveGameBtn) saveGameBtn.disabled = !isHost || !isGameStarted;
+        if (loadGameBtn) loadGameBtn.disabled = !isHost || isGameStarted;
     }
 
     function setFocusedTile(tileIndex) {
@@ -186,6 +284,11 @@
         GameBoard.setTextProfile(viewMode === 'top-down' ? 'top-down' : 'isometric');
     }
 
+    function isTypingTarget() {
+        const activeTag = document.activeElement?.tagName;
+        return activeTag === 'INPUT' || activeTag === 'TEXTAREA' || document.activeElement?.isContentEditable;
+    }
+
     function renderRuntimeUI() {
         syncBoardTextProfile();
     }
@@ -194,17 +297,36 @@
         if (!topBar) return;
 
         const topBarHeight = Math.max(Math.ceil(topBar.getBoundingClientRect().height), 0);
+        const toggleHeight = viewDockToggle ? Math.max(Math.ceil(viewDockToggle.getBoundingClientRect().height), 0) : 0;
+        const isTopDown = document.body.dataset.viewMode === 'top-down';
+        const isViewOptionsOpen = isTopDown && document.body.classList.contains('top-down-view-options-open');
+        const viewDockHeight = isViewOptionsOpen && viewDock
+            ? Math.max(Math.ceil(viewDock.getBoundingClientRect().height), 0)
+            : 0;
+        const toggleTop = 68 + topBarHeight + 12;
+        const viewDockTop = toggleTop + toggleHeight + 8;
+        const actionDockTop = viewDockTop + (isViewOptionsOpen ? viewDockHeight + 8 : 0);
+
         document.body.style.setProperty('--top-down-top-bar-height', `${topBarHeight}px`);
+        document.body.style.setProperty('--top-down-view-toggle-top', `${toggleTop}px`);
+        document.body.style.setProperty('--top-down-view-dock-top', `${viewDockTop}px`);
+        document.body.style.setProperty('--top-down-action-dock-top', `${actionDockTop}px`);
     }
 
     function setCurrentGameState(state) {
-        currentGameState = state;
-        GameUI.updateHostPlayerId(state?.hostPlayerId || null);
-        if (typeof DevPanel !== 'undefined' && DevPanel.updateState) {
-            DevPanel.updateState(state);
+        const normalizedState = normalizeSerializedGameState(state);
+        if (isStaleSerializedGameState(normalizedState, currentGameState)) {
+            return false;
         }
-        syncRoomChrome(state);
+
+        currentGameState = normalizedState;
+        GameUI.updateHostPlayerId(normalizedState?.hostPlayerId || null);
+        if (typeof DevPanel !== 'undefined' && DevPanel.updateState) {
+            DevPanel.updateState(normalizedState);
+        }
+        syncRoomChrome(normalizedState);
         syncCameraViewState();
+        return true;
     }
 
     function getCurrentPlayerTokenGroup() {
@@ -223,28 +345,31 @@
         const isThirdPerson = viewMode === 'third-person';
         const isTopDown = viewMode === 'top-down';
         const isIsometric = viewMode === 'isometric';
+
+        // #13: Each button shows its view name and is highlighted (active) when that view is active
+        if (cameraIsoBtn) {
+            cameraIsoBtn.classList.toggle('active', isIsometric);
+            cameraIsoBtn.setAttribute('aria-pressed', String(isIsometric));
+        }
         if (cameraViewBtn) {
             cameraViewBtn.disabled = !canFollow;
             cameraViewBtn.classList.toggle('active', isThirdPerson);
             cameraViewBtn.setAttribute('aria-pressed', String(isThirdPerson));
-            cameraViewBtn.textContent = isThirdPerson ? '🧭 Isometric' : '🎥 Third Person';
+            cameraViewBtn.textContent = '🎥 Third Person';
             cameraViewBtn.title = canFollow
-                ? (isThirdPerson ? 'Return to the locked isometric board view' : 'Follow your token in third person')
+                ? 'Follow your token in third person'
                 : 'Join a game to enable third-person view';
         }
         if (cameraTopdownBtn) {
             cameraTopdownBtn.classList.toggle('active', isTopDown);
             cameraTopdownBtn.setAttribute('aria-pressed', String(isTopDown));
-            cameraTopdownBtn.textContent = isTopDown ? '🧭 Isometric' : '⬆ Top Down';
-            cameraTopdownBtn.title = isTopDown
-                ? 'Return to the locked isometric board view'
-                : 'Switch to a flat top-down board view with GO in the top-right corner';
+            cameraTopdownBtn.textContent = '⬆ Top Down';
         }
         if (cameraResetBtn) {
-            cameraResetBtn.classList.toggle('active', isIsometric && !isThirdPerson && !isTopDown);
-            cameraResetBtn.title = isTopDown || isThirdPerson
-                ? 'Return to the canonical isometric framing'
-                : 'Recenter the isometric framing and reset zoom';
+            cameraResetBtn.title = 'Recenter the isometric framing and reset zoom';
+        }
+        if (!isTopDown) {
+            setTopDownViewOptionsOpen(false);
         }
         syncBoardTextProfile();
         syncTopDownHudLayout();
@@ -289,7 +414,7 @@
             if (!GameTokens.getToken(player.id)) {
                 GameTokens.createToken(player, scene);
             }
-            GameTokens.syncToken(player);
+            GameTokens.syncToken(player, player.id === state.currentPlayerId);
             GameTokens.setTokenPosition(player.id, player.position);
         });
 
@@ -304,15 +429,28 @@
             const owner = prop.owner
                 ? state.players.find(player => player.id === prop.owner)
                 : null;
-            GameBoard.updateTileOwner(prop.index, owner?.color || null, prop);
-
-            if (prop.isMortgaged) {
-                GameBoard.setMortgaged(prop.index, true);
-            }
+            // #6: Only show owner color if the owner is still active (not bankrupt)
+            const ownerColor = (owner && owner.isActive) ? owner.color : null;
+            const displayRent = getTileDisplayRent(prop, state.properties);
+            GameBoard.updateTileOwner(prop.index, ownerColor, {
+                ...prop,
+                displayRent: displayRent.amount,
+                displayRentLabel: displayRent.label
+            });
+            GameBoard.setMortgaged(prop.index, Boolean(prop.isMortgaged));
 
             if (prop.houses > 0) {
                 GameBoard.addHouse(prop.index, prop.houses, scene);
             }
+        });
+
+        // #17: Update building transparency based on player positions
+        const playerPositions = new Set();
+        state.players.forEach(player => {
+            if (player.isActive) playerPositions.add(player.position);
+        });
+        state.properties.forEach(prop => {
+            GameBoard.setTileOccupied(prop.index, prop.houses > 0 && playerPositions.has(prop.index));
         });
 
         syncCameraViewState();
@@ -366,22 +504,25 @@
 
     function applyState(state, { syncWorld = true, syncHistory = true, syncTrades = true, syncAuction = true, syncBuyPrompt = true } = {}) {
         if (!state) return;
-        setCurrentGameState(state);
-        if (syncWorld) syncWorldFromState(state);
+        // Ignore any snapshot that finished animating after a newer authoritative state already arrived.
+        if (!setCurrentGameState(state)) return;
+
+        const appliedState = currentGameState;
+        if (syncWorld) syncWorldFromState(appliedState);
         else {
-            GameTokens.layoutTokens(state.players || []);
+            GameTokens.layoutTokens(appliedState.players || []);
             syncCameraViewState();
         }
-        if (syncHistory) syncHistoryFromState(state);
-        if (syncTrades) syncPendingTrades(state);
-        if (syncAuction) syncAuctionFromState(state);
-        if (state.isGameStarted) {
+        if (syncHistory) syncHistoryFromState(appliedState);
+        if (syncTrades) syncPendingTrades(appliedState);
+        if (syncAuction) syncAuctionFromState(appliedState);
+        if (appliedState.isGameStarted) {
             Lobby.hideLobby();
             GameUI.showGameUI();
-            GameUI.updateLeaderboard(state.players, state.properties);
-            const currentPlayer = state.players[state.currentPlayerIndex];
+            GameUI.updateLeaderboard(appliedState.players, appliedState.properties);
+            const currentPlayer = appliedState.players[appliedState.currentPlayerIndex];
             if (currentPlayer) {
-                GameUI.updateTurnIndicator(currentPlayer.id, currentPlayer.character, state.players, state);
+                GameUI.updateTurnIndicator(currentPlayer.id, currentPlayer.character, appliedState.players, appliedState);
             }
         } else {
             Lobby.showLobby();
@@ -390,8 +531,8 @@
             GameUI.updateTurnTimer(null);
             hideSummaryModal();
         }
-        if (syncBuyPrompt) maybeRestoreBuyPrompt(state);
-        syncTurnTimerUI(state);
+        if (syncBuyPrompt) maybeRestoreBuyPrompt(appliedState);
+        syncTurnTimerUI(appliedState);
     }
 
     function ownsFullColorGroup(playerId, tile) {
@@ -496,14 +637,18 @@
 
     socket.on('player-session', (data) => {
         if (data.sessionToken) {
-            sessionStorage.setItem(SESSION_TOKEN_KEY, data.sessionToken);
+            persistValue(SESSION_TOKEN_KEY, data.sessionToken);
         }
         myPlayerId = data.playerId || null;
         GameUI.updateMyPlayerId(myPlayerId);
         TradeSystem.updatePlayerId(myPlayerId);
         AuctionSystem.updatePlayerId(myPlayerId);
-        syncRoomChrome();
-        syncCameraViewState();
+        if (currentGameState) {
+            applyState(currentGameState, { syncWorld: false, syncHistory: false });
+        } else {
+            syncRoomChrome();
+            syncCameraViewState();
+        }
     });
 
     socket.on('lobby-update', (state) => {
@@ -532,6 +677,16 @@
     socket.on('game-ended-by-host', (data) => {
         Notifications.show(data?.message || 'The host ended the current match.', 'info', 5000);
         hideSummaryModal();
+        hideEndStatsScreen();
+    });
+
+    socket.on('game-saved', (data) => {
+        downloadSaveState(data.saveState);
+        Notifications.show('Save file downloaded.', 'success', 2500);
+    });
+
+    socket.on('game-loaded', () => {
+        Notifications.show('Saved game loaded for the room.', 'success', 2500);
     });
 
     // ── Init all systems ──────────────────────────────────
@@ -547,16 +702,50 @@
         syncCameraViewState();
     });
 
-    if (topBar) {
+    if (topBar || viewDockToggle || viewDock) {
         syncTopDownHudLayout();
         if (typeof ResizeObserver !== 'undefined') {
             topBarResizeObserver = new ResizeObserver(() => {
                 syncTopDownHudLayout();
             });
-            topBarResizeObserver.observe(topBar);
+            [topBar, viewDockToggle, viewDock].filter(Boolean).forEach(element => {
+                topBarResizeObserver.observe(element);
+            });
         }
         window.addEventListener('resize', syncTopDownHudLayout);
     }
+
+    saveGameBtn?.addEventListener('click', () => {
+        if (saveGameBtn.disabled) return;
+        socket.emit('save-game');
+    });
+
+    loadGameBtn?.addEventListener('click', () => {
+        if (loadGameBtn.disabled) return;
+        if (!window.confirm('Loading a saved game will replace the current match state for everyone in the room. Continue?')) return;
+        loadGameInput?.click();
+    });
+
+    loadGameInput?.addEventListener('change', (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (loadEvent) => {
+            try {
+                const saveState = JSON.parse(loadEvent.target?.result);
+                socket.emit('load-game', { saveState });
+            } catch (error) {
+                Notifications.notifyError('Invalid save file format.');
+            }
+        };
+        reader.readAsText(file);
+        event.target.value = '';
+    });
+
+    viewDockToggle?.addEventListener('click', () => {
+        setTopDownViewOptionsOpen(!document.body.classList.contains('top-down-view-options-open'));
+    });
 
     document.getElementById('create-room-btn')?.addEventListener('click', () => {
         connectToRoom(generateRoomCode());
@@ -599,8 +788,20 @@
         showRoomGate();
     }
 
+    // #13: Isometric button — always switches to isometric
+    cameraIsoBtn?.addEventListener('click', () => {
+        if (GameScene.getViewMode() !== 'isometric') {
+            GameScene.setViewMode('isometric');
+            syncCameraViewState();
+        } else {
+            GameScene.resetBoardView();
+            syncCameraViewState();
+        }
+    });
+
     if (cameraViewBtn) {
         cameraViewBtn.addEventListener('click', () => {
+            // Toggle third person: if already in it, switch to isometric
             const nextMode = GameScene.getViewMode() === 'third-person' ? DEFAULT_VIEW_MODE : 'third-person';
             if (GameScene.setViewMode(nextMode)) {
                 syncCameraViewState();
@@ -610,6 +811,7 @@
     }
 
     cameraTopdownBtn?.addEventListener('click', () => {
+        // Toggle top-down: if already in it, switch to isometric
         const nextMode = GameScene.getViewMode() === 'top-down' ? DEFAULT_VIEW_MODE : 'top-down';
         if (GameScene.setViewMode(nextMode)) {
             syncCameraViewState();
@@ -622,11 +824,15 @@
     });
 
     document.addEventListener('keydown', (event) => {
-        const activeTag = document.activeElement?.tagName;
-        const typing = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || document.activeElement?.isContentEditable;
-        if (typing) return;
+        if (isTypingTarget()) return;
 
         const key = event.key.toLowerCase();
+        if (key === 'escape') {
+            if (document.body.classList.contains('top-down-view-options-open')) {
+                setTopDownViewOptionsOpen(false);
+                return;
+            }
+        }
         if (key === 'r') {
             event.preventDefault();
             GameScene.resetBoardView();
@@ -656,9 +862,12 @@
     });
 
     socket.on('dice-rolled', (data) => {
-        setCurrentGameState(data.gameState);
+        if (!setCurrentGameState(data.gameState)) return;
         GameUI.showDiceResult(data.die1, data.die2, data.character, data.isDoubles);
         if (data.isDoubles) Notifications.notifyDoubles();
+        if (typeof GameAudio !== 'undefined' && typeof GameAudio.playDiceRoll === 'function') {
+            GameAudio.playDiceRoll({ isDoubles: data.isDoubles });
+        }
 
         GameDice.roll(data.die1, data.die2, () => {
             GameTokens.animateMove(
@@ -680,9 +889,9 @@
     });
 
     socket.on('buy-prompt', (data) => {
-        setCurrentGameState(data.gameState);
+        if (!setCurrentGameState(data.gameState)) return;
         GameModals.showBuyModal(data);
-        syncTurnTimerUI(data.gameState);
+        syncTurnTimerUI(currentGameState);
     });
 
     socket.on('player-deciding', () => { });
@@ -705,7 +914,7 @@
     });
 
     socket.on('card-drawn', (data) => {
-        setCurrentGameState(data.gameState);
+        if (!setCurrentGameState(data.gameState)) return;
         const onAfterCard = () => {
             if (data.result?.moveResult) {
                 GameTokens.animateMove(
@@ -733,19 +942,42 @@
         GameModals.showBankruptcy(data, data.playerId === myPlayerId);
     });
 
+    socket.on('bankruptcy-warning', (data) => {
+        applyState(data.gameState, { syncHistory: false, syncTrades: true, syncAuction: true, syncBuyPrompt: false });
+        const isMe = data.playerId === myPlayerId;
+        Notifications.show(
+            isMe
+                ? `You are at $${data.money}. Recover before ending your turn, or use Declare Bankruptcy.`
+                : `${data.character} is in debt and must recover before ending the turn.`,
+            isMe ? 'error' : 'info',
+            5000
+        );
+    });
+
+    socket.on('bankruptcy-resolved', (data) => {
+        applyState(data.gameState, { syncHistory: false, syncTrades: true, syncAuction: true, syncBuyPrompt: false });
+        if (data.survived) {
+            Notifications.show(
+                data.playerId === myPlayerId
+                    ? 'You recovered from debt.'
+                    : `${data.character} recovered from debt.`,
+                'success',
+                3000
+            );
+        }
+    });
+
     socket.on('game-over', (data) => {
         if (data.gameState) {
             applyState(data.gameState, { syncTrades: true, syncAuction: true, syncBuyPrompt: false });
         }
         GameUI.updateTurnTimer(null);
-        const isMe = data.winner.id === myPlayerId;
-        Notifications.show(
-            isMe ? '🏆 You WIN! Congratulations!' : `🏆 ${data.winner.character} wins!`,
-            isMe ? 'success' : 'hype', 10000
-        );
-        showSummaryModal(data.summary);
+        showEndStatsScreen(data.summary, data.winner);
     });
 
+    document.getElementById('es-return-btn')?.addEventListener('click', () => {
+        hideEndStatsScreen();
+    });
     socket.on('turn-changed', (data) => {
         applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false });
     });
@@ -890,6 +1122,12 @@
 
     socket.on('game-error', (data) => {
         Notifications.notifyError(data.message);
+        if (currentGameState?.players?.length) {
+            const currentPlayer = currentGameState.players[currentGameState.currentPlayerIndex];
+            if (currentPlayer) {
+                GameUI.updateTurnIndicator(currentPlayer.id, currentPlayer.character, currentGameState.players, currentGameState);
+            }
+        }
     });
 
     // ═══════════════════════════════════════════════════════
@@ -940,7 +1178,12 @@
         // Stats grid
         const upgradeCost = tile.price > 0 ? `$${Math.floor(tile.price * 0.5)}` : '—';
         const hotelCost = tile.price > 0 ? `$${Math.floor(tile.price * 2.5)}` : '—';
-        document.getElementById('pd-price').textContent = tile.price > 0 ? `$${tile.price}` : '—';
+        const currentCost = getTileDisplayRent(prop, currentGameState.properties);
+        const priceLabelEl = document.getElementById('pdm-price-label');
+        if (priceLabelEl) {
+            priceLabelEl.textContent = prop?.owner ? 'Rent' : 'Price';
+        }
+        document.getElementById('pd-price').textContent = prop?.owner ? currentCost.label : (tile.price > 0 ? `$${tile.price}` : '—');
         const hcEl = document.getElementById('pdm-house-cost');
         const htEl = document.getElementById('pdm-hotel-cost');
         if (hcEl) hcEl.textContent = tile.type === 'property' ? upgradeCost : '—';
