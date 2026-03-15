@@ -3080,6 +3080,15 @@ body[data-view-mode="top-down"] .history-log {
   font-weight: 800;
   color: var(--text-primary);
   line-height: 1.2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pdm-railroad-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
 }
 
 /* 3-col stats grid */

@@ -930,7 +930,12 @@
         }
 
         // Name
-        document.getElementById('pd-name').textContent = tile.name;
+        const nameEl = document.getElementById('pd-name');
+        if (tile.type === 'railroad') {
+            nameEl.innerHTML = `<img src="/images/metro-logo.png" class="pdm-railroad-icon"> ${tile.name}`;
+        } else {
+            nameEl.textContent = tile.name;
+        }
 
         // Stats grid
         const upgradeCost = tile.price > 0 ? `$${Math.floor(tile.price * 0.5)}` : '—';
@@ -1148,7 +1153,15 @@
             }
         } else {
             if (ownerEl) ownerEl.textContent = 'Unowned';
-            if (ownerAvatar) { ownerAvatar.textContent = '🏦'; ownerAvatar.style.borderColor = ''; }
+            if (ownerAvatar) {
+                if (tile.type === 'railroad') {
+                    ownerAvatar.innerHTML = `<img src="/images/metro-logo.png" style="width:70%; height:70%; object-fit:contain;">`;
+                    ownerAvatar.style.borderColor = 'rgba(108, 92, 231, 0.2)';
+                } else {
+                    ownerAvatar.textContent = '🏦';
+                    ownerAvatar.style.borderColor = '';
+                }
+            }
         }
 
         // Analytics

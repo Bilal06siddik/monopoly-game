@@ -28,6 +28,14 @@ const GameBoard = (() => {
     ];
     const upgradeModelCache = new Map();
     const upgradeModelPromises = new Map();
+    const metroLogoImg = new Image();
+    metroLogoImg.src = '/images/metro-logo.png';
+    metroLogoImg.onload = () => {
+        const rrIndices = [5, 15, 25, 35];
+        if (typeof GameBoard !== 'undefined' && rrIndices.every(idx => tileMeshes[idx])) {
+            rrIndices.forEach(idx => refreshTileTexture(idx));
+        }
+    };
     let gltfLoader = null;
     let boardGroup = null;
     let edgeLen;
@@ -376,23 +384,34 @@ const GameBoard = (() => {
 
             const iconText = getTileIconText(tile);
             if (iconText) {
-                ctx.fillStyle = 'rgba(179, 202, 255, 0.12)';
-                ctx.beginPath();
-                addRoundedRectPath(
-                    ctx,
-                    canvas.width * 0.18,
-                    canvas.height * 0.24,
-                    canvas.width * 0.64,
-                    canvas.height * 0.14,
-                    28
-                );
-                ctx.fill();
+                if (tile.type === 'railroad' && metroLogoImg.complete && metroLogoImg.naturalWidth > 0) {
+                    const logoSize = canvas.width * 0.36;
+                    ctx.drawImage(
+                        metroLogoImg,
+                        (canvas.width - logoSize) / 2,
+                        canvas.height * 0.12,
+                        logoSize,
+                        logoSize
+                    );
+                } else {
+                    ctx.fillStyle = 'rgba(179, 202, 255, 0.12)';
+                    ctx.beginPath();
+                    addRoundedRectPath(
+                        ctx,
+                        canvas.width * 0.18,
+                        canvas.height * 0.24,
+                        canvas.width * 0.64,
+                        canvas.height * 0.14,
+                        28
+                    );
+                    ctx.fill();
 
-                ctx.fillStyle = '#d9e6ff';
-                ctx.font = `700 ${Math.floor(canvas.width * 0.12 * textScale)}px 'Segoe UI', Arial, sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(iconText, canvas.width / 2, canvas.height * 0.31);
+                    ctx.fillStyle = '#d9e6ff';
+                    ctx.font = `700 ${Math.floor(canvas.width * 0.12 * textScale)}px 'Segoe UI', Arial, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(iconText, canvas.width / 2, canvas.height * 0.31);
+                }
             }
 
             ctx.fillStyle = '#f4f7ff';
@@ -407,7 +426,7 @@ const GameBoard = (() => {
 
             const nameLines = wrapText(ctx, tile.name.toUpperCase(), canvas.width * 0.84);
             const lineHeight = fontSize * 1.06;
-            const startY = iconText ? canvas.height * 0.45 : canvas.height * 0.39;
+            const startY = tile.type === 'railroad' ? canvas.height * 0.52 : (iconText ? canvas.height * 0.45 : canvas.height * 0.39);
             nameLines.slice(0, 3).forEach((line, lineIndex) => {
                 ctx.strokeText(line, canvas.width / 2, startY + (lineIndex * lineHeight));
                 ctx.fillText(line, canvas.width / 2, startY + (lineIndex * lineHeight));
