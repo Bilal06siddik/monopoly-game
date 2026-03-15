@@ -3066,11 +3066,12 @@ io.on('connection', socket => {
         .length;
       const color = getDefaultColorForLobbyEntry(p, customIndex);
       const player = gameState.addPlayer(p.playerId, p.character, color, p.sessionToken, {
+        isBot: Boolean(p.isBot),
         name: p.customName || p.character,
         customAvatarUrl: p.customAvatarUrl,
         customColor: p.customColor || null,
         tokenId: resolveLobbyToken(p.character, p.tokenId),
-        isConnected: true 
+        isConnected: Boolean(p.isBot || p.socketId)
       });
 
       if (p.socketId) {

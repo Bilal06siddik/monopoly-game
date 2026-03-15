@@ -9,6 +9,7 @@ const {
 const {
     randomRoomCode,
     waitForSocketEvent,
+    waitForSocketEventMatching,
     connectClient,
     selectCharacter,
     disconnectClients
@@ -63,6 +64,33 @@ test('host can start a match when two players are ready', async () => {
     assert.ok(hostPlayer, 'host character should exist in game state payload');
     assert.equal(hostPlayer.position, 0);
     assert.equal(hostPlayer.money, 1500);
+});
+
+test('bots stay flagged as bots after game start', async () => {
+    const roomCode = randomRoomCode('BOT');
+
+    const host = track(await connectClient({ port, roomCode }));
+    await selectCharacter(host.socket, 'bilo');
+
+    const lobbyUpdatePromise = waitForSocketEventMatching(
+        host.socket,
+        'lobby-update',
+        (payload) => Array.isArray(payload?.players) && payload.players.some((player) => player.isBot),
+        5000
+    );
+    host.socket.emit('add-random-bot');
+    const lobbyState = await lobbyUpdatePromise;
+
+    const lobbyBot = lobbyState.players.find((player) => player.isBot);
+    assert.ok(lobbyBot, 'bot should appear in lobby payload');
+
+    const startedPromise = waitForSocketEvent(host.socket, 'gameStarted');
+    host.socket.emit('requestStartGame');
+    const startedState = await startedPromise;
+
+    const startedBot = startedState.players.find((player) => player.id === lobbyBot.id);
+    assert.ok(startedBot, 'bot should be promoted into game-start payload');
+    assert.equal(startedBot.isBot, true, 'bot flag should remain true in live game state');
 });
 
 test('host cannot start a match with fewer than two players', async () => {
