@@ -57,6 +57,11 @@
     const saveGameBtn = document.getElementById('save-game-btn');
     const loadGameBtn = document.getElementById('load-game-btn');
     const loadGameInput = document.getElementById('load-game-input');
+    const hostControlsShell = document.getElementById('host-controls-shell');
+    const hostTurnTimerEnabledInput = document.getElementById('host-turn-timer-enabled');
+    const hostExtendTimer15Btn = document.getElementById('host-extend-timer-15-btn');
+    const hostExtendTimer30Btn = document.getElementById('host-extend-timer-30-btn');
+    const hostTurnTimerStatus = document.getElementById('host-turn-timer-status');
     let topBarResizeObserver = null;
 
     function getStoredValue(key) {
@@ -227,13 +232,13 @@
         if (!screen || !titleEl || !gridEl || !summary) return;
 
         const placements = Array.isArray(summary.placements) ? summary.placements : [];
-        const winnerName = winner?.character || placements.find(player => player.isWinner)?.character || 'Winner';
+        const winnerName = winner?.name || winner?.character || placements.find(player => player.isWinner)?.name || placements.find(player => player.isWinner)?.character || 'Winner';
         titleEl.textContent = winner?.id === myPlayerId ? 'You Win!' : `${winnerName} Wins!`;
 
         gridEl.innerHTML = placements.map(player => `
             <div class="end-stats-card${player.isWinner ? ' winner' : ''}">
                 <div class="esc-avatar">${player.isWinner ? '👑' : player.isActive ? '👤' : '💀'}</div>
-                <div class="esc-name" style="color:${player.color}">${player.character}</div>
+                <div class="esc-name" style="color:${player.color}">${player.name || player.character}</div>
                 <div class="esc-stat"><span class="esc-stat-label">Placement</span><span class="esc-stat-value">#${player.placement}</span></div>
                 <div class="esc-stat"><span class="esc-stat-label">Net Worth</span><span class="esc-stat-value money">$${player.netWorth}</span></div>
                 <div class="esc-stat"><span class="esc-stat-label">Properties</span><span class="esc-stat-value">${player.propertiesOwned}</span></div>
@@ -246,10 +251,73 @@
         screen.classList.add('visible');
     }
 
+    function getTurnTimerPhaseLabel(phase) {
+        return phase === 'waiting'
+            ? 'Roll Timer'
+            : phase === 'buying'
+                ? 'Buy Window'
+                : phase === 'done'
+                    ? 'End Turn Timer'
+                    : 'Turn Timer';
+    }
+
+    function syncHostTimerControls(state = currentGameState) {
+        const hostPlayerId = state?.hostPlayerId || currentGameState?.hostPlayerId || null;
+        const isHost = Boolean(hostPlayerId && myPlayerId && hostPlayerId === myPlayerId);
+        const turnTimerEnabled = (state?.turnTimerEnabled ?? currentGameState?.turnTimerEnabled) !== false;
+        const isGameStarted = typeof state?.isGameStarted === 'boolean'
+            ? state.isGameStarted
+            : Boolean(currentGameState?.isGameStarted);
+        const pauseState = state?.pauseState || currentGameState?.pauseState || null;
+        const timerState = pauseState
+            ? null
+            : (state?.turnTimer || currentGameState?.turnTimer || null);
+        const canExtend = isHost && turnTimerEnabled && isGameStarted && Boolean(timerState) && !pauseState;
+
+        if (hostTurnTimerEnabledInput) {
+            hostTurnTimerEnabledInput.checked = turnTimerEnabled;
+            hostTurnTimerEnabledInput.disabled = !isHost;
+        }
+        if (hostExtendTimer15Btn) {
+            hostExtendTimer15Btn.disabled = !canExtend;
+            hostExtendTimer15Btn.classList.toggle('disabled', !canExtend);
+        }
+        if (hostExtendTimer30Btn) {
+            hostExtendTimer30Btn.disabled = !canExtend;
+            hostExtendTimer30Btn.classList.toggle('disabled', !canExtend);
+        }
+        if (!hostTurnTimerStatus) return;
+
+        if (!isHost) {
+            hostTurnTimerStatus.textContent = 'Host-only timer controls are hidden for other players.';
+            return;
+        }
+        if (!turnTimerEnabled) {
+            hostTurnTimerStatus.textContent = 'Turn timer is disabled. Turns will not auto-timeout.';
+            return;
+        }
+        if (!isGameStarted) {
+            hostTurnTimerStatus.textContent = 'Turn timer is enabled and will apply after the match starts.';
+            return;
+        }
+        if (pauseState) {
+            hostTurnTimerStatus.textContent = 'Game is paused. Timer will resume when play resumes.';
+            return;
+        }
+        if (!timerState) {
+            hostTurnTimerStatus.textContent = 'No active turn timer right now (move/auction or non-timed phase).';
+            return;
+        }
+
+        hostTurnTimerStatus.textContent = `${getTurnTimerPhaseLabel(timerState.phase)}: ${timerState.remainingSeconds}s remaining.`;
+    }
+
     function syncRoomChrome(state = currentGameState) {
         const roomCode = normalizeRoomCode(state?.roomCode || activeRoomCode);
         const isHost = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
-        const isGameStarted = Boolean(state?.isGameStarted);
+        const isGameStarted = typeof state?.isGameStarted === 'boolean'
+            ? state.isGameStarted
+            : Boolean(currentGameState?.isGameStarted);
         const roomBanner = document.getElementById('room-banner');
         const roomCodeDisplay = document.getElementById('room-code-display');
         const lobbyEndBtn = document.getElementById('end-room-btn');
@@ -262,11 +330,13 @@
         if (roomCodeDisplay) roomCodeDisplay.textContent = roomCode || '------';
         if (hudRoomCode) hudRoomCode.textContent = roomCode ? `Room ${roomCode}` : 'Room';
         hudRoomChip?.classList.toggle('hidden', !roomCode);
+        hostControlsShell?.classList.toggle('hidden', !isHost);
         lobbyEndBtn?.classList.toggle('hidden', !isHost);
         hudEndGameBtn?.classList.toggle('hidden', !isHost || !isGameStarted);
         hudEndBtn?.classList.toggle('hidden', !isHost);
         if (saveGameBtn) saveGameBtn.disabled = !isHost || !isGameStarted;
         if (loadGameBtn) loadGameBtn.disabled = !isHost || isGameStarted;
+        syncHostTimerControls(state);
     }
 
     function setFocusedTile(tileIndex) {
@@ -569,7 +639,7 @@
 
         const winner = summary.placements.find(player => player.isWinner);
         document.getElementById('summary-winner').textContent = winner
-            ? `${winner.character} wins the match`
+            ? `${winner.name || winner.character} wins the match`
             : 'Match complete';
 
         const minutes = Math.floor((summary.durationMs || 0) / 60000);
@@ -579,7 +649,7 @@
         document.getElementById('summary-placements').innerHTML = summary.placements.map(player => `
             <div class="summary-placement${player.playerId === myPlayerId ? ' is-me' : ''}">
                 <div>
-                    <strong>#${player.placement} ${player.character}</strong>
+                    <strong>#${player.placement} ${player.name || player.character}</strong>
                     <div>Cash: $${player.money} • Net worth: $${player.netWorth}</div>
                 </div>
                 <div class="summary-stats-inline">
@@ -741,6 +811,22 @@
         };
         reader.readAsText(file);
         event.target.value = '';
+    });
+
+    hostTurnTimerEnabledInput?.addEventListener('change', () => {
+        socket.emit('host-set-turn-timer-enabled', {
+            enabled: Boolean(hostTurnTimerEnabledInput.checked)
+        });
+    });
+
+    hostExtendTimer15Btn?.addEventListener('click', () => {
+        if (hostExtendTimer15Btn.disabled) return;
+        socket.emit('host-extend-turn-timer', { seconds: 15 });
+    });
+
+    hostExtendTimer30Btn?.addEventListener('click', () => {
+        if (hostExtendTimer30Btn.disabled) return;
+        socket.emit('host-extend-turn-timer', { seconds: 30 });
     });
 
     viewDockToggle?.addEventListener('click', () => {
@@ -1091,23 +1177,27 @@
         if (!currentGameState) currentGameState = { turnTimer: data };
         else currentGameState.turnTimer = data;
         GameUI.updateTurnTimer(data);
+        syncHostTimerControls(currentGameState);
     });
 
     socket.on('turn-timer-tick', (data) => {
         if (!currentGameState) currentGameState = { turnTimer: data };
         else currentGameState.turnTimer = data;
         GameUI.updateTurnTimer(data);
+        syncHostTimerControls(currentGameState);
     });
 
     socket.on('turn-timer-stop', () => {
         if (currentGameState) currentGameState.turnTimer = null;
         GameUI.updateTurnTimer(null);
+        syncHostTimerControls(currentGameState);
     });
 
     socket.on('game-paused', (data) => {
         if (!currentGameState) return;
         currentGameState.pauseState = data.pauseState;
         GameUI.updateTurnIndicator(currentGameState.currentPlayerId, null, currentGameState.players, currentGameState);
+        syncHostTimerControls(currentGameState);
         Notifications.show(`⏸ Game paused while waiting for ${data.pauseState.character} to reconnect.`, 'info', 4000);
     });
 

@@ -53,10 +53,10 @@
             return { ok: false, code: 'empty-trade', message: 'Add cash or property before sending a trade.' };
         }
 
-        if (from.money < offerCash) {
+        if (offerCash > 0 && from.money < offerCash) {
             return { ok: false, code: 'insufficient-offer-cash', message: 'You do not have enough cash for that offer.' };
         }
-        if (to.money < requestCash) {
+        if (requestCash > 0 && to.money < requestCash) {
             return { ok: false, code: 'insufficient-request-cash', message: `${to.character} no longer has enough cash for that request.` };
         }
 

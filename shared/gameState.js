@@ -26,6 +26,7 @@ class Player {
         this.tokenId = options.tokenId || 'pawn';
         this.sessionToken = sessionToken;
         this.customAvatarUrl = options.customAvatarUrl || null;
+        this.customColor = options.customColor || null;
         this.socketId = null;
         this.position = 0;        // tile index 0-39
         this.money = 1500;
@@ -49,6 +50,7 @@ class Player {
             name: this.name,
             color: this.color,
             tokenId: this.tokenId,
+            customColor: this.customColor,
             position: this.position,
             money: this.money,
             properties: [...this.properties],

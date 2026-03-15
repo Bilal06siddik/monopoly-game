@@ -687,23 +687,27 @@ const GameBoard = (() => {
         return null;
     }
 
-    function rememberTileRenderState(tileIndex, ownerColor = null, propertyState = null) {
+    function rememberTileRenderState(tileIndex, ownerColor = undefined, propertyState = undefined) {
         const previousState = tileRenderState[tileIndex] || {
             ownerColor: null,
             propertyState: null,
             isMortgaged: false
         };
 
-        const nextPropertyState = propertyState
-            ? { ...propertyState }
-            : previousState.propertyState
+        const nextPropertyState = propertyState === undefined
+            ? previousState.propertyState
                 ? { ...previousState.propertyState }
+                : null
+            : propertyState
+                ? { ...propertyState }
                 : null;
 
         tileRenderState[tileIndex] = {
-            ownerColor: ownerColor ?? previousState.ownerColor ?? null,
+            ownerColor: ownerColor === undefined ? (previousState.ownerColor ?? null) : ownerColor,
             propertyState: nextPropertyState,
-            isMortgaged: Boolean(nextPropertyState?.isMortgaged ?? previousState.isMortgaged)
+            isMortgaged: propertyState === undefined
+                ? Boolean(nextPropertyState?.isMortgaged ?? previousState.isMortgaged)
+                : Boolean(nextPropertyState?.isMortgaged)
         };
     }
 
@@ -1046,6 +1050,7 @@ const GameBoard = (() => {
         const parent = boardGroup || scene;
         parent.add(cluster);
         houseMeshes[tileIndex] = [cluster];
+        updateBuildingTransparency(tileIndex);
     }
 
     function removeHouses(tileIndex, scene) {

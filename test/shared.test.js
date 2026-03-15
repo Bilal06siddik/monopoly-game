@@ -139,6 +139,27 @@ test('trade validation enforces cash availability', () => {
     assert.equal(validation.code, 'insufficient-offer-cash');
 });
 
+test('trade validation allows zero-cash trades while a participant is in debt', () => {
+    const { game, p1, p2 } = createGame();
+    p1.money = -25;
+    p2.money = -10;
+    game.properties[5].owner = p1.id;
+
+    const validation = TradeUtils.validateTradeOffer(game, {
+        fromId: p1.id,
+        toId: p2.id,
+        offerProperties: [5],
+        offerCash: 0,
+        requestProperties: [],
+        requestCash: 0
+    });
+
+    assert.equal(validation.ok, true);
+    assert.deepEqual(validation.value.offerProperties, [5]);
+    assert.equal(validation.value.offerCash, 0);
+    assert.equal(validation.value.requestCash, 0);
+});
+
 test('trade validation allows bot participants when the offer is otherwise valid', () => {
     const { game, p1, p2 } = createGame();
     p2.isBot = true;
@@ -211,6 +232,7 @@ test('collect-from-each-player cards transfer money from every active player', (
 
 test('summary generation ranks the winner first and exposes top properties', () => {
     const { game, p1, p2 } = createGame();
+    p1.name = 'Custom Hero';
     game.eliminationOrder = [p2.id];
     game.properties[1].owner = p1.id;
     game.properties[1].landedCount = 6;
@@ -221,6 +243,7 @@ test('summary generation ranks the winner first and exposes top properties', () 
 
     assert.equal(summary.placements[0].playerId, p1.id);
     assert.equal(summary.placements[0].isWinner, true);
+    assert.equal(summary.placements[0].name, 'Custom Hero');
     assert.equal(summary.turnCount, 14);
     assert.equal(summary.durationMs, 60_000);
     assert.equal(summary.topVisitedProperties[0].name, game.properties[1].name);
@@ -234,6 +257,22 @@ test('players expose their selected token in serialized state', () => {
     const payload = player.toJSON();
     assert.equal(payload.tokenId, 'top-hat');
     assert.equal(game.getState().players[0].tokenId, 'top-hat');
+});
+
+test('players serialize custom display metadata', () => {
+    const game = new GameState(BOARD_DATA);
+    const player = game.addPlayer('p1', 'custom', '#00bcd4', 'session-1', {
+        name: 'Ahmed',
+        tokenId: 'sports-car',
+        customColor: '#00bcd4',
+        customAvatarUrl: 'data:image/png;base64,abc'
+    });
+
+    const payload = player.toJSON();
+    assert.equal(payload.name, 'Ahmed');
+    assert.equal(payload.customColor, '#00bcd4');
+    assert.equal(payload.customAvatarUrl, 'data:image/png;base64,abc');
+    assert.equal(game.getState().players[0].name, 'Ahmed');
 });
 
 

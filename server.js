@@ -20,8 +20,14 @@ const {
 
 const app = express();
 const server = http.createServer(app);
+// Keep this above the base64-expanded transport size so the server can reply with
+// a validation error instead of dropping the socket before the event handler runs.
+const SOCKET_MAX_HTTP_BUFFER_SIZE = 8 * 1024 * 1024;
+const MAX_CUSTOM_AVATAR_BYTES = 2 * 1024 * 1024;
+
 const io = new Server(server, {
   cors: { origin: '*' },
+  maxHttpBufferSize: SOCKET_MAX_HTTP_BUFFER_SIZE,
   perMessageDeflate: {
     threshold: 1024
   },
@@ -39,6 +45,8 @@ const UPGRADE_MODEL_FILES = new Set([
 
 function setStaticCacheHeaders(res, filePath) {
   const ext = path.extname(filePath).toLowerCase();
+  const isProduction = process.env.NODE_ENV === 'production';
+  const hasContentHash = /\.[a-f0-9]{8,}\./i.test(path.basename(filePath));
   const immutableAssetExtensions = new Set([
     '.js', '.css', '.png', '.jpg', '.jpeg', '.svg', '.webp', '.gif', '.glb', '.ico'
   ]);
@@ -48,8 +56,18 @@ function setStaticCacheHeaders(res, filePath) {
     return;
   }
 
+  // In local development we want refreshes to pick up JS/CSS edits immediately.
+  if (!isProduction && (ext === '.js' || ext === '.css')) {
+    res.setHeader('Cache-Control', 'no-cache');
+    return;
+  }
+
   if (immutableAssetExtensions.has(ext)) {
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    if (hasContentHash) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+    }
     return;
   }
 
@@ -74,6 +92,7 @@ app.get('/models/:file', (req, res) => {
 });
 
 const CHARACTERS = ['bilo', 'osss', 'bdlbaky', 'fawzy', 'hamza', 'missiry', 'custom'];
+const EXCLUSIVE_CHARACTERS = CHARACTERS.filter(character => character !== 'custom');
 const CHARACTER_COLORS = {
   bilo:     '#8e44ad', // Deep Purple
   osss:     '#f1c40f', // Gold
@@ -83,8 +102,36 @@ const CHARACTER_COLORS = {
   missiry:  '#e61a8d', // Hot Pink
   custom:   '#95a5a6'  // Slate Grey
 };
+const CUSTOM_PLAYER_COLORS = [
+  '#00bcd4',
+  '#ff6b6b',
+  '#ffd166',
+  '#06d6a0',
+  '#4d96ff',
+  '#f72585',
+  '#f4a261',
+  '#90be6d'
+];
+const ALLOWED_CUSTOM_AVATAR_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif'
+]);
 
-const TURN_TIMER_SECONDS = 60;
+const TURN_TIMER_IDLE_SECONDS = Object.freeze({
+  waiting: 30,
+  buying: 25,
+  done: 25
+});
+const TURN_TIMER_ACTIVE_SECONDS = Object.freeze({
+  waiting: 60,
+  buying: 45,
+  done: 45
+});
+const TURN_TIMER_PHASES = new Set(['waiting', 'buying', 'done']);
+const HOST_TIMER_EXTENSION_DEFAULT_SECONDS = 15;
+const HOST_TIMER_EXTENSION_MAX_SECONDS = 180;
 const AUCTION_TIMER_SECONDS = 10;
 const AUCTION_BID_RESET_SECONDS = 5;
 const DICE_ANIMATION_MS = 1800;
@@ -114,6 +161,8 @@ let pausedTurnTimerState = null;
 let pendingMoveResolution = null;
 let lastDiceTotal = null;
 let stateSequence = 0;
+let activeListenPort = null;
+let serverStartPromise = null;
 
 function normalizeSessionToken(token) {
   const value = typeof token === 'string' ? token.trim() : '';
@@ -141,6 +190,7 @@ function createRoomState(roomCode, hostSessionToken) {
   return {
     code: roomCode,
     hostSessionToken,
+    turnTimerEnabled: true,
     createdAt: Date.now(),
     endedAt: null,
     kickedSessionTokens: new Set(),
@@ -252,6 +302,9 @@ function getOrCreateRoomState(roomCode, hostSessionToken = null) {
   if (!roomState.kickedSessionTokens) {
     roomState.kickedSessionTokens = new Set();
   }
+  if (typeof roomState.turnTimerEnabled !== 'boolean') {
+    roomState.turnTimerEnabled = true;
+  }
   return roomState;
 }
 
@@ -278,28 +331,14 @@ function formatCurrency(amount) {
   return `$${Math.abs(Math.round(amount || 0))}`;
 }
 
+function getPlayerLabel(player) {
+  return player?.name || player?.character || 'Player';
+}
+
 function logPlayerMoneyDelta(player, delta, reason, type = 'info') {
   if (!player || !delta) return;
   const direction = delta > 0 ? 'received' : 'paid';
-  logEvent(`💵 ${player.character} ${direction} ${formatCurrency(delta)} ${reason}`, type);
-}
-
-function snapshotPlayerMoney() {
-  if (!gameState) return new Map();
-  return new Map(gameState.players.map(player => [player.id, player.money]));
-}
-
-function logMoneyDeltasSince(snapshot, reasonByDelta, type = 'info') {
-  if (!gameState || !(snapshot instanceof Map)) return;
-
-  gameState.players.forEach(player => {
-    const before = snapshot.get(player.id);
-    if (typeof before !== 'number') return;
-    const delta = player.money - before;
-    if (!delta) return;
-    const reason = typeof reasonByDelta === 'function' ? reasonByDelta(player, delta) : reasonByDelta;
-    logPlayerMoneyDelta(player, delta, reason, type);
-  });
+  logEvent(`💵 ${getPlayerLabel(player)} ${direction} ${formatCurrency(delta)} ${reason}`, type);
 }
 
 function describeTradeCashForPlayer(player, trade, counterpart) {
@@ -309,13 +348,13 @@ function describeTradeCashForPlayer(player, trade, counterpart) {
     const gave = trade.offerCash;
     const received = trade.requestCash;
     if (gave > 0 && received > 0) {
-      return `in cash trade with ${counterpart.character} (gave $${gave}, received $${received})`;
+      return `in cash trade with ${getPlayerLabel(counterpart)} (gave $${gave}, received $${received})`;
     }
     if (gave > 0) {
-      return `to ${counterpart.character} in trade`;
+      return `to ${getPlayerLabel(counterpart)} in trade`;
     }
     if (received > 0) {
-      return `from ${counterpart.character} in trade`;
+      return `from ${getPlayerLabel(counterpart)} in trade`;
     }
     return '';
   }
@@ -323,13 +362,13 @@ function describeTradeCashForPlayer(player, trade, counterpart) {
   const gave = trade.requestCash;
   const received = trade.offerCash;
   if (gave > 0 && received > 0) {
-    return `in cash trade with ${counterpart.character} (gave $${gave}, received $${received})`;
+    return `in cash trade with ${getPlayerLabel(counterpart)} (gave $${gave}, received $${received})`;
   }
   if (gave > 0) {
-    return `to ${counterpart.character} in trade`;
+    return `to ${getPlayerLabel(counterpart)} in trade`;
   }
   if (received > 0) {
-    return `from ${counterpart.character} in trade`;
+    return `from ${getPlayerLabel(counterpart)} in trade`;
   }
   return '';
 }
@@ -348,6 +387,10 @@ function getLobbyEntryByCharacter(character) {
   return null;
 }
 
+function isCharacterExclusive(character) {
+  return character !== 'custom';
+}
+
 function getLobbyEntryByPlayerId(playerId) {
   for (const entry of lobbyPlayers.values()) {
     if (entry.playerId === playerId) return entry;
@@ -356,7 +399,7 @@ function getLobbyEntryByPlayerId(playerId) {
 }
 
 function getAvailableLobbyCharacters() {
-  return CHARACTERS.filter(character => !getLobbyEntryByCharacter(character));
+  return EXCLUSIVE_CHARACTERS.filter(character => !getLobbyEntryByCharacter(character));
 }
 
 function resolveLobbyToken(character, preferredTokenId = null) {
@@ -366,6 +409,75 @@ function resolveLobbyToken(character, preferredTokenId = null) {
 function normalizeCustomColor(value) {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized.toLowerCase() : null;
+}
+
+function normalizeCustomName(value) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized.slice(0, 15);
+}
+
+function normalizeCustomAvatarUrl(value) {
+  if (typeof value !== 'string') {
+    return { avatarUrl: null, error: null };
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return { avatarUrl: null, error: null };
+  }
+
+  const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)$/i.exec(normalized);
+  if (!match) {
+    return {
+      avatarUrl: null,
+      error: 'Custom avatar must be a base64 PNG, JPG, WEBP, or GIF image.'
+    };
+  }
+
+  const mimeType = match[1].toLowerCase();
+  if (!ALLOWED_CUSTOM_AVATAR_MIME_TYPES.has(mimeType)) {
+    return {
+      avatarUrl: null,
+      error: 'Custom avatar format is not supported. Use PNG, JPG, WEBP, or GIF.'
+    };
+  }
+
+  const base64Payload = match[2].replace(/\s+/g, '');
+  if (!base64Payload || !/^[a-z0-9+/]+={0,2}$/i.test(base64Payload) || base64Payload.length % 4 !== 0) {
+    return {
+      avatarUrl: null,
+      error: 'Custom avatar data is invalid. Please upload the image again.'
+    };
+  }
+
+  const binarySize = Buffer.byteLength(base64Payload, 'base64');
+  if (!Number.isFinite(binarySize) || binarySize <= 0) {
+    return {
+      avatarUrl: null,
+      error: 'Custom avatar data is invalid. Please upload the image again.'
+    };
+  }
+
+  if (binarySize > MAX_CUSTOM_AVATAR_BYTES) {
+    return {
+      avatarUrl: null,
+      error: 'Custom avatar image must be 2MB or smaller.'
+    };
+  }
+
+  return {
+    avatarUrl: `data:${mimeType};base64,${base64Payload}`,
+    error: null
+  };
+}
+
+function getDefaultColorForLobbyEntry(entry, customIndex = 0) {
+  if (!entry?.character) return '#9aa4b2';
+  if (entry.customColor) return entry.customColor;
+  if (entry.character === 'custom') {
+    return CUSTOM_PLAYER_COLORS[customIndex % CUSTOM_PLAYER_COLORS.length];
+  }
+  return CHARACTER_COLORS[entry.character] || '#9aa4b2';
 }
 
 function getLobbyState() {
@@ -384,6 +496,7 @@ function getLobbyState() {
   return {
     roomCode: currentRoomCode,
     joinUrl: currentRoomCode ? `/?room=${currentRoomCode}` : null,
+    turnTimerEnabled: isTurnTimerEnabled(roomState),
     hostPlayerId: roomState?.hostSessionToken
       ? (gameState?.getPlayerBySessionToken(roomState.hostSessionToken)?.id
         || lobbyPlayers.get(roomState.hostSessionToken)?.playerId
@@ -401,7 +514,9 @@ function getLobbyState() {
       isHost: Boolean(roomState?.hostSessionToken && entry.sessionToken === roomState.hostSessionToken)
     })),
     characters: CHARACTERS.map(character => {
-      const holder = getLobbyEntryByCharacter(character);
+      const holder = isCharacterExclusive(character)
+        ? getLobbyEntryByCharacter(character)
+        : null;
       return {
         name: character,
         taken: Boolean(holder),
@@ -557,6 +672,8 @@ function emitPlayerSession(socket, player) {
     sessionToken: socket.data.sessionToken,
     playerId: player?.id || null,
     character: player?.character || null,
+    name: player?.name || null,
+    customName: player?.customName || null,
     tokenId: player?.tokenId || null,
     customColor: player?.customColor || null,
     customAvatarUrl: player?.customAvatarUrl || null
@@ -610,6 +727,7 @@ function buildGameStatePayload(viewerPlayerId = null) {
   payload.historyEvents = [...eventHistory];
   payload.roomCode = currentRoomCode;
   payload.joinUrl = currentRoomCode ? `/?room=${currentRoomCode}` : null;
+  payload.turnTimerEnabled = isTurnTimerEnabled(roomState);
   payload.hostPlayerId = roomState?.hostSessionToken
     ? (gameState?.getPlayerBySessionToken(roomState.hostSessionToken)?.id
       || lobbyPlayers.get(roomState.hostSessionToken)?.playerId
@@ -625,6 +743,7 @@ function buildSavePayload() {
     version: SAVE_FILE_VERSION,
     savedAt: Date.now(),
     roomCode: currentRoomCode,
+    turnTimerEnabled: isTurnTimerEnabled(),
     actionDeck: Array.isArray(actionDeck) ? [...actionDeck] : [],
     eventHistory: Array.isArray(eventHistory) ? [...eventHistory] : [],
     lastDiceTotal: Number.isFinite(lastDiceTotal) ? lastDiceTotal : 0,
@@ -641,9 +760,14 @@ function buildSavePayload() {
       pauseState: gameState.pauseState,
       eliminationOrder: [...gameState.eliminationOrder],
       players: gameState.players.map(player => ({
+        id: player.id,
+        character: player.character,
+        name: player.name,
+        color: player.color,
         tokenId: player.tokenId,
         sessionToken: player.sessionToken,
         customAvatarUrl: player.customAvatarUrl,
+        customColor: player.customColor,
         position: player.position,
         money: player.money,
         properties: [...player.properties],
@@ -694,7 +818,9 @@ function restoreGameStateFromSave(saveState) {
         isBot: Boolean(playerData.isBot),
         isConnected: Boolean(playerData.isBot || lobbyEntry?.socketId),
         tokenId: resolveLobbyToken(playerData.character || lobbyEntry?.character, playerData.tokenId),
-        customAvatarUrl: playerData.customAvatarUrl || lobbyEntry?.customAvatarUrl || null
+        customAvatarUrl: playerData.customAvatarUrl || lobbyEntry?.customAvatarUrl || null,
+        customColor: playerData.customColor || lobbyEntry?.customColor || null,
+        name: playerData.name || lobbyEntry?.customName || lobbyEntry?.name || playerData.character || lobbyEntry?.character || `Player ${index + 1}`
       }
     );
 
@@ -727,7 +853,7 @@ function restoreGameStateFromSave(saveState) {
   restored.currentPlayerIndex = clampInt(payload.currentPlayerIndex, 0, Math.max(restored.players.length - 1, 0)) ?? 0;
   restored.isGameStarted = payload.isGameStarted !== false;
   restored.doublesCount = clampInt(payload.doublesCount, 0, 2) ?? 0;
-  restored.turnPhase = ['waiting', 'buying', 'done'].includes(payload.turnPhase)
+  restored.turnPhase = TURN_TIMER_PHASES.has(payload.turnPhase)
     ? payload.turnPhase
     : 'waiting';
   restored.taxPool = Math.max(0, Number.parseInt(payload.taxPool, 10) || 0);
@@ -747,7 +873,8 @@ function restoreGameStateFromSave(saveState) {
     restoredActionDeck: Array.isArray(saveState?.actionDeck) ? [...saveState.actionDeck] : [...ACTION_CARDS],
     restoredEventHistory: Array.isArray(saveState?.eventHistory) ? [...saveState.eventHistory] : [],
     restoredLastDiceTotal: Number.isFinite(saveState?.lastDiceTotal) ? saveState.lastDiceTotal : 0,
-    restoredTurnTimerState: saveState?.turnTimerState ? { ...saveState.turnTimerState } : null
+    restoredTurnTimerState: saveState?.turnTimerState ? { ...saveState.turnTimerState } : null,
+    restoredTurnTimerEnabled: saveState?.turnTimerEnabled !== false
   };
 }
 
@@ -800,6 +927,7 @@ function endGameForRoom(roomState, endedByCharacter = null) {
 function kickPlayerFromRoom(roomState, targetPlayerId, removedByCharacter = 'The host') {
   let result = { ok: false, message: 'Player not found.' };
   let targetSocket = null;
+  let shouldAnnounceResume = false;
 
   withRoomState(roomState, () => {
     const lobbyEntry = getLobbyEntryByPlayerId(targetPlayerId);
@@ -868,6 +996,7 @@ function kickPlayerFromRoom(roomState, targetPlayerId, removedByCharacter = 'The
       if (gameState.pauseState?.playerId === player.id) {
         gameState.pauseState = null;
         pausedTurnTimerState = null;
+        shouldAnnounceResume = true;
       }
 
       logEvent(`🚫 ${removedByCharacter} removed ${targetCharacter} from the match.`, 'system');
@@ -879,6 +1008,10 @@ function kickPlayerFromRoom(roomState, targetPlayerId, removedByCharacter = 'The
         advanceTurnGlobal();
       } else {
         emitGameStateSync();
+      }
+
+      if (shouldAnnounceResume && gameState?.isGameStarted && !gameState.pauseState) {
+        emitToRoom('game-resumed', { gameState: snapshotGameState() });
       }
     }
 
@@ -965,6 +1098,71 @@ function syncTurnTimerState(timerState) {
   }
 }
 
+function isTurnTimerEnabled(roomState = null) {
+  const resolvedRoomState = roomState || (currentRoomCode ? rooms.get(currentRoomCode) : null);
+  return resolvedRoomState?.turnTimerEnabled !== false;
+}
+
+function getTurnTimerIdleSeconds(phase) {
+  return TURN_TIMER_IDLE_SECONDS[phase] || TURN_TIMER_IDLE_SECONDS.waiting;
+}
+
+function getTurnTimerActiveSeconds(phase) {
+  return TURN_TIMER_ACTIVE_SECONDS[phase] || TURN_TIMER_ACTIVE_SECONDS.waiting;
+}
+
+function normalizeTurnTimerSeconds(value, fallbackSeconds) {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) return fallbackSeconds;
+  return Math.max(1, parsed);
+}
+
+function extendCurrentTurnTimer(secondsToAdd, phase = turnTimerState?.phase) {
+  if (!turnTimerState || !TURN_TIMER_PHASES.has(phase)) return null;
+
+  const parsedSeconds = Number.parseInt(secondsToAdd, 10);
+  const extensionSeconds = Number.isNaN(parsedSeconds)
+    ? HOST_TIMER_EXTENSION_DEFAULT_SECONDS
+    : Math.max(1, parsedSeconds);
+
+  const maxSeconds = Math.max(HOST_TIMER_EXTENSION_MAX_SECONDS, getTurnTimerActiveSeconds(phase));
+  const normalizedCurrentSeconds = normalizeTurnTimerSeconds(
+    turnTimerState.remainingSeconds,
+    getTurnTimerIdleSeconds(phase)
+  );
+  const nextSeconds = Math.min(maxSeconds, normalizedCurrentSeconds + extensionSeconds);
+  const addedSeconds = nextSeconds - normalizedCurrentSeconds;
+
+  turnTimerState.remainingSeconds = nextSeconds;
+  syncTurnTimerState(turnTimerState);
+  if (addedSeconds > 0) {
+    emitToRoom('turn-timer-tick', gameState?.turnTimer || turnTimerState);
+  }
+
+  return {
+    addedSeconds,
+    maxSeconds,
+    remainingSeconds: nextSeconds
+  };
+}
+
+function maybeExtendTurnTimerForActivity(playerId) {
+  if (!gameState || !turnTimerState || !playerId || gameState.pauseState || auctionState || !isTurnTimerEnabled()) return false;
+
+  const currentPlayer = gameState.getCurrentPlayer();
+  if (!currentPlayer || !currentPlayer.isActive || currentPlayer.id !== playerId) return false;
+  if (!TURN_TIMER_PHASES.has(gameState.turnPhase)) return false;
+  if (turnTimerState.currentPlayerId !== playerId || turnTimerState.phase !== gameState.turnPhase) return false;
+
+  const boostedSeconds = getTurnTimerActiveSeconds(gameState.turnPhase);
+  if (turnTimerState.remainingSeconds >= boostedSeconds) return false;
+
+  turnTimerState.remainingSeconds = boostedSeconds;
+  syncTurnTimerState(turnTimerState);
+  emitToRoom('turn-timer-tick', gameState.turnTimer);
+  return true;
+}
+
 function removePendingTrade(tradeId, invalidation = null) {
   const trade = pendingTrades.get(tradeId);
   if (!trade) return null;
@@ -1023,7 +1221,9 @@ function emitGameStateSync({ restartTurnTimer = false, targetSocket = null } = {
     if (gameState.pauseState) {
       stopTurnTimer(false);
     } else if (
-      ['waiting', 'buying', 'done'].includes(gameState.turnPhase)
+      isTurnTimerEnabled()
+      &&
+      TURN_TIMER_PHASES.has(gameState.turnPhase)
       && !gameState.getCurrentPlayer()?.bankruptcyDeadline
     ) {
       startTurnTimer(gameState.turnPhase);
@@ -1055,14 +1255,14 @@ function stopTurnTimer(emitEvent = true) {
   }
 }
 
-function startTurnTimer(phase, remainingSeconds = TURN_TIMER_SECONDS) {
-  if (!gameState || !gameState.isGameStarted || auctionState || gameState.pauseState) {
+function startTurnTimer(phase, remainingSeconds = null) {
+  if (!gameState || !gameState.isGameStarted || auctionState || gameState.pauseState || !isTurnTimerEnabled()) {
     stopTurnTimer(false);
     return;
   }
 
   const currentPlayer = gameState.getCurrentPlayer();
-  if (!currentPlayer || !currentPlayer.isActive || !['waiting', 'buying', 'done'].includes(phase)) {
+  if (!currentPlayer || !currentPlayer.isActive || !TURN_TIMER_PHASES.has(phase)) {
     stopTurnTimer(false);
     return;
   }
@@ -1071,12 +1271,15 @@ function startTurnTimer(phase, remainingSeconds = TURN_TIMER_SECONDS) {
     return;
   }
 
+  const idleSeconds = getTurnTimerIdleSeconds(phase);
+  const nextRemainingSeconds = normalizeTurnTimerSeconds(remainingSeconds, idleSeconds);
+
   if (turnTimerInterval) clearInterval(turnTimerInterval);
 
   turnTimerState = {
     currentPlayerId: currentPlayer.id,
     phase,
-    remainingSeconds
+    remainingSeconds: nextRemainingSeconds
   };
   syncTurnTimerState(turnTimerState);
   emitToRoom('turn-timer-start', gameState.turnTimer);
@@ -1118,7 +1321,7 @@ function pauseGameForDisconnect(player) {
   gameState.pauseState = {
     reason: 'player-disconnected',
     playerId: player.id,
-    character: player.character,
+    character: player.name || player.character,
     pausedAt: Date.now(),
     phase: gameState.turnPhase,
     remainingSeconds: pausedTurnTimerState?.remainingSeconds ?? null
@@ -1138,7 +1341,7 @@ function resumePausedGameIfPossible(player) {
   const timerToResume = pausedTurnTimerState;
   pausedTurnTimerState = null;
 
-  if (timerToResume && ['waiting', 'buying', 'done'].includes(gameState.turnPhase)) {
+  if (timerToResume && isTurnTimerEnabled() && TURN_TIMER_PHASES.has(gameState.turnPhase)) {
     startTurnTimer(gameState.turnPhase, timerToResume.remainingSeconds);
   } else {
     stopTurnTimer(false);
@@ -1160,7 +1363,7 @@ function setTurnPhase(phase, options = {}) {
     return;
   }
 
-  if (['waiting', 'buying', 'done'].includes(phase)) {
+  if (TURN_TIMER_PHASES.has(phase)) {
     startTurnTimer(phase);
   } else {
     stopTurnTimer();
@@ -1282,10 +1485,10 @@ function endAuction() {
         if (seller && seller.id !== winner.id) {
           seller.money += finishedAuction.currentBid;
           checkBankruptcyRecovery(seller);
-          logEvent(`💰 ${seller.character} received $${finishedAuction.currentBid} from the auction of ${tile.name}`, 'buy');
+          logEvent(`💰 ${seller.name} received $${finishedAuction.currentBid} from the auction of ${tile.name}`, 'buy');
         }
       }
-      logEvent(`🔨 ${winner.character} won ${tile.name} for $${finishedAuction.currentBid}!`, 'auction');
+      logEvent(`🔨 ${winner.name} won ${tile.name} for $${finishedAuction.currentBid}!`, 'auction');
     }
   } else {
     logEvent(`🔨 No bids on ${tile.name}. Property remains unowned.`, 'auction');
@@ -1296,7 +1499,7 @@ function endAuction() {
 
   emitToRoom('auction-ended', {
     winnerId: winner?.id || null,
-    winnerCharacter: winner?.character || null,
+    winnerCharacter: winner?.name || winner?.character || null,
     bid: finishedAuction.currentBid,
     tileName: finishedAuction.tileName,
     tileIndex: finishedAuction.tileIndex,
@@ -1328,7 +1531,7 @@ function endAuction() {
   setTurnPhase('waiting');
   emitToRoom('turn-changed', {
     currentPlayerId: currentPlayer.id,
-    currentCharacter: currentPlayer.character,
+    currentCharacter: currentPlayer.name || currentPlayer.character,
     gameState: snapshotGameState()
   });
   queueBotTurnIfNeeded(currentPlayer);
@@ -1354,14 +1557,14 @@ function handlePlaceBid(playerId, amountInput) {
 
   auctionState.currentBid = amount;
   auctionState.currentBidderId = playerRecord.id;
-  auctionState.currentBidderCharacter = playerRecord.character;
+  auctionState.currentBidderCharacter = playerRecord.name || playerRecord.character;
   auctionState.timeRemaining = auctionState.bidResetSeconds || AUCTION_BID_RESET_SECONDS;
   auctionState.timerMaxSeconds = auctionState.bidResetSeconds || AUCTION_BID_RESET_SECONDS;
 
-  logEvent(`🔨 ${playerRecord.character} bid $${amount} on ${auctionState.tileName}`, 'bid');
+  logEvent(`🔨 ${playerRecord.name} bid $${amount} on ${auctionState.tileName}`, 'bid');
   emitToRoom('auction-bid', {
     bidderId: playerRecord.id,
-    bidderCharacter: playerRecord.character,
+    bidderCharacter: playerRecord.name || playerRecord.character,
     amount,
     timeRemaining: auctionState.timeRemaining,
     auction: auctionState,
@@ -1381,14 +1584,14 @@ function advanceTurnGlobal() {
   const nextPlayer = gameState.nextTurn();
   if (!nextPlayer) return;
 
-  console.log(`✦ Turn passes to ${nextPlayer.character}`);
+  console.log(`✦ Turn passes to ${nextPlayer.name}`);
   setTurnPhase('waiting');
   if (!nextPlayer.isConnected) {
     pauseGameForDisconnect(nextPlayer);
   }
   emitToRoom('turn-changed', {
     currentPlayerId: nextPlayer.id,
-    currentCharacter: nextPlayer.character,
+    currentCharacter: nextPlayer.name || nextPlayer.character,
     gameState: snapshotGameState()
   });
   queueBotTurnIfNeeded(nextPlayer);
@@ -1419,7 +1622,7 @@ function waitForTurnEndCurrentPlayer() {
     setTurnPhase('waiting');
     emitToRoom('turn-changed', {
       currentPlayerId: currentPlayer.id,
-      currentCharacter: currentPlayer.character,
+      currentCharacter: currentPlayer.name || currentPlayer.character,
       gameState: snapshotGameState()
     });
     queueBotTurnIfNeeded(currentPlayer);
@@ -1432,7 +1635,7 @@ function waitForTurnEndCurrentPlayer() {
   }
   emitToRoom('turn-changed', {
     currentPlayerId: currentPlayer.id,
-    currentCharacter: currentPlayer.character,
+    currentCharacter: currentPlayer.name || currentPlayer.character,
     gameState: snapshotGameState()
   });
   queueBotEndTurnIfNeeded(currentPlayer);
@@ -1486,7 +1689,7 @@ function awardPropertyToPlayer(player, tile, price, historyType = 'buy') {
   if (!player.properties.includes(tile.index)) {
     player.properties.push(tile.index);
   }
-  tile.addHistory(historyType, player.character, player.color, price);
+  tile.addHistory(historyType, player.name || player.character, player.color, price);
 }
 
 function concludeGame(winner) {
@@ -1634,13 +1837,9 @@ function resolveActionCardAndMaybeMove(player) {
   player.stats.cardsDrawn++;
   logEvent(`🃏 ${player.name}: "${card.text}"`, 'card');
 
-  const moneySnapshot = snapshotPlayerMoney();
+  // Card text already describes the effect; avoid a second card-line for the same action.
   const result = CardUtils.resolveActionCard(gameState, player, card);
-  logMoneyDeltasSince(
-    moneySnapshot,
-    currentPlayer => `from action card "${card.text}"`,
-    'card'
-  );
+
   if (result.moveResult) {
     recordMoveStats(player, result.moveResult);
   }
@@ -1802,7 +2001,12 @@ function resolveMoveCompletion(playerId) {
   const currentPlayer = gameState.getCurrentPlayer();
   if (!currentPlayer || currentPlayer.id !== playerId) return;
 
-  const resolution = pendingMoveResolution?.resolution || { action: 'evaluate', diceTotal: lastDiceTotal, rentContext: {} };
+  const scheduledResolution = pendingMoveResolution;
+  if (!scheduledResolution || scheduledResolution.playerId !== playerId) {
+    return;
+  }
+
+  const resolution = scheduledResolution.resolution || { action: 'evaluate', diceTotal: lastDiceTotal, rentContext: {} };
   clearPendingMoveResolution();
 
   if (resolution.action === 'advance') {
@@ -2075,6 +2279,185 @@ function shouldBotBuyProperty(player, tile) {
   return Math.random() < chance;
 }
 
+function performBotJailAction(player) {
+  if (!gameState || !player?.isBot || !player.inJail) return false;
+  if (gameState.getCurrentPlayer()?.id !== player.id || gameState.turnPhase !== 'waiting') return false;
+
+  if (player.pardons > 0 && (player.jailTurns >= 1 || player.money < 220 || Math.random() < 0.4)) {
+    player.pardons--;
+    player.inJail = false;
+    player.jailTurns = 0;
+    logEvent(`🃏 ${player.character} used a Pardon Card to leave jail!`, 'card');
+
+    emitToRoom('jail-state-changed', {
+      playerId: player.id,
+      character: player.character,
+      inJail: false,
+      gameState: snapshotGameState()
+    });
+
+    waitForTurnEndCurrentPlayer();
+    return true;
+  }
+
+  if (player.money >= 50 && (player.jailTurns >= 2 || Math.random() < 0.35)) {
+    player.money -= 50;
+    gameState.taxPool += 50;
+    player.inJail = false;
+    player.jailTurns = 0;
+    gameState.doublesCount = 0;
+    logEvent(`🔓 ${player.character} paid $50 to leave jail and must end the turn.`, 'tax');
+    invalidateStaleTrades();
+
+    emitToRoom('jail-state-changed', {
+      playerId: player.id,
+      character: player.character,
+      inJail: false,
+      gameState: snapshotGameState()
+    });
+
+    waitForTurnEndCurrentPlayer();
+    return true;
+  }
+
+  return false;
+}
+
+function performBotDebtRecoveryStep(player) {
+  if (!gameState || !player?.isBot || !player.isActive) return false;
+  if (!(player.bankruptcyDeadline || player.money < 0)) return false;
+
+  const downgradeCandidates = gameState.properties
+    .filter(tile => tile.owner === player.id && tile.type === 'property' && (tile.houses || 0) > 0)
+    .sort((left, right) => (right.houses || 0) - (left.houses || 0));
+
+  for (const tile of downgradeCandidates) {
+    const validation = Rules.validateDowngrade(gameState.properties, player.id, tile.index);
+    if (!validation.ok) continue;
+
+    const refund = Math.floor(tile.price * 0.25);
+    player.money += refund;
+    player.stats.housesSold++;
+    tile.houses--;
+    logEvent(`🔻 ${player.character} sold a house on ${tile.name} (+$${refund})`, 'sell');
+    invalidateStaleTrades();
+    checkBankruptcyRecovery(player);
+
+    emitToRoom('property-downgraded', {
+      playerId: player.id,
+      character: player.character,
+      tileIndex: tile.index,
+      tileName: tile.name,
+      houses: tile.houses,
+      refund,
+      gameState: snapshotGameState()
+    });
+    return true;
+  }
+
+  const mortgageCandidates = gameState.properties
+    .filter(tile => tile.owner === player.id && !tile.isMortgaged && !Rules.isGroupAssetLocked(gameState.properties, tile))
+    .sort((left, right) => (right.price || 0) - (left.price || 0));
+
+  for (const tile of mortgageCandidates) {
+    tile.isMortgaged = true;
+    const mortgageValue = Math.floor(tile.price / 2);
+    player.money += mortgageValue;
+    logEvent(`🏦 ${player.character} mortgaged ${tile.name} (+$${mortgageValue})`, 'sell');
+    invalidateStaleTrades();
+    checkBankruptcyRecovery(player);
+
+    emitToRoom('property-mortgaged', {
+      playerId: player.id,
+      character: player.character,
+      tileIndex: tile.index,
+      tileName: tile.name,
+      mortgageValue,
+      gameState: snapshotGameState()
+    });
+    return true;
+  }
+
+  const sellCandidates = gameState.properties
+    .filter(tile => tile.owner === player.id && !Rules.isGroupAssetLocked(gameState.properties, tile))
+    .sort((left, right) => (right.price || 0) - (left.price || 0));
+
+  for (const tile of sellCandidates) {
+    const sellValue = Math.floor(tile.price * 0.5) + ((tile.houses || 0) * Math.floor(tile.price * 0.25));
+    player.money += sellValue;
+    tile.owner = null;
+    tile.houses = 0;
+    tile.isMortgaged = false;
+    player.properties = player.properties.filter(index => index !== tile.index);
+    logEvent(`💰 ${player.character} sold ${tile.name} to the bank (+$${sellValue})`, 'sell');
+    invalidateStaleTrades();
+    checkBankruptcyRecovery(player);
+
+    emitToRoom('property-sold', {
+      playerId: player.id,
+      character: player.character,
+      tileIndex: tile.index,
+      tileName: tile.name,
+      sellValue,
+      gameState: snapshotGameState()
+    });
+    return true;
+  }
+
+  if (player.money < 0) {
+    executeBankruptcy(player);
+    return true;
+  }
+
+  return false;
+}
+
+function performBotUpgradeStep(player) {
+  if (!gameState || !player?.isBot || !player.isActive) return false;
+  if (!canPlayerManageAssets(player.id)) return false;
+  if (player.inJail || player.bankruptcyDeadline || player.money < 0) return false;
+
+  const upgradeOptions = gameState.properties
+    .filter(tile => tile.owner === player.id && tile.type === 'property')
+    .map(tile => {
+      const validation = Rules.validateUpgrade(gameState.properties, player.id, tile.index);
+      if (!validation.ok) return null;
+
+      const cost = Math.floor(tile.price * 0.5);
+      const reserve = tile.houses >= 3 ? 220 : 160;
+      if (player.money - cost < reserve) return null;
+
+      let score = (tile.houses || 0) * 10;
+      if (wouldOwnFullColorGroup(player.id, tile)) score += 25;
+      score += Math.floor((tile.price || 0) / 40);
+      return { tile, cost, score };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.score - left.score);
+
+  if (!upgradeOptions.length) return false;
+  if (Math.random() > 0.65) return false;
+
+  const { tile, cost } = upgradeOptions[0];
+  player.money -= cost;
+  player.stats.housesBuilt++;
+  tile.houses++;
+  const label = tile.houses >= 5 ? 'Hotel' : `House ${tile.houses}`;
+  logEvent(`🏗️ ${player.character} built ${label} on ${tile.name} ($${cost})`, 'buy');
+  invalidateStaleTrades();
+
+  emitToRoom('property-upgraded', {
+    playerId: player.id,
+    character: player.character,
+    tileIndex: tile.index,
+    tileName: tile.name,
+    houses: tile.houses,
+    cost,
+    gameState: snapshotGameState()
+  });
+  return true;
+}
+
 function getBotBidCap(player, tile) {
   if (!player || !tile) return 0;
 
@@ -2160,13 +2543,13 @@ function executeAcceptedTrade(trade, accepter) {
     const tile = gameState.properties[index];
     if (!tile || tile.owner !== trade.fromId) return;
     tile.owner = accepter.id;
-    tile.addHistory('trade', accepter.character, accepter.color, 0);
+    tile.addHistory('trade', accepter.name || accepter.character, accepter.color, 0);
   });
   trade.requestProperties.forEach(index => {
     const tile = gameState.properties[index];
     if (!tile || tile.owner !== accepter.id) return;
     tile.owner = offerer.id;
-    tile.addHistory('trade', offerer.character, offerer.color, 0);
+    tile.addHistory('trade', offerer.name || offerer.character, offerer.color, 0);
   });
 
   offerer.stats.tradesCompleted++;
@@ -2176,8 +2559,9 @@ function executeAcceptedTrade(trade, accepter) {
   syncPlayerPropertyLists();
   removePendingTrade(trade.id);
   invalidateStaleTrades();
+  maybeExtendTurnTimerForActivity(accepter.id);
 
-  logEvent(`✅ ${accepter.character} accepted trade with ${offerer.character}!`, 'trade');
+  logEvent(`✅ ${accepter.name || accepter.character} accepted trade with ${offerer.name || offerer.character}!`, 'trade');
   logPlayerMoneyDelta(
     offerer,
     offerer.money - offererMoneyBefore,
@@ -2195,8 +2579,8 @@ function executeAcceptedTrade(trade, accepter) {
     tradeId: trade.id,
     fromId: offerer.id,
     toId: accepter.id,
-    fromCharacter: offerer.character,
-    toCharacter: accepter.character,
+    fromCharacter: offerer.name || offerer.character,
+    toCharacter: accepter.name || accepter.character,
     gameState: snapshotGameState()
   };
   emitToRoom('trade-completed', payload);
@@ -2234,7 +2618,7 @@ function queueBotTradeDecision(trade) {
     }
 
     removePendingTrade(liveTrade.id);
-    logEvent(`❌ ${liveBot.character} rejected trade from ${offerer.character}`, 'trade');
+    logEvent(`❌ ${liveBot.name || liveBot.character} rejected trade from ${offerer.name || offerer.character}`, 'trade');
     io.to(getPlayerRoom(offerer.id)).emit('trade-rejected', {
       tradeId: liveTrade.id,
       fromId: offerer.id,
@@ -2255,6 +2639,31 @@ function queueBotTurnIfNeeded(player = gameState?.getCurrentPlayer()) {
     if (!gameState || !gameState.isGameStarted || auctionState || gameState.pauseState) return;
     const currentPlayer = gameState.getCurrentPlayer();
     if (!currentPlayer || currentPlayer.id !== player.id || !currentPlayer.isBot || gameState.turnPhase !== 'waiting') return;
+
+    if (performBotJailAction(currentPlayer)) {
+      return;
+    }
+
+    if (currentPlayer.bankruptcyDeadline || currentPlayer.money < 0) {
+      const acted = performBotDebtRecoveryStep(currentPlayer);
+      if (!currentPlayer.isActive) {
+        if (gameState && gameState.getActivePlayers().length > 1) {
+          advanceTurnGlobal();
+        }
+        return;
+      }
+
+      if (acted) {
+        queueBotTurnIfNeeded(currentPlayer);
+        return;
+      }
+    }
+
+    if (performBotUpgradeStep(currentPlayer)) {
+      queueBotTurnIfNeeded(currentPlayer);
+      return;
+    }
+
     handleRollDice(currentPlayer.id);
   });
 }
@@ -2302,6 +2711,46 @@ function queueBotBuyDecision(player, tile) {
 function queueBotAuctionBids() {
   clearBotTimersByPrefix('auction:');
   if (!gameState || !auctionState || gameState.pauseState) return;
+
+  const tile = gameState.properties[auctionState.tileIndex];
+  if (!tile) return;
+
+  const minimumBid = auctionState.currentBid + 1;
+  const bots = gameState
+    .getActivePlayers()
+    .filter(player => player.isBot && player.id !== auctionState.currentBidderId);
+
+  bots.forEach(bot => {
+    const bidCap = getBotBidCap(bot, tile);
+    if (bidCap < minimumBid) return;
+
+    let bidChance = 0.45;
+    if (wouldOwnFullColorGroup(bot.id, tile)) bidChance += 0.3;
+    if (tile.type === 'railroad') bidChance += 0.08;
+    if (tile.type === 'utility') bidChance -= 0.05;
+    if (bot.money < 250) bidChance -= 0.25;
+    bidChance = Math.max(0.15, Math.min(0.9, bidChance));
+    if (Math.random() > bidChance) return;
+
+    const increment = BOT_BID_INCREMENTS[Math.floor(Math.random() * BOT_BID_INCREMENTS.length)];
+    const desiredBid = Math.min(bidCap, Math.max(minimumBid, auctionState.currentBid + increment));
+
+    scheduleBotTimer(`auction:${bot.id}`, randomBotDelay(350, 1200), () => {
+      if (!gameState || !auctionState || gameState.pauseState) return;
+
+      const liveBot = gameState.getPlayerById(bot.id);
+      const liveTile = gameState.properties[auctionState.tileIndex];
+      if (!liveBot || !liveBot.isActive || !liveBot.isBot || !liveTile) return;
+      if (auctionState.currentBidderId === liveBot.id) return;
+
+      const liveMinimumBid = auctionState.currentBid + 1;
+      const liveCap = getBotBidCap(liveBot, liveTile);
+      if (liveCap < liveMinimumBid) return;
+
+      const nextBid = Math.min(liveCap, Math.max(liveMinimumBid, desiredBid));
+      handlePlaceBid(liveBot.id, nextBid);
+    });
+  });
 }
 
 function syncBotAutomation() {
@@ -2412,6 +2861,11 @@ io.on('connection', socket => {
   bindRoomHandler(socket, roomState, 'select-character', data => {
     const characterName = typeof data === 'string' ? data : data?.name;
     const customColor = normalizeCustomColor(typeof data === 'object' ? data?.customColor : null);
+    const hasCustomPayload = characterName === 'custom' && typeof data === 'object';
+    const customName = hasCustomPayload ? normalizeCustomName(data?.customName) : '';
+    const { avatarUrl: customAvatarUrl, error: customAvatarError } = hasCustomPayload
+      ? normalizeCustomAvatarUrl(data?.customAvatarUrl)
+      : { avatarUrl: null, error: null };
 
     if (gameState && gameState.isGameStarted) {
       socket.emit('character-error', { message: 'Game already in progress' });
@@ -2421,9 +2875,13 @@ io.on('connection', socket => {
       socket.emit('character-error', { message: 'Invalid character' });
       return;
     }
+    if (customAvatarError) {
+      socket.emit('character-error', { message: customAvatarError });
+      return;
+    }
 
     const currentEntry = getOrCreateLobbyEntry(socket);
-    const holder = getLobbyEntryByCharacter(characterName);
+    const holder = isCharacterExclusive(characterName) ? getLobbyEntryByCharacter(characterName) : null;
     if (holder && holder.sessionToken !== currentEntry.sessionToken) {
       socket.emit('character-taken', { character: characterName, message: 'Character already taken' });
       return;
@@ -2433,8 +2891,8 @@ io.on('connection', socket => {
     currentEntry.tokenId = resolveLobbyToken(characterName, currentEntry.tokenId);
 
     if (characterName === 'custom') {
-      currentEntry.customName = typeof data === 'object' ? (data.customName || 'Custom Player') : 'Custom Player';
-      currentEntry.customAvatarUrl = typeof data === 'object' ? (data.customAvatarUrl || null) : null;
+      currentEntry.customName = customName || 'Custom Player';
+      currentEntry.customAvatarUrl = customAvatarUrl;
       currentEntry.name = currentEntry.customName;
     } else {
       currentEntry.name = characterName;
@@ -2456,6 +2914,8 @@ io.on('connection', socket => {
     emitPlayerSession(socket, {
       id: currentEntry.playerId,
       character: characterName,
+      name: currentEntry.name,
+      customName: currentEntry.customName || null,
       tokenId: currentEntry.tokenId,
       customColor: currentEntry.customColor || null,
       customAvatarUrl: currentEntry.customAvatarUrl || null
@@ -2486,7 +2946,11 @@ io.on('connection', socket => {
     emitPlayerSession(socket, {
       id: currentEntry.playerId,
       character: currentEntry.character,
-      tokenId: currentEntry.tokenId
+      name: currentEntry.name,
+      customName: currentEntry.customName || null,
+      tokenId: currentEntry.tokenId,
+      customColor: currentEntry.customColor || null,
+      customAvatarUrl: currentEntry.customAvatarUrl || null
     });
     emitLobbyUpdate();
   });
@@ -2507,8 +2971,11 @@ io.on('connection', socket => {
     emitPlayerSession(socket, {
       id: entry.playerId,
       character: entry.character,
+      name: entry.name,
+      customName: entry.customName || null,
       tokenId: entry.tokenId || null,
-      customColor: entry.customColor || null
+      customColor: entry.customColor || null,
+      customAvatarUrl: entry.customAvatarUrl || null
     });
     emitLobbyUpdate();
   });
@@ -2522,8 +2989,11 @@ io.on('connection', socket => {
     emitPlayerSession(socket, {
       id: entry.playerId,
       character: null,
+      name: null,
+      customName: entry.customName || null,
       tokenId: null,
-      customColor: entry.customColor || null
+      customColor: entry.customColor || null,
+      customAvatarUrl: entry.customAvatarUrl || null
     });
     emitLobbyUpdate();
   });
@@ -2590,10 +3060,16 @@ io.on('connection', socket => {
     }
     gameState.players = [];
     readyPlayers.forEach((p, idx) => {
-      const color = CHARACTER_COLORS[p.character] || '#ffffff';
+      const customIndex = readyPlayers
+        .slice(0, idx)
+        .filter(entry => entry.character === 'custom')
+        .length;
+      const color = getDefaultColorForLobbyEntry(p, customIndex);
       const player = gameState.addPlayer(p.playerId, p.character, color, p.sessionToken, {
         name: p.customName || p.character,
         customAvatarUrl: p.customAvatarUrl,
+        customColor: p.customColor || null,
+        tokenId: resolveLobbyToken(p.character, p.tokenId),
         isConnected: true 
       });
 
@@ -2642,6 +3118,88 @@ io.on('connection', socket => {
 
     const hostPlayer = getSocketPlayer(socket) || gameState?.getPlayerBySessionToken(socket.data.sessionToken) || lobbyPlayers.get(socket.data.sessionToken) || null;
     endGameForRoom(roomState, hostPlayer?.character || 'The host');
+  });
+
+  bindRoomHandler(socket, roomState, 'host-set-turn-timer-enabled', data => {
+    if (!isRoomHost(socket, roomState)) {
+      socket.emit('game-error', { message: 'Only the room host can change timer settings.' });
+      return;
+    }
+
+    const nextEnabled = data?.enabled !== false;
+    const previousEnabled = isTurnTimerEnabled(roomState);
+    if (previousEnabled === nextEnabled) return;
+
+    roomState.turnTimerEnabled = nextEnabled;
+
+    if (!nextEnabled) {
+      stopTurnTimer();
+    } else if (
+      gameState
+      && gameState.isGameStarted
+      && !gameState.pauseState
+      && !auctionState
+      && TURN_TIMER_PHASES.has(gameState.turnPhase)
+      && !gameState.getCurrentPlayer()?.bankruptcyDeadline
+    ) {
+      startTurnTimer(gameState.turnPhase);
+    }
+
+    const hostPlayer = getSocketPlayer(socket)
+      || gameState?.getPlayerBySessionToken(socket.data.sessionToken)
+      || lobbyPlayers.get(socket.data.sessionToken)
+      || null;
+    logEvent(
+      `⏱ ${hostPlayer?.name || hostPlayer?.character || 'The host'} ${nextEnabled ? 'enabled' : 'disabled'} the turn timer.`,
+      'system'
+    );
+
+    emitLobbyUpdate();
+    if (gameState && gameState.isGameStarted) {
+      emitGameStateSync();
+    }
+  });
+
+  bindRoomHandler(socket, roomState, 'host-extend-turn-timer', data => {
+    if (!isRoomHost(socket, roomState)) {
+      socket.emit('game-error', { message: 'Only the room host can extend the turn timer.' });
+      return;
+    }
+    if (!gameState || !gameState.isGameStarted) {
+      socket.emit('game-error', { message: 'There is no active match to extend.' });
+      return;
+    }
+    if (!isTurnTimerEnabled(roomState)) {
+      socket.emit('game-error', { message: 'Turn timer is disabled right now.' });
+      return;
+    }
+    if (gameState.pauseState) {
+      socket.emit('game-error', { message: 'Cannot extend timer while the game is paused.' });
+      return;
+    }
+    if (!turnTimerState || !TURN_TIMER_PHASES.has(turnTimerState.phase)) {
+      socket.emit('game-error', { message: 'No active turn timer to extend right now.' });
+      return;
+    }
+
+    const extension = extendCurrentTurnTimer(data?.seconds, turnTimerState.phase);
+    if (!extension) {
+      socket.emit('game-error', { message: 'No active turn timer to extend right now.' });
+      return;
+    }
+    if (extension.addedSeconds <= 0) {
+      socket.emit('game-error', { message: `Turn timer is already capped at ${extension.maxSeconds}s.` });
+      return;
+    }
+
+    const hostPlayer = getSocketPlayer(socket)
+      || gameState?.getPlayerBySessionToken(socket.data.sessionToken)
+      || lobbyPlayers.get(socket.data.sessionToken)
+      || null;
+    logEvent(
+      `⏱ ${hostPlayer?.name || hostPlayer?.character || 'The host'} added ${extension.addedSeconds}s to the ${turnTimerState.phase} timer.`,
+      'system'
+    );
   });
 
   bindRoomHandler(socket, roomState, 'kick-player', data => {
@@ -2881,7 +3439,7 @@ io.on('connection', socket => {
         if (gameState.getCurrentPlayer()?.id === playerRecord.id) {
           resolveDevTeleport(playerRecord);
         } else {
-          restartTurnTimer = gameState.getCurrentPlayer()?.isActive && ['waiting', 'buying', 'done'].includes(gameState.turnPhase);
+          restartTurnTimer = gameState.getCurrentPlayer()?.isActive && TURN_TIMER_PHASES.has(gameState.turnPhase);
         }
 
         logEvent(`🛠️ DEV moved ${playerRecord.character} to ${gameState.properties[tileIndex].name}.`, 'system');
@@ -3077,16 +3635,22 @@ io.on('connection', socket => {
       createdAt: Date.now(),
       isCounterOffer: Boolean(validation.value.counterToTradeId)
     };
+    trade.fromCharacter = from.name || from.character;
+    const targetPlayer = gameState.getPlayerById(trade.toId);
+    if (targetPlayer) {
+      trade.toCharacter = targetPlayer.name || targetPlayer.character;
+    }
 
     if (trade.counterToTradeId) {
       removePendingTrade(trade.counterToTradeId, {
         code: 'countered',
-        message: `${from.character} replaced the original offer with a counter-offer.`
+        message: `${from.name || from.character} replaced the original offer with a counter-offer.`
       });
     }
 
     pendingTrades.set(tradeId, trade);
-    logEvent(`🤝 ${from.character} offered a trade to ${trade.toCharacter}`, 'trade');
+    maybeExtendTurnTimerForActivity(from.id);
+    logEvent(`🤝 ${from.name || from.character} offered a trade to ${trade.toCharacter}`, 'trade');
     socket.emit('trade-sent', {
       trade,
       replacedTradeId: trade.counterToTradeId || null
@@ -3139,9 +3703,10 @@ io.on('connection', socket => {
     if (!trade || trade.toId !== rejecter.id) return;
 
     removePendingTrade(trade.id);
+    maybeExtendTurnTimerForActivity(rejecter.id);
     const offerer = gameState.getPlayerById(trade.fromId);
     if (offerer) {
-      logEvent(`❌ ${rejecter.character} rejected trade from ${offerer.character}`, 'trade');
+      logEvent(`❌ ${rejecter.name || rejecter.character} rejected trade from ${offerer.name || offerer.character}`, 'trade');
       io.to(getPlayerRoom(offerer.id)).emit('trade-rejected', {
         tradeId: trade.id,
         fromId: offerer.id,
@@ -3179,6 +3744,7 @@ io.on('connection', socket => {
     const label = tile.houses >= 5 ? 'Hotel' : `House ${tile.houses}`;
     logEvent(`🏗️ ${playerRecord.character} built ${label} on ${tile.name} ($${upgradeCost})`, 'buy');
     invalidateStaleTrades();
+    maybeExtendTurnTimerForActivity(playerRecord.id);
 
     emitToRoom('property-upgraded', {
       playerId: playerRecord.id,
@@ -3215,6 +3781,7 @@ io.on('connection', socket => {
     checkBankruptcyRecovery(playerRecord);
     logEvent(`🔻 ${playerRecord.character} sold a house on ${tile.name} (+$${refund})`, 'sell');
     invalidateStaleTrades();
+    maybeExtendTurnTimerForActivity(playerRecord.id);
 
     emitToRoom('property-downgraded', {
       playerId: playerRecord.id,
@@ -3251,6 +3818,7 @@ io.on('connection', socket => {
     checkBankruptcyRecovery(playerRecord);
     logEvent(`🏦 ${playerRecord.character} mortgaged ${tile.name} (+$${mortgageValue})`, 'sell');
     invalidateStaleTrades();
+    maybeExtendTurnTimerForActivity(playerRecord.id);
 
     emitToRoom('property-mortgaged', {
       playerId: playerRecord.id,
@@ -3286,6 +3854,7 @@ io.on('connection', socket => {
     playerRecord.money -= unmortgageCost;
     logEvent(`🏦 ${playerRecord.character} unmortgaged ${tile.name} (-$${unmortgageCost})`, 'buy');
     invalidateStaleTrades();
+    maybeExtendTurnTimerForActivity(playerRecord.id);
 
     emitToRoom('property-unmortgaged', {
       playerId: playerRecord.id,
@@ -3323,6 +3892,7 @@ io.on('connection', socket => {
     checkBankruptcyRecovery(playerRecord);
     logEvent(`💰 ${playerRecord.character} sold ${tile.name} to the bank (+$${sellValue})`, 'sell');
     invalidateStaleTrades();
+    maybeExtendTurnTimerForActivity(playerRecord.id);
 
     emitToRoom('property-sold', {
       playerId: playerRecord.id,
@@ -3375,6 +3945,7 @@ io.on('connection', socket => {
       pendingTrades.clear();
 
       gameState = restored.restoredGameState;
+      roomState.turnTimerEnabled = restored.restoredTurnTimerEnabled;
       actionDeck = restored.restoredActionDeck;
       eventHistory.length = 0;
       restored.restoredEventHistory.forEach(event => eventHistory.push(event));
@@ -3389,6 +3960,7 @@ io.on('connection', socket => {
       });
 
       logEvent(`📂 ${playerRecord?.character || 'The host'} loaded a saved game!`, 'system');
+      emitLobbyUpdate();
       emitToRoom('game-loaded', { gameState: snapshotGameState() });
       emitGameStateSync({ restartTurnTimer: true });
     } catch (err) {
@@ -3423,7 +3995,7 @@ io.on('connection', socket => {
     logEvent(`🚪 ${playerRecord.character} disconnected`, 'system');
 
     const isCurrentPlayer = gameState.getCurrentPlayer()?.id === playerRecord.id;
-    if (isCurrentPlayer && ['waiting', 'buying', 'done'].includes(gameState.turnPhase)) {
+    if (isCurrentPlayer && TURN_TIMER_PHASES.has(gameState.turnPhase)) {
       pauseGameForDisconnect(playerRecord);
     }
 
@@ -3431,7 +4003,93 @@ io.on('connection', socket => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`\n  🎲 Monopoly server running at http://localhost:${PORT}\n`);
-});
+function startServer(port = process.env.PORT || 3000, { logStartup = true } = {}) {
+  const parsedPort = Number.parseInt(port, 10);
+  const listenPort = Number.isNaN(parsedPort) ? port : parsedPort;
+
+  if (server.listening) {
+    const address = server.address();
+    activeListenPort = typeof address === 'object' && address ? address.port : listenPort;
+    return Promise.resolve({ server, io, port: activeListenPort });
+  }
+
+  if (serverStartPromise) {
+    return serverStartPromise;
+  }
+
+  serverStartPromise = new Promise((resolve, reject) => {
+    const handleListening = () => {
+      server.off('error', handleError);
+      const address = server.address();
+      activeListenPort = typeof address === 'object' && address ? address.port : listenPort;
+      if (logStartup) {
+        console.log(`\n  🎲 Monopoly server running at http://localhost:${activeListenPort}\n`);
+      }
+      serverStartPromise = null;
+      resolve({ server, io, port: activeListenPort });
+    };
+
+    const handleError = (error) => {
+      server.off('listening', handleListening);
+      serverStartPromise = null;
+      reject(error);
+    };
+
+    server.once('listening', handleListening);
+    server.once('error', handleError);
+    server.listen(listenPort);
+  });
+
+  return serverStartPromise;
+}
+
+function resetServerStateForTests() {
+  rooms.forEach(roomState => {
+    withRoomState(roomState, () => {
+      clearRoomGameRuntime({ preserveLobby: false });
+      roomState.endedAt = Date.now();
+    });
+  });
+
+  rooms.clear();
+  supersededSocketIds.clear();
+  assignRoomState(null);
+}
+
+function stopServer() {
+  return new Promise((resolve, reject) => {
+    if (!server.listening) {
+      resetServerStateForTests();
+      activeListenPort = null;
+      serverStartPromise = null;
+      resolve();
+      return;
+    }
+
+    io.disconnectSockets(true);
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resetServerStateForTests();
+      activeListenPort = null;
+      serverStartPromise = null;
+      resolve();
+    });
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  app,
+  server,
+  io,
+  startServer,
+  stopServer,
+  resetServerStateForTests
+};

@@ -12,6 +12,7 @@ const GameUI = (() => {
     let overflowMenuOpen = false;
     let lastRenderedTurnOwnerId = null;
     let hasRenderedTurnState = false;
+    let avatarPreviewElement = null;
 
     function resetTurnAwareness() {
         lastRenderedTurnOwnerId = null;
@@ -44,6 +45,80 @@ const GameUI = (() => {
     function setPromptedActionState(button, isPrompted) {
         if (!button) return;
         button.classList.toggle('prompting-action', Boolean(isPrompted) && !button.classList.contains('disabled'));
+    }
+
+    function ensureAvatarPreviewElement() {
+        if (avatarPreviewElement) return avatarPreviewElement;
+
+        avatarPreviewElement = document.createElement('div');
+        avatarPreviewElement.className = 'lb-avatar-hover-preview';
+        avatarPreviewElement.innerHTML = `
+            <img class="lb-avatar-hover-image" src="" alt="" />
+            <div class="lb-avatar-hover-name"></div>
+        `;
+        document.body.appendChild(avatarPreviewElement);
+        return avatarPreviewElement;
+    }
+
+    function positionAvatarPreview(avatarElement, event = null) {
+        if (!avatarPreviewElement || !avatarElement) return;
+
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+        const edgePadding = 8;
+        const pointerOffset = 14;
+
+        let x;
+        let y;
+        if (event && typeof event.clientX === 'number' && typeof event.clientY === 'number') {
+            x = event.clientX + pointerOffset;
+            y = event.clientY + pointerOffset;
+        } else {
+            const avatarRect = avatarElement.getBoundingClientRect();
+            x = avatarRect.right + 10;
+            y = avatarRect.top;
+        }
+
+        const previewRect = avatarPreviewElement.getBoundingClientRect();
+        if (x + previewRect.width + edgePadding > viewportWidth) {
+            const anchorRect = avatarElement.getBoundingClientRect();
+            x = anchorRect.left - previewRect.width - 10;
+        }
+        if (y + previewRect.height + edgePadding > viewportHeight) {
+            y = viewportHeight - previewRect.height - edgePadding;
+        }
+
+        x = Math.max(edgePadding, x);
+        y = Math.max(edgePadding, y);
+
+        avatarPreviewElement.style.left = `${Math.round(x)}px`;
+        avatarPreviewElement.style.top = `${Math.round(y)}px`;
+    }
+
+    function showAvatarPreview(avatarElement, event = null) {
+        if (!avatarElement) return;
+
+        const preview = ensureAvatarPreviewElement();
+        const previewSrc = avatarElement.dataset.previewSrc || avatarElement.getAttribute('src') || '';
+        const previewName = avatarElement.dataset.previewName || avatarElement.getAttribute('alt') || 'Player';
+        const previewColor = avatarElement.dataset.previewColor || '#ffffff';
+
+        const image = preview.querySelector('.lb-avatar-hover-image');
+        const name = preview.querySelector('.lb-avatar-hover-name');
+        if (!image || !name) return;
+
+        image.src = previewSrc;
+        image.alt = previewName;
+        name.textContent = previewName;
+
+        preview.style.setProperty('--lb-preview-color', previewColor);
+        preview.classList.add('show');
+        positionAvatarPreview(avatarElement, event);
+    }
+
+    function hideAvatarPreview() {
+        if (!avatarPreviewElement) return;
+        avatarPreviewElement.classList.remove('show');
     }
 
     function init(socketInstance) {
@@ -192,6 +267,7 @@ const GameUI = (() => {
     function hideGameUI() {
         document.getElementById('game-hud').classList.add('hidden');
         setOverflowMenuOpen(false);
+        hideAvatarPreview();
         resetTurnAwareness();
         setPromptedActionState(document.getElementById('roll-dice-btn'), false);
         setPromptedActionState(document.getElementById('end-turn-btn'), false);
@@ -220,7 +296,13 @@ const GameUI = (() => {
             return;
         }
 
-        const label = timerState.phase === 'buying' ? 'Buy Window' : 'Turn Timer';
+        const label = timerState.phase === 'waiting'
+            ? 'Roll Timer'
+            : timerState.phase === 'buying'
+                ? 'Buy Window'
+                : timerState.phase === 'done'
+                    ? 'End Turn Timer'
+                    : 'Turn Timer';
         element.textContent = `${label}: ${timerState.remainingSeconds}s`;
         element.classList.remove('hidden');
         element.classList.toggle('warning', timerState.remainingSeconds <= 10);
@@ -564,6 +646,7 @@ const GameUI = (() => {
 
         const panel = document.getElementById('leaderboard-panel');
         if (!panel) return;
+        hideAvatarPreview();
         panel.innerHTML = '';
 
         const sorted = [...players].sort((left, right) => {
@@ -619,7 +702,34 @@ const GameUI = (() => {
                     ` : ''}
                 `;
             }
+
+            const avatarElement = element.querySelector('.lb-avatar');
+            if (avatarElement) {
+                avatarElement.dataset.previewSrc = avatarSrc;
+                avatarElement.dataset.previewName = displayName;
+                avatarElement.dataset.previewColor = player.color || '#ffffff';
+                avatarElement.tabIndex = 0;
+            }
+
             panel.appendChild(element);
+        });
+
+        panel.querySelectorAll('.lb-avatar').forEach(avatarElement => {
+            avatarElement.addEventListener('mouseenter', event => {
+                showAvatarPreview(event.currentTarget, event);
+            });
+            avatarElement.addEventListener('mousemove', event => {
+                positionAvatarPreview(event.currentTarget, event);
+            });
+            avatarElement.addEventListener('mouseleave', () => {
+                hideAvatarPreview();
+            });
+            avatarElement.addEventListener('focus', event => {
+                showAvatarPreview(event.currentTarget);
+            });
+            avatarElement.addEventListener('blur', () => {
+                hideAvatarPreview();
+            });
         });
 
         panel.querySelectorAll('.lb-trade-btn').forEach(button => {

@@ -100,10 +100,10 @@ const TradeSystem = (() => {
         if (offerCash < 0 || requestCash < 0) {
             return { ok: false, message: 'Trade cash values cannot be negative.' };
         }
-        if (offerCash > me.money) {
+        if (offerCash > 0 && offerCash > me.money) {
             return { ok: false, message: 'You do not have enough cash for this offer.' };
         }
-        if (requestCash > target.money) {
+        if (requestCash > 0 && requestCash > target.money) {
             return { ok: false, message: `${target.character} does not have that much cash right now.` };
         }
         if (offerProperties.length === 0 && requestProperties.length === 0 && offerCash === 0 && requestCash === 0) {
@@ -182,10 +182,10 @@ const TradeSystem = (() => {
         const avatarMap = { Bilo: '🎩', Os: '🏎️', Ziko: '🐕', Maro: '⚓' };
 
         document.getElementById('trade-my-avatar').textContent = avatarMap[me.character] || '🧑';
-        document.getElementById('trade-my-name').textContent = me.character;
+        document.getElementById('trade-my-name').textContent = me.name || me.character;
         document.getElementById('trade-my-cash-display').textContent = `$${me.money}`;
         document.getElementById('trade-target-avatar').textContent = avatarMap[target.character] || '🧑';
-        document.getElementById('trade-target-name').textContent = target.character;
+        document.getElementById('trade-target-name').textContent = target.name || target.character;
         document.getElementById('trade-target-cash-display').textContent = `$${target.money}`;
 
         populateTradeColumn('trade-my-props', myProperties, 'mine');

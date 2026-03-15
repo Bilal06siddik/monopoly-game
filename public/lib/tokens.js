@@ -520,12 +520,13 @@ const GameTokens = (() => {
         });
     }
 
-    function applyTokenAppearance(token, { tokenId, character, color }) {
+    function applyTokenAppearance(token, { tokenId, character, name, color }) {
         const resolvedColor = normalizeColor(color);
         const resolvedStyle = getTokenStyle(tokenId);
         const shouldRebuildModel = token.tokenId !== resolvedStyle || !token.modelRoot;
+        const badgeLabel = name || character;
 
-        token.character = character;
+        token.character = badgeLabel;
         token.tokenId = resolvedStyle;
         token.color = `#${resolvedColor.getHexString()}`;
 
@@ -554,7 +555,7 @@ const GameTokens = (() => {
         if (token.badge.material.map) {
             token.badge.material.map.dispose();
         }
-        token.badge.material.map = createBadgeTexture(character, resolvedColor);
+        token.badge.material.map = createBadgeTexture(badgeLabel, resolvedColor);
         token.badge.material.needsUpdate = true;
         token.badge.position.set(0, (token.modelRoot?.userData?.height || 1) + 0.32, 0);
         if (token.pointLight) {
@@ -583,7 +584,7 @@ const GameTokens = (() => {
         group.add(ring);
 
         const badge = new THREE.Sprite(new THREE.SpriteMaterial({
-            map: createBadgeTexture(player.character, player.color),
+            map: createBadgeTexture(player.name || player.character, player.color),
             transparent: true,
             depthWrite: false
         }));
@@ -598,7 +599,7 @@ const GameTokens = (() => {
 
         tokens[player.id] = {
             playerId: player.id,
-            character: player.character,
+            character: player.name || player.character,
             tokenId: null,
             color: null,
             group,
@@ -737,7 +738,7 @@ const GameTokens = (() => {
 
         groupedByTile.forEach(tilePlayers => {
             tilePlayers
-                .sort((left, right) => left.character.localeCompare(right.character))
+                .sort((left, right) => (left.name || left.character || left.id).localeCompare(right.name || right.character || right.id))
                 .forEach((player, playerIndex) => {
                     const token = tokens[player.id];
                     if (!token || token.animating) return;

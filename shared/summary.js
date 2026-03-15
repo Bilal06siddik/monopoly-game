@@ -41,6 +41,7 @@
             placement: index + 1,
             playerId: player.id,
             character: player.character,
+            name: player.name || player.character,
             color: player.color,
             isWinner: player.id === winnerId,
             isActive: player.isActive,

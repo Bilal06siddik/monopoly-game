@@ -100,10 +100,11 @@ const AuctionSystem = (() => {
 
         currentPlayers.forEach(p => {
             if (!p.isActive) return;
+            const displayName = p.name || p.character;
             const el = document.createElement('div');
             el.className = `auc-player${p.id === currentAuction.currentBidderId ? ' leading' : ''}`;
             el.innerHTML = `
-        <span class="auc-p-name" style="color:${p.color}">${p.character}</span>
+        <span class="auc-p-name" style="color:${p.color}">${displayName}</span>
         <span class="auc-p-money${p.money < 0 ? ' negative' : ''}">$${p.money}</span>
       `;
             list.appendChild(el);

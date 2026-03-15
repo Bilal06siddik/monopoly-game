@@ -96,7 +96,22 @@ npm start
 
 - `npm start` starts the server
 - `npm run dev` runs the same local server command
-- `npm test` runs the automated shared-rule and game-summary tests
+- `npm run start:test` starts the server for Playwright webServer runs
+- `npm test` runs unit tests
+- `npm run test:unit` runs shared logic and unit-focused suites
+- `npm run test:integration` runs deterministic multiplayer socket integration tests
+- `npm run test:stress` runs stress and invariant suites
+- `npm run test:all` runs unit, integration, and stress suites
+- `npm run test:coverage` runs the non-browser suites with `c8` coverage output
+- `npm run test:e2e` runs Playwright browser tests
+- `npm run test:ci` runs coverage plus Playwright tests
+
+## Test layers
+
+- `test/shared*.test.js` contains shared model and rule validation suites
+- `test/integration/` contains server plus socket multiplayer flow tests
+- `test/stress/` contains repeated seeded invariants for edge-case pressure testing
+- `test/e2e/` contains browser-based Playwright tests
 
 ## Project structure
 
@@ -105,6 +120,10 @@ public/   Client HTML, styles, and browser-side game systems
 shared/   Board data and shared game-state classes
 server.js Express and Socket.IO game server
 ```
+
+## Testing guide
+
+Detailed day-to-day and release testing workflow lives in `TESTING.md`.
 
 ## Notes
 

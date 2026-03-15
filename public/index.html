@@ -43,6 +43,18 @@
         <input type="file" id="load-game-input" accept=".json" style="display: none;" />
         <button id="load-game-btn" class="secondary-lobby-btn" type="button">📂 Load Game</button>
       </div>
+      <div class="host-timer-controls">
+        <div class="host-section-title">TURN TIMER</div>
+        <label class="host-timer-toggle" for="host-turn-timer-enabled">
+          <input id="host-turn-timer-enabled" type="checkbox" checked />
+          <span>Enable automatic turn timer</span>
+        </label>
+        <div class="host-timer-actions">
+          <button id="host-extend-timer-15-btn" class="secondary-lobby-btn subtle" type="button">+15s</button>
+          <button id="host-extend-timer-30-btn" class="secondary-lobby-btn subtle" type="button">+30s</button>
+        </div>
+        <div id="host-turn-timer-status" class="host-turn-timer-status">Turn timer is enabled.</div>
+      </div>
       <div id="host-player-list" class="host-player-list"></div>
     </div>
   </div>

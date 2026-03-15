@@ -4,8 +4,15 @@
 
 const Lobby = (() => {
     const TOKEN_OPTIONS = window.TokenCatalog?.TOKEN_OPTIONS || [];
+    const MAX_CUSTOM_AVATAR_BYTES = 2 * 1024 * 1024;
+    const ALLOWED_CUSTOM_AVATAR_MIME_TYPES = new Set([
+        'image/png',
+        'image/jpeg',
+        'image/webp',
+        'image/gif'
+    ]);
 
-    // Exactly 6 Players
+    // Named characters stay exclusive; custom can be reused by every player.
     const CHARACTER_COLORS = {
         'bilo':    '#8e44ad', // Deep Purple
         'osss':    '#f1c40f', // Gold
@@ -79,8 +86,102 @@ const Lobby = (() => {
     let lobbyState        = null;
     let useCustomColor    = false;
     let selectedCustomColor = '#ffffff';
-    let localCustomAvatar = null; // blob URL for local preview
+    let localCustomAvatar = null; // base64 data URL for local preview
     let localCustomName   = '';
+
+    function sanitizeCustomName(value) {
+        const raw = typeof value === 'string' ? value.trim() : '';
+        return raw.slice(0, 15);
+    }
+
+    function escapeHtmlAttr(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function validateCustomAvatarFile(file) {
+        if (!file) return 'Choose an image file first.';
+        if (!String(file.type || '').startsWith('image/')) {
+            return 'Avatar must be an image file.';
+        }
+        if (!ALLOWED_CUSTOM_AVATAR_MIME_TYPES.has(file.type)) {
+            return 'Use PNG, JPG, WEBP, or GIF for custom avatar images.';
+        }
+        if (file.size > MAX_CUSTOM_AVATAR_BYTES) {
+            return 'Avatar image must be 2MB or smaller.';
+        }
+        return null;
+    }
+
+    function normalizeCustomAvatarDataUrl(value) {
+        if (typeof value !== 'string') {
+            return { avatarUrl: null, error: null };
+        }
+
+        const normalized = value.trim();
+        if (!normalized) {
+            return { avatarUrl: null, error: null };
+        }
+
+        const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)$/i.exec(normalized);
+        if (!match) {
+            return {
+                avatarUrl: null,
+                error: 'Custom avatar format is invalid. Please upload a PNG, JPG, WEBP, or GIF image.'
+            };
+        }
+
+        const mimeType = match[1].toLowerCase();
+        if (!ALLOWED_CUSTOM_AVATAR_MIME_TYPES.has(mimeType)) {
+            return {
+                avatarUrl: null,
+                error: 'Use PNG, JPG, WEBP, or GIF for custom avatar images.'
+            };
+        }
+
+        const base64Payload = match[2].replace(/\s+/g, '');
+        if (!base64Payload || !/^[a-z0-9+/]+={0,2}$/i.test(base64Payload) || base64Payload.length % 4 !== 0) {
+            return {
+                avatarUrl: null,
+                error: 'Custom avatar data is invalid. Please upload the image again.'
+            };
+        }
+
+        const padding = base64Payload.endsWith('==') ? 2 : (base64Payload.endsWith('=') ? 1 : 0);
+        const binarySize = Math.floor((base64Payload.length * 3) / 4) - padding;
+        if (!Number.isFinite(binarySize) || binarySize <= 0) {
+            return {
+                avatarUrl: null,
+                error: 'Custom avatar data is invalid. Please upload the image again.'
+            };
+        }
+
+        if (binarySize > MAX_CUSTOM_AVATAR_BYTES) {
+            return {
+                avatarUrl: null,
+                error: 'Avatar image must be 2MB or smaller.'
+            };
+        }
+
+        return {
+            avatarUrl: `data:${mimeType};base64,${base64Payload}`,
+            error: null
+        };
+    }
+
+    function buildCustomCharacterPayload(selectData) {
+        selectData.customName = sanitizeCustomName(localCustomName) || 'Custom Player';
+
+        const avatarResult = normalizeCustomAvatarDataUrl(localCustomAvatar);
+        localCustomAvatar = avatarResult.avatarUrl;
+        if (avatarResult.error) {
+            Notifications.notifyError(avatarResult.error);
+        }
+        selectData.customAvatarUrl = avatarResult.avatarUrl || null;
+    }
 
     function init(socketInstance) {
         socket = socketInstance;
@@ -95,6 +196,8 @@ const Lobby = (() => {
             myPlayerId = data.playerId || null;
             selectedCharacter = data.character || null;
             selectedToken = data.tokenId || null;
+            localCustomName = sanitizeCustomName(data.customName || data.name || localCustomName);
+            localCustomAvatar = normalizeCustomAvatarDataUrl(data.customAvatarUrl || localCustomAvatar).avatarUrl;
             useCustomColor = Boolean(normalizeHexColor(data.customColor));
             selectedCustomColor = normalizeHexColor(data.customColor) || selectedCustomColor;
             syncCustomColorControls();
@@ -115,6 +218,8 @@ const Lobby = (() => {
         socket.on('character-confirmed', (data) => {
             selectedCharacter = data.character;
             selectedToken = data.tokenId || selectedToken;
+            localCustomName = sanitizeCustomName(data.customName || localCustomName);
+            localCustomAvatar = normalizeCustomAvatarDataUrl(data.customAvatarUrl || localCustomAvatar).avatarUrl;
             useCustomColor = Boolean(normalizeHexColor(data.customColor));
             selectedCustomColor = normalizeHexColor(data.customColor) || selectedCustomColor;
             syncCustomColorControls();
@@ -187,12 +292,16 @@ const Lobby = (() => {
 
         validCharacters.forEach((char) => {
             const isMine  = selectedCharacter === char.name;
-            const isTaken = char.taken && !isMine;
+            const isTaken = char.name === 'custom' ? false : (char.taken && !isMine);
             const color   = CHARACTER_COLORS[char.name];
             const stats   = CHARACTER_STATS[char.name];
             const display = CHARACTER_DISPLAY[char.name];
             const imgSrc  = `./characters/${char.name}.webp`;
             const statusLabel = isMine ? 'SELECTED' : isTaken ? (char.offline ? 'OFFLINE' : 'TAKEN') : 'SELECT';
+            const customAvatarSrc = isMine
+                ? (localCustomAvatar || './characters/custom.svg')
+                : './characters/custom.svg';
+            const escapedCustomName = escapeHtmlAttr(localCustomName);
             const tokenText = isMine && selectedToken
                 ? `TOKEN • ${getTokenLabel(selectedToken).toUpperCase()}`
                 : '&nbsp;';
@@ -213,19 +322,19 @@ const Lobby = (() => {
                                 <div class="tcg-custom-inputs">
                                     <div class="tcg-custom-field">
                                         <span class="tcg-field-label">NAME YOUR CHARACTER</span>
-                                        <input type="text" class="tcg-custom-name-input" placeholder="Enter Name..." maxlength="15" value="${localCustomName}" />
+                                        <input type="text" class="tcg-custom-name-input" placeholder="Enter Name..." maxlength="15" value="${escapedCustomName}" />
                                     </div>
                                     <div class="tcg-custom-field">
                                         <span class="tcg-field-label">PLAYER AVATAR</span>
                                         <label class="tcg-custom-file-label">
-                                            <input type="file" class="tcg-custom-file-input" accept="image/*" />
+                                            <input type="file" class="tcg-custom-file-input" accept="image/png,image/jpeg,image/webp,image/gif" />
                                             <span>📷 UPLOAD PHOTO</span>
                                         </label>
                                     </div>
                                 </div>
                             ` : ''}
                             <img class="tcg-avatar ${char.name === 'custom' ? 'custom-avatar' : ''}" 
-                                 src="${char.name === 'custom' ? (char.customAvatarUrl || localCustomAvatar || './characters/custom.svg') : imgSrc}" 
+                                 src="${char.name === 'custom' ? customAvatarSrc : imgSrc}" 
                                  loading="lazy" decoding="async" fetchpriority="low" 
                                  onerror="this.onerror=null; this.src='./characters/${char.name}.svg';" 
                                  alt="${display}" />
@@ -296,8 +405,7 @@ const Lobby = (() => {
                         customColor: getSelectedLobbyColor()
                     };
                     if (char.name === 'custom') {
-                        selectData.customName = localCustomName || 'Custom Player';
-                        selectData.customAvatarUrl = localCustomAvatar || null;
+                        buildCustomCharacterPayload(selectData);
                     }
                     socket.emit('select-character', selectData);
                 }
@@ -309,22 +417,47 @@ const Lobby = (() => {
                 const fileInput = wrapper.querySelector('.tcg-custom-file-input');
 
                 nameInput?.addEventListener('input', (e) => {
-                    localCustomName = e.target.value;
-                    wrapper.querySelector('.tcg-card-name').textContent = localCustomName || 'CUSTOM';
+                    localCustomName = sanitizeCustomName(e.target.value);
+                    if (nameInput.value !== localCustomName) {
+                        nameInput.value = localCustomName;
+                    }
                 });
 
                 fileInput?.addEventListener('change', (e) => {
-                    const file = e.target.files[0];
-                    if (file) {
-                        const reader = new FileReader();
-                        reader.onload = (event) => {
-                            const base64Data = event.target.result;
-                            localCustomAvatar = base64Data;
-                            const avatarImg = wrapper.querySelector('.tcg-avatar');
-                            if (avatarImg) avatarImg.src = base64Data;
-                        };
-                        reader.readAsDataURL(file);
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+
+                    const validationError = validateCustomAvatarFile(file);
+                    if (validationError) {
+                        e.target.value = '';
+                        Notifications.notifyError(validationError);
+                        return;
                     }
+
+                    const reader = new FileReader();
+                    reader.onerror = () => {
+                        e.target.value = '';
+                        Notifications.notifyError('Could not read that image. Try another file.');
+                    };
+                    reader.onload = (event) => {
+                        const base64Data = typeof event?.target?.result === 'string'
+                            ? event.target.result
+                            : null;
+                        if (!base64Data) {
+                            Notifications.notifyError('Could not read that image. Try another file.');
+                            return;
+                        }
+                        const avatarResult = normalizeCustomAvatarDataUrl(base64Data);
+                        if (avatarResult.error) {
+                            Notifications.notifyError(avatarResult.error);
+                            return;
+                        }
+                        localCustomAvatar = avatarResult.avatarUrl;
+                        const avatarImg = wrapper.querySelector('.tcg-avatar');
+                        if (avatarImg) avatarImg.src = avatarResult.avatarUrl;
+                        Notifications.show('Custom avatar uploaded.', 'success');
+                    };
+                    reader.readAsDataURL(file);
                 });
 
                 // Prevent flip when clicking inputs
@@ -346,8 +479,7 @@ const Lobby = (() => {
                                 customColor: getSelectedLobbyColor()
                             };
                             if (char.name === 'custom') {
-                                selectData.customName = localCustomName || 'Custom Player';
-                                selectData.customAvatarUrl = localCustomAvatar || null;
+                                buildCustomCharacterPayload(selectData);
                             }
                             socket.emit('select-character', selectData);
                         }
@@ -408,7 +540,6 @@ const Lobby = (() => {
         const statusEl     = document.getElementById('lobby-status');
         const readyPlayers = state.players.filter(p => p.character);
         const count        = readyPlayers.length;
-        const total        = Object.keys(CHARACTER_COLORS).length; // Now 6
         const botCount     = readyPlayers.filter(p => p.isBot).length;
         const humanCount   = count - botCount;
         const isHost       = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
@@ -417,7 +548,7 @@ const Lobby = (() => {
             statusEl.textContent = 'AWAITING PLAYERS...';
         } else {
             const botText = botCount > 0 ? ` • ${botCount} BOTS` : '';
-            statusEl.textContent = `${count}/${total} SELECTED (${humanCount} HUMANS)${botText}`;
+            statusEl.textContent = `${count} READY (${humanCount} HUMANS)${botText}`;
         }
 
         const startBtn = document.getElementById('start-game-btn');
@@ -474,7 +605,7 @@ const Lobby = (() => {
             const row = document.createElement('div');
             row.className = 'host-player-row';
 
-            const displayName = member.character || member.name || 'Unselected player';
+            const displayName = member.name || member.character || 'Unselected player';
             const tags = [
                 member.isBot ? 'BOT' : 'PLAYER',
                 member.character ? 'LOCKED IN' : 'UNSELECTED',
@@ -490,7 +621,7 @@ const Lobby = (() => {
             `;
 
             row.querySelector('.host-kick-btn').addEventListener('click', () => {
-                const targetLabel = member.character || member.name || 'this player';
+                const targetLabel = member.name || member.character || 'this player';
                 if (!window.confirm(`Kick ${targetLabel} from the room?`)) return;
                 socket.emit('kick-player', { playerId: member.playerId });
             });
