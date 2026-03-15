@@ -21,9 +21,11 @@ class Player {
     constructor(id, character, color, sessionToken = null, options = {}) {
         this.id = id;
         this.character = character;
+        this.name = options.name || character;
         this.color = color;
         this.tokenId = options.tokenId || 'pawn';
         this.sessionToken = sessionToken;
+        this.customAvatarUrl = options.customAvatarUrl || null;
         this.socketId = null;
         this.position = 0;        // tile index 0-39
         this.money = 1500;
@@ -44,6 +46,7 @@ class Player {
         return {
             id: this.id,
             character: this.character,
+            name: this.name,
             color: this.color,
             tokenId: this.tokenId,
             position: this.position,
@@ -56,6 +59,7 @@ class Player {
             isConnected: this.isConnected,
             isBot: this.isBot,
             bankruptcyDeadline: this.bankruptcyDeadline,
+            customAvatarUrl: this.customAvatarUrl,
             stats: { ...this.stats }
         };
     }

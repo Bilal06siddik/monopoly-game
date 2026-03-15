@@ -221,6 +221,13 @@
   z-index: 5;
 }
 
+.tcg-avatar.custom-avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: auto;
+}
+
 .tcg-card-wrapper:hover .tcg-avatar {
   transform: scale(1.08) translateY(-4px);
 }
@@ -247,6 +254,98 @@
 .tcg-info-btn:hover {
   background: #fff;
   color: #000;
+}
+
+/* Custom Inputs Styling */
+.tcg-custom-inputs {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(10, 15, 25, 0.95);
+  backdrop-filter: blur(8px);
+  padding: 24px 16px;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 20px;
+}
+
+.tcg-custom-field {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+
+.tcg-field-label {
+  font-family: var(--pixel-font);
+  font-size: 7px;
+  color: var(--char-color);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.tcg-card-wrapper.selected .tcg-custom-inputs,
+.tcg-card-wrapper.taken .tcg-custom-inputs {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tcg-custom-name-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: #fff;
+  font-family: var(--body-font);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 12px;
+  transition: all 0.2s;
+}
+
+.tcg-custom-name-input:focus {
+  border-color: var(--char-color);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 15px rgba(var(--char-color-rgb), 0.2);
+  outline: none;
+}
+
+.tcg-custom-file-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  background: rgba(255,255,255,0.08);
+  border: 2px dashed rgba(255,255,255,0.2);
+  color: #fff;
+  font-family: var(--body-font);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 1px;
+  padding: 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tcg-custom-file-label:hover {
+  background: rgba(var(--char-color-rgb), 0.1);
+  border-color: var(--char-color);
+  color: var(--char-color);
+}
+
+.tcg-custom-file-input {
+  display: none;
 }
 
 /* CTA Footer Front */

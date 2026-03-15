@@ -12,7 +12,8 @@ const Lobby = (() => {
         'bdlbaky': '#2ecc71', // Emerald Green
         'fawzy':   '#e74c3c', // Crimson Red
         'hamza':   '#3498db', // Ocean Blue
-        'missiry': '#e61a8d'  // Hot Pink
+        'missiry': '#e61a8d',  // Hot Pink
+        'custom':  '#95a5a6'   // Slate Grey
     };
 
     const CHARACTER_DISPLAY = {
@@ -21,7 +22,8 @@ const Lobby = (() => {
         'bdlbaky': 'ABDELBAKY',
         'fawzy':   'FAWZY',
         'hamza':   'HAMZA',
-        'missiry': 'MISSIRY'
+        'missiry': 'MISSIRY',
+        'custom':  'CUSTOM'
     };
 
     // User-provided TCG Data
@@ -61,6 +63,12 @@ const Lobby = (() => {
             toxicityLevel: '40%', 
             toxBar: '████░░░░░░',
             quote: '"Ha-falsakou kolokou!"' 
+        },
+        'custom': {
+            trait: 'The Wildcard',
+            toxicityLevel: '???%',
+            toxBar: '░░░░░░░░░░',
+            quote: '"Who am I? You decide."'
         }
     };
 
@@ -71,6 +79,8 @@ const Lobby = (() => {
     let lobbyState        = null;
     let useCustomColor    = false;
     let selectedCustomColor = '#ffffff';
+    let localCustomAvatar = null; // blob URL for local preview
+    let localCustomName   = '';
 
     function init(socketInstance) {
         socket = socketInstance;
@@ -196,14 +206,29 @@ const Lobby = (() => {
                     
                     <!-- FRONT OF CARD -->
                     <div class="tcg-card-front">
-                        <div class="tcg-card-header">
-                            <img src="/images/bank-el-haz-logo.png" class="tcg-card-logo" alt="Bank El Haz" />
-                            <span class="tcg-card-name">${display}</span>
-                        </div>
                         
                         <div class="tcg-artwork-box">
                             <div class="tcg-info-btn" title="View Stats">i</div>
-                            <img class="tcg-avatar" src="${imgSrc}" loading="lazy" decoding="async" fetchpriority="low" onerror="this.onerror=null; this.src='./characters/${char.name}.svg';" alt="${display}" />
+                            ${char.name === 'custom' && !isTaken ? `
+                                <div class="tcg-custom-inputs">
+                                    <div class="tcg-custom-field">
+                                        <span class="tcg-field-label">NAME YOUR CHARACTER</span>
+                                        <input type="text" class="tcg-custom-name-input" placeholder="Enter Name..." maxlength="15" value="${localCustomName}" />
+                                    </div>
+                                    <div class="tcg-custom-field">
+                                        <span class="tcg-field-label">PLAYER AVATAR</span>
+                                        <label class="tcg-custom-file-label">
+                                            <input type="file" class="tcg-custom-file-input" accept="image/*" />
+                                            <span>📷 UPLOAD PHOTO</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            ` : ''}
+                            <img class="tcg-avatar ${char.name === 'custom' ? 'custom-avatar' : ''}" 
+                                 src="${char.name === 'custom' ? (char.customAvatarUrl || localCustomAvatar || './characters/custom.svg') : imgSrc}" 
+                                 loading="lazy" decoding="async" fetchpriority="low" 
+                                 onerror="this.onerror=null; this.src='./characters/${char.name}.svg';" 
+                                 alt="${display}" />
                         </div>
 
                         <div class="tcg-card-footer">
@@ -266,12 +291,46 @@ const Lobby = (() => {
                     selectedCharacter = null;
                     selectedToken = null;
                 } else {
-                    socket.emit('select-character', {
+                    const selectData = {
                         name: char.name,
                         customColor: getSelectedLobbyColor()
-                    });
+                    };
+                    if (char.name === 'custom') {
+                        selectData.customName = localCustomName || 'Custom Player';
+                        selectData.customAvatarUrl = localCustomAvatar || null;
+                    }
+                    socket.emit('select-character', selectData);
                 }
             });
+
+            // Custom Input Handlers
+            if (char.name === 'custom' && !isTaken) {
+                const nameInput = wrapper.querySelector('.tcg-custom-name-input');
+                const fileInput = wrapper.querySelector('.tcg-custom-file-input');
+
+                nameInput?.addEventListener('input', (e) => {
+                    localCustomName = e.target.value;
+                    wrapper.querySelector('.tcg-card-name').textContent = localCustomName || 'CUSTOM';
+                });
+
+                fileInput?.addEventListener('change', (e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                            const base64Data = event.target.result;
+                            localCustomAvatar = base64Data;
+                            const avatarImg = wrapper.querySelector('.tcg-avatar');
+                            if (avatarImg) avatarImg.src = base64Data;
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                });
+
+                // Prevent flip when clicking inputs
+                nameInput?.addEventListener('click', e => e.stopPropagation());
+                fileInput?.closest('label')?.addEventListener('click', e => e.stopPropagation());
+            }
 
             // Full card click fallback
             wrapper.addEventListener('click', (e) => {
@@ -282,10 +341,15 @@ const Lobby = (() => {
                             selectedCharacter = null;
                             selectedToken = null;
                         } else {
-                            socket.emit('select-character', {
+                            const selectData = {
                                 name: char.name,
                                 customColor: getSelectedLobbyColor()
-                            });
+                            };
+                            if (char.name === 'custom') {
+                                selectData.customName = localCustomName || 'Custom Player';
+                                selectData.customAvatarUrl = localCustomAvatar || null;
+                            }
+                            socket.emit('select-character', selectData);
                         }
                     }
                 }

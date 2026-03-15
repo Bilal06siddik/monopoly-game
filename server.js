@@ -73,14 +73,15 @@ app.get('/models/:file', (req, res) => {
   res.sendFile(path.join(__dirname, file));
 });
 
-const CHARACTERS = ['bilo', 'osss', 'bdlbaky', 'fawzy', 'hamza', 'missiry'];
+const CHARACTERS = ['bilo', 'osss', 'bdlbaky', 'fawzy', 'hamza', 'missiry', 'custom'];
 const CHARACTER_COLORS = {
   bilo:     '#8e44ad', // Deep Purple
   osss:     '#f1c40f', // Gold
   bdlbaky:  '#2ecc71', // Emerald Green
   fawzy:    '#e74c3c', // Crimson Red
   hamza:    '#3498db', // Ocean Blue
-  missiry:  '#e61a8d'  // Hot Pink
+  missiry:  '#e61a8d', // Hot Pink
+  custom:   '#95a5a6'  // Slate Grey
 };
 
 const TURN_TIMER_SECONDS = 60;
@@ -373,9 +374,10 @@ function getLobbyState() {
     .filter(entry => entry.character)
     .map(entry => ({
       id: entry.playerId,
-      name: entry.name,
+      name: entry.character === 'custom' ? (entry.customName || 'Custom Player') : entry.name,
       character: entry.character,
       tokenId: entry.tokenId || null,
+      customAvatarUrl: entry.customAvatarUrl || null,
       isBot: Boolean(entry.isBot)
     }));
 
@@ -390,9 +392,10 @@ function getLobbyState() {
     players: playerList,
     members: [...lobbyPlayers.values()].map(entry => ({
       playerId: entry.playerId,
-      name: entry.name || null,
+      name: entry.character === 'custom' ? (entry.customName || 'Custom Player') : (entry.name || null),
       character: entry.character || null,
       tokenId: entry.tokenId || null,
+      customAvatarUrl: entry.customAvatarUrl || null,
       isBot: Boolean(entry.isBot),
       isOnline: Boolean(entry.isBot || entry.socketId),
       isHost: Boolean(roomState?.hostSessionToken && entry.sessionToken === roomState.hostSessionToken)
@@ -405,7 +408,8 @@ function getLobbyState() {
         takenBy: holder?.playerId || null,
         offline: Boolean(holder?.character && !holder?.isBot && !holder?.socketId),
         takenByBot: Boolean(holder?.isBot),
-        takenByName: holder?.name || holder?.character || null
+        takenByName: holder?.character === 'custom' ? (holder.customName || 'Custom Player') : (holder?.name || holder?.character || null),
+        customAvatarUrl: holder?.customAvatarUrl || null
       };
     }),
     tokens: TOKEN_OPTIONS.map(token => ({
@@ -554,7 +558,8 @@ function emitPlayerSession(socket, player) {
     playerId: player?.id || null,
     character: player?.character || null,
     tokenId: player?.tokenId || null,
-    customColor: player?.customColor || null
+    customColor: player?.customColor || null,
+    customAvatarUrl: player?.customAvatarUrl || null
   });
 }
 
@@ -636,11 +641,9 @@ function buildSavePayload() {
       pauseState: gameState.pauseState,
       eliminationOrder: [...gameState.eliminationOrder],
       players: gameState.players.map(player => ({
-        id: player.id,
-        character: player.character,
-        color: player.color,
         tokenId: player.tokenId,
         sessionToken: player.sessionToken,
+        customAvatarUrl: player.customAvatarUrl,
         position: player.position,
         money: player.money,
         properties: [...player.properties],
@@ -690,7 +693,8 @@ function restoreGameStateFromSave(saveState) {
       {
         isBot: Boolean(playerData.isBot),
         isConnected: Boolean(playerData.isBot || lobbyEntry?.socketId),
-        tokenId: resolveLobbyToken(playerData.character || lobbyEntry?.character, playerData.tokenId)
+        tokenId: resolveLobbyToken(playerData.character || lobbyEntry?.character, playerData.tokenId),
+        customAvatarUrl: playerData.customAvatarUrl || lobbyEntry?.customAvatarUrl || null
       }
     );
 
@@ -1496,7 +1500,7 @@ function concludeGame(winner) {
   stopTurnTimer();
 
   const summary = SummaryUtils.generateGameSummary(gameState, winner.id);
-  logEvent(`🏆 ${winner.character} WINS THE GAME!`, 'win');
+  logEvent(`🏆 ${winner.name} WINS THE GAME!`, 'win');
   emitToRoom('game-over', {
     winner: winner.toJSON(),
     summary,
@@ -1530,7 +1534,7 @@ function handleBankruptcy(player) {
   }
 
   if (!alreadyInRecovery) {
-    logEvent(`⚠️ ${player.character} is in debt ($${player.money})! Recover before ending the turn or declare bankruptcy.`, 'bankrupt');
+    logEvent(`⚠️ ${player.name} is in debt ($${player.money})! Recover before ending the turn or declare bankruptcy.`, 'bankrupt');
   }
   emitToRoom('bankruptcy-warning', {
     playerId: player.id,
@@ -1549,7 +1553,7 @@ function checkBankruptcyRecovery(player) {
   if (player.money >= 0) {
     player.bankruptcyDeadline = null;
 
-    logEvent(`✅ ${player.character} recovered from debt!`, 'system');
+    logEvent(`✅ ${player.name} recovered from debt!`, 'system');
     emitToRoom('bankruptcy-resolved', {
       playerId: player.id,
       character: player.character,
@@ -1585,10 +1589,10 @@ function executeBankruptcy(player) {
 
   removeTradesForPlayer(player.id, {
     code: 'player-bankrupt',
-    message: `${player.character} is bankrupt, so the trade can no longer continue.`
+    message: `${player.name} is bankrupt, so the trade can no longer continue.`
   });
 
-  logEvent(`💀 ${player.character} went BANKRUPT!`, 'bankrupt');
+  logEvent(`💀 ${player.name} went BANKRUPT!`, 'bankrupt');
   emitToRoom('player-bankrupt', {
     playerId: player.id,
     character: player.character,
@@ -1628,7 +1632,7 @@ function resolveActionCardAndMaybeMove(player) {
   }
   const card = drawActionCard();
   player.stats.cardsDrawn++;
-  logEvent(`🃏 ${player.character}: "${card.text}"`, 'card');
+  logEvent(`🃏 ${player.name}: "${card.text}"`, 'card');
 
   const moneySnapshot = snapshotPlayerMoney();
   const result = CardUtils.resolveActionCard(gameState, player, card);
@@ -1648,6 +1652,7 @@ function resolveActionCardAndMaybeMove(player) {
   emitToRoom('card-drawn', {
     playerId: player.id,
     character: player.character,
+    playerName: player.name,
     card,
     result,
     gameState: snapshotGameState()
@@ -1691,11 +1696,12 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
     if (collected > 0) {
       gameState.taxPool = 0;
       player.money += collected;
-      logEvent(`💰 ${player.character} collected the $${collected} Bailout fund!`, 'buy');
+      logEvent(`💰 ${player.name} collected the $${collected} Bailout fund!`, 'buy');
       logPlayerMoneyDelta(player, collected, 'from the Bailout fund', 'buy');
   emitToRoom('bailout-collected', {
         playerId: player.id,
         character: player.character,
+        playerName: player.name,
         amount: collected,
         gameState: snapshotGameState()
       });
@@ -1709,10 +1715,11 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
     player.jailTurns = 0;
     gameState.doublesCount = 0;
     player.stats.jailVisits++;
-    logEvent(`🚔 ${player.character} was sent to Jail!`, 'tax');
+    logEvent(`🚔 ${player.name} was sent to Jail!`, 'tax');
   emitToRoom('sent-to-jail', {
       playerId: player.id,
       character: player.character,
+      playerName: player.name,
       gameState: snapshotGameState()
     });
     return 'done';
@@ -1722,10 +1729,11 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
     const taxAmount = Rules.calculateTaxAmount(tile, player);
     player.money -= taxAmount;
     gameState.taxPool += taxAmount;
-    logEvent(`💸 ${player.character} paid $${taxAmount} in ${tile.name}`, 'tax');
+    logEvent(`💸 ${player.name} paid $${taxAmount} in ${tile.name}`, 'tax');
   emitToRoom('tax-paid', {
       playerId: player.id,
       character: player.character,
+      playerName: player.name,
       amount: taxAmount,
       tileName: tile.name,
       gameState: snapshotGameState()
@@ -1761,13 +1769,14 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
         player.stats.rentPaid += rent;
         owner.stats.rentReceived += rent;
         tile.rentCollected += rent;
-        tile.addHistory('rent', player.character, player.color, rent);
-        logEvent(`💰 ${player.character} paid $${rent} rent to ${owner.character} for ${tile.name}`, 'rent');
+        tile.addHistory('rent', player.name, player.color, rent);
+        logEvent(`💰 ${player.name} paid $${rent} rent to ${owner.name} for ${tile.name}`, 'rent');
   emitToRoom('rent-paid', {
           payerId: player.id,
           payerCharacter: player.character,
           ownerId: owner.id,
           ownerCharacter: owner.character,
+          ownerName: owner.name,
           amount: rent,
           tileName: tile.name,
           gameState: snapshotGameState()
@@ -1836,11 +1845,12 @@ function handleRollDice(playerId) {
       currentPlayer.inJail = false;
       currentPlayer.jailTurns = 0;
       gameState.doublesCount = 0;
-      logEvent(`🔓 ${currentPlayer.character} rolled doubles and escaped jail!`, 'roll');
+      logEvent(`🔓 ${currentPlayer.name} rolled doubles and escaped jail!`, 'roll');
       // #7: Escaping jail by rolling doubles ends the turn (no move this turn)
       emitToRoom('dice-rolled', {
         playerId,
         character: currentPlayer.character,
+        playerName: currentPlayer.name,
         die1: diceResult.die1,
         die2: diceResult.die2,
         total: diceResult.total,
@@ -1863,7 +1873,7 @@ function handleRollDice(playerId) {
         // After 3 failed rolls, the player is released for free.
         currentPlayer.inJail = false;
         currentPlayer.jailTurns = 0;
-        logEvent(`🔓 ${currentPlayer.character} was released from jail after 3 failed rolls.`, 'roll');
+        logEvent(`🔓 ${currentPlayer.name} was released from jail after 3 failed rolls.`, 'roll');
         emitToRoom('dice-rolled', {
           playerId,
           character: currentPlayer.character,
@@ -1883,7 +1893,7 @@ function handleRollDice(playerId) {
         scheduleMoveResolution(playerId, 0, 0, { action: 'finish-turn' });
         return true;
       } else {
-        logEvent(`🔒 ${currentPlayer.character} failed to roll doubles (jail turn ${currentPlayer.jailTurns}/3)`, 'roll');
+        logEvent(`🔒 ${currentPlayer.name} failed to roll doubles (jail turn ${currentPlayer.jailTurns}/3)`, 'roll');
         emitToRoom('dice-rolled', {
           playerId,
           character: currentPlayer.character,
@@ -1914,11 +1924,12 @@ function handleRollDice(playerId) {
   // #18: History log includes tile name
   const landedTile = gameState.properties[moveResult.newPosition];
   const tileName = landedTile ? landedTile.name : `tile ${moveResult.newPosition}`;
-  logEvent(`🎲 ${currentPlayer.character} rolled ${diceResult.total} and went to ${tileName}${diceResult.isDoubles ? ' (DOUBLES!)' : ''}`, 'roll');
+  logEvent(`🎲 ${currentPlayer.name} rolled ${diceResult.total} and went to ${tileName}${diceResult.isDoubles ? ' (DOUBLES!)' : ''}`, 'roll');
 
   emitToRoom('dice-rolled', {
     playerId,
     character: currentPlayer.character,
+    playerName: currentPlayer.name,
     die1: diceResult.die1,
     die2: diceResult.die2,
     total: diceResult.total,
@@ -1948,12 +1959,12 @@ function handlePassProperty(playerId, { timedOut = false } = {}) {
 
   if (timedOut) {
     if (currentPlayer.isBot) {
-      logEvent(`⏰ ${currentPlayer.character} ran out of time on ${tile.name}. Skipping the auction.`, 'system');
+      logEvent(`⏰ ${currentPlayer.name} ran out of time on ${tile.name}. Skipping the auction.`, 'system');
     } else {
-      logEvent(`⏰ ${currentPlayer.character} ran out of time on ${tile.name}. Starting auction.`, 'system');
+      logEvent(`⏰ ${currentPlayer.name} ran out of time on ${tile.name}. Starting auction.`, 'system');
     }
   } else {
-    logEvent(`⏭️ ${currentPlayer.character} passed on ${tile.name}`, 'pass');
+    logEvent(`⏭️ ${currentPlayer.name} passed on ${tile.name}`, 'pass');
   }
 
   if (currentPlayer.isBot) {
@@ -1983,7 +1994,7 @@ function handleBuyProperty(playerId, tileIndex) {
   currentPlayer.money -= tile.price;
   currentPlayer.stats.propertiesBought++;
   awardPropertyToPlayer(currentPlayer, tile, tile.price, 'buy');
-  logEvent(`🏠 ${currentPlayer.character} bought ${tile.name} for $${tile.price}`, 'buy');
+  logEvent(`🏠 ${currentPlayer.name} bought ${tile.name} for $${tile.price}`, 'buy');
   invalidateStaleTrades();
 
   emitToRoom('property-bought', {
@@ -2420,7 +2431,17 @@ io.on('connection', socket => {
 
     currentEntry.character = characterName;
     currentEntry.tokenId = resolveLobbyToken(characterName, currentEntry.tokenId);
-    currentEntry.name = characterName;
+
+    if (characterName === 'custom') {
+      currentEntry.customName = typeof data === 'object' ? (data.customName || 'Custom Player') : 'Custom Player';
+      currentEntry.customAvatarUrl = typeof data === 'object' ? (data.customAvatarUrl || null) : null;
+      currentEntry.name = currentEntry.customName;
+    } else {
+      currentEntry.name = characterName;
+      delete currentEntry.customName;
+      delete currentEntry.customAvatarUrl;
+    }
+
     if (customColor) currentEntry.customColor = customColor;
     else delete currentEntry.customColor;
     currentEntry.socketId = socket.id;
@@ -2428,13 +2449,16 @@ io.on('connection', socket => {
     socket.emit('character-confirmed', {
       character: characterName,
       tokenId: currentEntry.tokenId,
-      customColor: currentEntry.customColor || null
+      customColor: currentEntry.customColor || null,
+      customName: currentEntry.customName || null,
+      customAvatarUrl: currentEntry.customAvatarUrl || null
     });
     emitPlayerSession(socket, {
       id: currentEntry.playerId,
       character: characterName,
       tokenId: currentEntry.tokenId,
-      customColor: currentEntry.customColor || null
+      customColor: currentEntry.customColor || null,
+      customAvatarUrl: currentEntry.customAvatarUrl || null
     });
     emitLobbyUpdate();
   });
@@ -2564,23 +2588,21 @@ io.on('connection', socket => {
       clearInterval(auctionTimer);
       auctionTimer = null;
     }
+    gameState.players = [];
+    readyPlayers.forEach((p, idx) => {
+      const color = CHARACTER_COLORS[p.character] || '#ffffff';
+      const player = gameState.addPlayer(p.playerId, p.character, color, p.sessionToken, {
+        name: p.customName || p.character,
+        customAvatarUrl: p.customAvatarUrl,
+        isConnected: true 
+      });
 
-    readyPlayers.forEach(entry => {
-      const playerRecord = gameState.addPlayer(
-        entry.playerId,
-        entry.character,
-        entry.customColor || CHARACTER_COLORS[entry.character],
-        entry.isBot ? null : entry.sessionToken,
-        {
-          isBot: Boolean(entry.isBot),
-          isConnected: entry.isBot ? true : Boolean(entry.socketId),
-          tokenId: resolveLobbyToken(entry.character, entry.tokenId)
+      if (p.socketId) {
+        const targetSocket = io.sockets.sockets.get(p.socketId);
+        if (targetSocket) {
+          replaceSocketBinding(targetSocket, player);
         }
-      );
-      playerRecord.socketId = entry.socketId;
-      playerRecord.isConnected = entry.isBot ? true : Boolean(entry.socketId);
-      playerRecord.connectedAt = Date.now();
-      playerRecord.lastSeenAt = Date.now();
+      }
     });
 
     gameState.isGameStarted = true;
@@ -2591,13 +2613,6 @@ io.on('connection', socket => {
     gameState.eliminationOrder = [];
 
     setTurnPhase('waiting');
-
-    gameState.players.forEach(currentPlayer => {
-      const targetSocket = getPlayerSocket(currentPlayer.id);
-      if (targetSocket) {
-        replaceSocketBinding(targetSocket, currentPlayer);
-      }
-    });
 
     console.log(`\n  🎮 Game started with ${readyPlayers.length} players!\n`);
     logEvent(`🎮 Game started with ${readyPlayers.length} players!`, 'system');

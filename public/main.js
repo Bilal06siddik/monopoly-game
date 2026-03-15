@@ -863,7 +863,7 @@
 
     socket.on('dice-rolled', (data) => {
         if (!setCurrentGameState(data.gameState)) return;
-        GameUI.showDiceResult(data.die1, data.die2, data.character, data.isDoubles);
+        GameUI.showDiceResult(data.die1, data.die2, data.character, data.isDoubles, data.playerName);
         if (data.isDoubles) Notifications.notifyDoubles();
         if (typeof GameAudio !== 'undefined' && typeof GameAudio.playDiceRoll === 'function') {
             GameAudio.playDiceRoll({ isDoubles: data.isDoubles });

@@ -493,7 +493,7 @@ const GameUI = (() => {
 
         if (!currentCharacter && gameState) {
             const currentPlayer = gameState.players.find(player => player.id === currentPlayerId);
-            if (currentPlayer) currentCharacter = currentPlayer.character;
+            if (currentPlayer) currentCharacter = currentPlayer.name || currentPlayer.character;
         }
 
         if (gameState?.pauseState) {
@@ -580,36 +580,44 @@ const GameUI = (() => {
             const isHostViewer = myPlayerId && currentHostPlayerId && myPlayerId === currentHostPlayerId;
             const showTrade = player.id !== myPlayerId && player.isActive;
             const showKick = isHostViewer && player.id !== myPlayerId;
+            
             const element = document.createElement('div');
             element.className = `lb-card${player.id === myPlayerId ? ' is-me' : ''}${!player.isActive ? ' bankrupt' : ''}`;
             element.style.setProperty('--card-color', player.color);
 
+            const avatarSrc = player.customAvatarUrl || (player.character === 'custom' ? './characters/custom.svg' : `./characters/${player.character.toLowerCase()}.webp`);
+            const displayName = player.name || player.character;
+
             if (!player.isActive) {
                 element.innerHTML = `
-          <div class="lb-rank">#${index + 1}</div>
-          <div class="lb-info">
-            <span class="lb-name" style="color:${player.color}"><s>${player.character}</s></span>
-            <span class="lb-bankrupt">BANKRUPT</span>
-          </div>
-        `;
+                    <div class="lb-rank">#${index + 1}</div>
+                    <img class="lb-avatar" src="${avatarSrc}" style="border-color: ${player.color}" alt="${displayName}">
+                    <div class="lb-player-info">
+                        <div class="lb-name-badges">
+                            <span class="lb-name" style="color:${player.color}"><s>${displayName}</s></span>
+                            <span class="lb-bankrupt">BANKRUPT</span>
+                        </div>
+                    </div>
+                `;
             } else {
                 element.innerHTML = `
-          <div class="lb-rank">#${index + 1}</div>
-          <div class="lb-info">
-            <span class="lb-name" style="color:${player.color}">${player.character}${jailBadge}</span>
-            ${hostBadge}
-            <span class="lb-money">$${player.money}</span>
-            ${propertyCount > 0 ? `<span class="lb-props">🏠 ${propertyCount}</span>` : ''}
-            ${botBadge}
-            ${disconnectedBadge}
-          </div>
-          ${showTrade || showKick ? `
-            <div class="lb-actions">
-              ${showTrade ? `<button class="lb-trade-btn" data-player-id="${player.id}">🤝 Trade</button>` : ''}
-              ${showKick ? `<button class="lb-kick-btn" data-player-id="${player.id}" data-player-name="${player.character}">Kick</button>` : ''}
-            </div>
-          ` : ''}
-        `;
+                    <div class="lb-rank">#${index + 1}</div>
+                    <img class="lb-avatar" src="${avatarSrc}" style="border-color: ${player.color}" alt="${displayName}">
+                    <div class="lb-player-info">
+                        <div class="lb-name-badges">
+                            <span class="lb-name" style="color:${player.color}">${displayName}</span>${jailBadge}
+                            ${hostBadge} ${botBadge} ${disconnectedBadge}
+                        </div>
+                        ${propertyCount > 0 ? `<div class="lb-props-row"><span class="lb-props">🏠 ${propertyCount}</span></div>` : ''}
+                    </div>
+                    <div class="lb-money">$${player.money}</div>
+                    ${showTrade || showKick ? `
+                        <div class="lb-actions">
+                            ${showTrade ? `<button class="lb-trade-btn" data-player-id="${player.id}">🤝 Trade</button>` : ''}
+                            ${showKick ? `<button class="lb-kick-btn" data-player-id="${player.id}" data-player-name="${displayName}">Kick</button>` : ''}
+                        </div>
+                    ` : ''}
+                `;
             }
             panel.appendChild(element);
         });
@@ -639,12 +647,13 @@ const GameUI = (() => {
         updateLeaderboard(players, properties);
     }
 
-    function showDiceResult(die1, die2, character, isDoubles) {
+    function showDiceResult(die1, die2, character, isDoubles, playerName) {
         const element = document.getElementById('dice-result');
         if (!element) return;
 
+        const displayName = playerName || character;
         element.innerHTML = `
-      <span class="dr-char">${character}</span>
+      <span class="dr-char">${displayName}</span>
       <span class="dr-dice">${getDiceFace(die1)} ${getDiceFace(die2)}</span>
       <span class="dr-total">= ${die1 + die2}${isDoubles ? ' 🔥' : ''}</span>
     `;
