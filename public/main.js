@@ -34,10 +34,10 @@
         }, 7000);
     })();
 
-    const { scene, camera, renderer } = GameScene.init();
-    GameBoard.build(scene, renderer);
-    GameDice.init(scene);
-    GameTokens.init(scene, GameBoard.getTileWorldPosition);
+    let scene = null;
+    let camera = null;
+    let renderer = null;
+    let hasStartedRuntime = false;
     const BOARD_MAPS = window.BOARD_MAPS || {};
     const DEFAULT_VIEW_MODE = 'isometric';
     const sessionToken = getOrCreateSessionToken();
@@ -71,6 +71,48 @@
     const hostExtendTimer30Btn = document.getElementById('host-extend-timer-30-btn');
     const hostTurnTimerStatus = document.getElementById('host-turn-timer-status');
     let topBarResizeObserver = null;
+
+    function startRuntime() {
+        if (hasStartedRuntime) return;
+        hasStartedRuntime = true;
+
+        const runtime = GameScene.init();
+        scene = runtime.scene;
+        camera = runtime.camera;
+        renderer = runtime.renderer;
+
+        GameBoard.build(scene, renderer);
+        GameDice.init(scene);
+        GameTokens.init(scene, GameBoard.getTileWorldPosition);
+        GameBoard.initRaycaster(camera, renderer);
+        GameBoard.onTileClick((tileIndex) => {
+            if (!currentGameState) return;
+            const anyModal = document.querySelector('.modal-overlay.show');
+            if (anyModal) return;
+            setFocusedTile(tileIndex);
+            showPropertyDetailsModal(tileIndex);
+        });
+        GameScene.animate(renderRuntimeUI);
+    }
+
+    function scheduleRuntimeStart() {
+        if (hasStartedRuntime) return;
+
+        if (hasExistingSession) {
+            startRuntime();
+            return;
+        }
+
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                if (typeof window.requestIdleCallback === 'function') {
+                    window.requestIdleCallback(() => startRuntime(), { timeout: 800 });
+                    return;
+                }
+                window.setTimeout(startRuntime, 0);
+            });
+        });
+    }
 
     function resolveBoardId(boardId) {
         return BOARD_MAPS[boardId] ? boardId : (window.DEFAULT_BOARD_ID || 'egypt');
@@ -175,6 +217,7 @@
     }
 
     function connectToRoom(roomCode) {
+        startRuntime();
         const normalized = normalizeRoomCode(roomCode);
         if (!normalized) {
             showRoomGate('Enter a valid room code.');
@@ -961,17 +1004,7 @@
         }
     });
 
-    // ── Init Raycaster for clickable board ─────────────────
-    GameBoard.initRaycaster(camera, renderer);
-    GameBoard.onTileClick((tileIndex) => {
-        if (!currentGameState) return;
-        // Don't open modal during dice roll or modal open
-        const anyModal = document.querySelector('.modal-overlay.show');
-        if (anyModal) return;
-        setFocusedTile(tileIndex);
-        showPropertyDetailsModal(tileIndex);
-    });
-    GameScene.animate(renderRuntimeUI);
+    scheduleRuntimeStart();
 
     // ── History Log ───────────────────────────────────────
     socket.on('history-event', (data) => {
