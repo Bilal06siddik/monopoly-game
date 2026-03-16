@@ -146,9 +146,9 @@ const HOST_TIMER_EXTENSION_DEFAULT_SECONDS = 15;
 const HOST_TIMER_EXTENSION_MAX_SECONDS = 180;
 const AUCTION_TIMER_SECONDS = 10;
 const AUCTION_BID_RESET_SECONDS = 5;
-const DICE_ANIMATION_MS = 1800;
-const TOKEN_STEP_MS = 250;
-const MOVE_RESOLUTION_BUFFER_MS = 300;
+const DICE_ANIMATION_MS = 1700;
+const TOKEN_STEP_MS = 170;
+const MOVE_RESOLUTION_BUFFER_MS = 120;
 const CARD_MODAL_MS = 4000;
 const HISTORY_EVENT_LIMIT = 50;
 const BOT_ACTION_MIN_MS = 800;
@@ -788,19 +788,25 @@ function nextStateSequence() {
   return stateSequence;
 }
 
-function snapshotGameState() {
+function snapshotGameState(options = {}) {
   if (!gameState) return null;
+  const snapshotOptions = {
+    includeCustomAvatarUrl: options.includeCustomAvatarUrl === true,
+    includeHistoryEvents: options.includeHistoryEvents === true,
+    includePropertyHistory: options.includePropertyHistory === true,
+    includePropertyStatic: options.includePropertyStatic !== false
+  };
   return {
-    ...gameState.getState(),
+    ...gameState.getState(snapshotOptions),
     stateSequence: nextStateSequence()
   };
 }
 
-function buildGameStatePayload(viewerPlayerId = null) {
+function buildGameStatePayload(viewerPlayerId = null, options = {}) {
   const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
   const selectedBoardId = syncSelectedBoardId(roomState);
   const board = getBoardMapById(selectedBoardId);
-  const payload = gameState ? snapshotGameState() : {
+  const payload = gameState ? snapshotGameState(options) : {
     players: [],
     properties: [],
     currentPlayerIndex: 0,
@@ -822,7 +828,7 @@ function buildGameStatePayload(viewerPlayerId = null) {
   if (viewerPlayerId) {
     payload.pendingTrades = getViewerTrades(viewerPlayerId);
   }
-  payload.historyEvents = [...eventHistory];
+  payload.historyEvents = options.includeHistoryEvents === true ? [...eventHistory] : null;
   payload.roomCode = currentRoomCode;
   payload.joinUrl = currentRoomCode ? `/?room=${currentRoomCode}` : null;
   payload.boardId = board.id;
@@ -940,6 +946,7 @@ function restoreGameStateFromSave(saveState) {
     Object.assign(restoredPlayer.stats, playerData.stats || {});
 
     restoredPlayer.bankruptcyDeadline = playerData.bankruptcyDeadline != null ? Date.now() : null;
+    restoredPlayer.pendingPostDebtPhase = normalizePendingPostDebtPhase(playerData.pendingPostDebtPhase);
   });
 
   restored.properties.forEach(property => {
@@ -1348,11 +1355,24 @@ function emitGameStateSync({ restartTurnTimer = false, targetSocket = null } = {
 
   if (targetSocket) {
     const player = getSocketPlayer(targetSocket);
-    targetSocket.emit('game-state-sync', buildGameStatePayload(player?.id || targetSocket.data.playerId || null));
+    targetSocket.emit('game-state-sync', buildGameStatePayload(
+      player?.id || targetSocket.data.playerId || null,
+      {
+        includeCustomAvatarUrl: true,
+        includeHistoryEvents: true,
+        includePropertyHistory: true,
+        includePropertyStatic: true
+      }
+    ));
     return;
   }
 
-  emitToRoom('game-state-sync', buildGameStatePayload());
+  emitToRoom('game-state-sync', buildGameStatePayload(null, {
+    includeCustomAvatarUrl: false,
+    includeHistoryEvents: false,
+    includePropertyHistory: false,
+    includePropertyStatic: false
+  }));
 }
 
 function stopTurnTimer(emitEvent = true) {
@@ -1639,12 +1659,21 @@ function endAuction() {
     return;
   }
 
-  setTurnPhase('waiting');
-  emitToRoom('turn-changed', {
-    currentPlayerId: currentPlayer.id,
-    currentCharacter: currentPlayer.name || currentPlayer.character,
-    gameState: snapshotGameState()
-  });
+  const pendingPostDebtPhase = normalizePendingPostDebtPhase(currentPlayer.pendingPostDebtPhase);
+  const nextPhase = finishedAuction.returnPhase === 'waiting' && pendingPostDebtPhase
+    ? pendingPostDebtPhase
+    : finishedAuction.returnPhase;
+
+  if (!(currentPlayer.bankruptcyDeadline || currentPlayer.money < 0) && nextPhase === pendingPostDebtPhase) {
+    currentPlayer.pendingPostDebtPhase = null;
+  }
+
+  setTurnPhase(nextPhase === 'done' ? 'done' : 'waiting');
+  emitCurrentTurnChanged(currentPlayer);
+  if (nextPhase === 'done') {
+    queueBotEndTurnIfNeeded(currentPlayer);
+    return;
+  }
   queueBotTurnIfNeeded(currentPlayer);
 }
 
@@ -1719,6 +1748,25 @@ function shouldKeepTurnForDoubles(player = gameState?.getCurrentPlayer()) {
   );
 }
 
+function normalizePendingPostDebtPhase(value) {
+  return ['waiting', 'done', 'buying'].includes(value) ? value : null;
+}
+
+function getPendingPostDebtPhaseForPlayer(player = gameState?.getCurrentPlayer()) {
+  if (!player || !gameState) return 'waiting';
+  return shouldKeepTurnForDoubles(player) ? 'waiting' : 'done';
+}
+
+function emitCurrentTurnChanged(player = gameState?.getCurrentPlayer()) {
+  if (!gameState || !player) return;
+
+  emitToRoom('turn-changed', {
+    currentPlayerId: player.id,
+    currentCharacter: player.name || player.character,
+    gameState: snapshotGameState()
+  });
+}
+
 function waitForTurnEndCurrentPlayer() {
   if (!gameState) return;
 
@@ -1731,11 +1779,7 @@ function waitForTurnEndCurrentPlayer() {
 
   if (shouldKeepTurnForDoubles(currentPlayer)) {
     setTurnPhase('waiting');
-    emitToRoom('turn-changed', {
-      currentPlayerId: currentPlayer.id,
-      currentCharacter: currentPlayer.name || currentPlayer.character,
-      gameState: snapshotGameState()
-    });
+    emitCurrentTurnChanged(currentPlayer);
     queueBotTurnIfNeeded(currentPlayer);
     return;
   }
@@ -1744,11 +1788,7 @@ function waitForTurnEndCurrentPlayer() {
   if (!currentPlayer.isConnected) {
     pauseGameForDisconnect(currentPlayer);
   }
-  emitToRoom('turn-changed', {
-    currentPlayerId: currentPlayer.id,
-    currentCharacter: currentPlayer.name || currentPlayer.character,
-    gameState: snapshotGameState()
-  });
+  emitCurrentTurnChanged(currentPlayer);
   queueBotEndTurnIfNeeded(currentPlayer);
 }
 
@@ -1844,6 +1884,7 @@ function handleBankruptcy(player) {
   }
 
   if (gameState.getCurrentPlayer()?.id === player.id) {
+    player.pendingPostDebtPhase = getPendingPostDebtPhaseForPlayer(player);
     setTurnPhase('waiting', { restartTimer: false });
   }
 
@@ -1865,7 +1906,12 @@ function checkBankruptcyRecovery(player) {
   if (!player?.bankruptcyDeadline || !player.isActive) return;
 
   if (player.money >= 0) {
+    const isCurrentPlayer = gameState?.getCurrentPlayer()?.id === player.id;
+    const pendingPostDebtPhase = normalizePendingPostDebtPhase(player.pendingPostDebtPhase);
     player.bankruptcyDeadline = null;
+    if (!isCurrentPlayer || !(auctionState || gameState?.pauseState)) {
+      player.pendingPostDebtPhase = null;
+    }
 
     logEvent(`✅ ${player.name} recovered from debt!`, 'system');
     emitToRoom('bankruptcy-resolved', {
@@ -1874,6 +1920,16 @@ function checkBankruptcyRecovery(player) {
       survived: true,
       gameState: snapshotGameState()
     });
+
+    if (isCurrentPlayer && pendingPostDebtPhase && !auctionState && !gameState?.pauseState) {
+      setTurnPhase(pendingPostDebtPhase);
+      emitCurrentTurnChanged(player);
+      if (pendingPostDebtPhase === 'done') {
+        queueBotEndTurnIfNeeded(player);
+      } else if (pendingPostDebtPhase === 'waiting') {
+        queueBotTurnIfNeeded(player);
+      }
+    }
   }
 }
 
@@ -1885,6 +1941,7 @@ function executeBankruptcy(player) {
   }
 
   player.bankruptcyDeadline = null;
+  player.pendingPostDebtPhase = null;
 
   player.isActive = false;
   player.money = 0;
@@ -3227,7 +3284,11 @@ io.on('connection', socket => {
 
     console.log(`\n  🎮 Game started with ${readyPlayers.length} players!\n`);
     logEvent(`🎮 Game started with ${readyPlayers.length} players!`, 'system');
-    emitToRoom('gameStarted', buildGameStatePayload());
+    emitToRoom('gameStarted', buildGameStatePayload(null, {
+      includeHistoryEvents: true,
+      includePropertyHistory: true,
+      includePropertyStatic: true
+    }));
     queueBotTurnIfNeeded(gameState.getCurrentPlayer());
   });
 
@@ -3850,6 +3911,36 @@ io.on('connection', socket => {
     }
   });
 
+  bindRoomHandler(socket, roomState, 'trade-cancel', data => {
+    if (!gameState || !gameState.isGameStarted) return;
+
+    const canceller = getSocketPlayer(socket);
+    if (!canceller) return;
+
+    const trade = pendingTrades.get(data.tradeId);
+    if (!trade || trade.fromId !== canceller.id) return;
+
+    removePendingTrade(trade.id);
+    maybeExtendTurnTimerForActivity(canceller.id);
+    const recipient = gameState.getPlayerById(trade.toId);
+    if (recipient) {
+      const cancellerName = canceller.name || canceller.character;
+      logEvent(`↩️ ${cancellerName} cancelled a trade with ${recipient.name || recipient.character}`, 'trade');
+      io.to(getPlayerRoom(recipient.id)).emit('trade-cancelled', {
+        tradeId: trade.id,
+        fromId: canceller.id,
+        toId: recipient.id,
+        message: `${cancellerName} cancelled the trade offer.`
+      });
+    }
+    socket.emit('trade-cancelled', {
+      tradeId: trade.id,
+      fromId: canceller.id,
+      toId: trade.toId,
+      message: 'Trade offer cancelled.'
+    });
+  });
+
   bindRoomHandler(socket, roomState, 'upgrade-property', data => {
     if (!gameState || !gameState.isGameStarted) return;
 
@@ -4097,7 +4188,11 @@ io.on('connection', socket => {
 
       logEvent(`📂 ${playerRecord?.character || 'The host'} loaded a saved game!`, 'system');
       emitLobbyUpdate();
-      emitToRoom('game-loaded', { gameState: snapshotGameState() });
+      emitToRoom('game-loaded', { gameState: snapshotGameState({
+        includeHistoryEvents: true,
+        includePropertyHistory: true,
+        includePropertyStatic: true
+      }) });
       emitGameStateSync({ restartTurnTimer: true });
     } catch (err) {
       socket.emit('game-error', { message: 'Failed to load save file: ' + err.message });

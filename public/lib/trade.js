@@ -315,7 +315,10 @@ const TradeSystem = (() => {
             </div>
             <div class="tc-footer${outgoing ? ' outgoing' : ''}">
                 ${outgoing
-                    ? `<div class="tc-pending-note">Waiting for ${offer.toCharacter} to accept, reject, or counter.</div>`
+                    ? `
+                        <div class="tc-pending-note">Waiting for ${offer.toCharacter} to accept, reject, counter, or let you cancel.</div>
+                        <button class="tc-btn decline cancel">Cancel</button>
+                    `
                     : `
                         <button class="tc-btn accept">Accept</button>
                         <button class="tc-btn decline">Decline</button>
@@ -325,7 +328,12 @@ const TradeSystem = (() => {
             </div>
         `;
 
-        if (!outgoing) {
+        if (outgoing) {
+            card.querySelector('.cancel')?.addEventListener('click', () => {
+                removeTradeCard(cardId);
+                socket.emit('trade-cancel', { tradeId: offer.id });
+            });
+        } else {
             card.querySelector('.accept').addEventListener('click', () => {
                 removeTradeCard(cardId);
                 socket.emit('trade-accept', { tradeId: offer.id });

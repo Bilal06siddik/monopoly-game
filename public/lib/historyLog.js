@@ -176,6 +176,11 @@ const HistoryLog = (() => {
         const collapseBtn = document.getElementById('history-collapse-btn');
         panel?.classList.toggle('expanded', isExpanded);
         panel?.classList.toggle('collapsed', isCollapsed);
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('history-layout-change', {
+                detail: { expanded: isExpanded, collapsed: isCollapsed }
+            }));
+        }
         if (expandBtn) {
             expandBtn.textContent = isExpanded ? 'Collapse' : 'Expand';
             expandBtn.setAttribute('aria-expanded', String(isExpanded));

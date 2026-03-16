@@ -40,10 +40,12 @@ class Player {
         this.connectedAt = Date.now();
         this.lastSeenAt = Date.now();
         this.bankruptcyDeadline = null;
+        this.pendingPostDebtPhase = null;
         this.stats = createDefaultPlayerStats();
     }
 
-    toJSON() {
+    toJSON(options = {}) {
+        const includeCustomAvatarUrl = options.includeCustomAvatarUrl !== false;
         return {
             id: this.id,
             character: this.character,
@@ -61,7 +63,8 @@ class Player {
             isConnected: this.isConnected,
             isBot: this.isBot,
             bankruptcyDeadline: this.bankruptcyDeadline,
-            customAvatarUrl: this.customAvatarUrl,
+            pendingPostDebtPhase: this.pendingPostDebtPhase,
+            customAvatarUrl: includeCustomAvatarUrl ? this.customAvatarUrl : null,
             stats: { ...this.stats }
         };
     }
@@ -94,21 +97,25 @@ class Property {
         if (this.history.length > 20) this.history.shift();
     }
 
-    toJSON() {
+    toJSON(options = {}) {
+        const includeHistory = options.includeHistory === true;
+        const includeStatic = options.includeStatic !== false;
         return {
             index: this.index,
-            name: this.name,
-            type: this.type,
-            price: this.price,
-            rent: this.rent,
-            rentTiers: this.rentTiers ? [...this.rentTiers] : null,
-            colorGroup: this.colorGroup,
+            ...(includeStatic ? {
+                name: this.name,
+                type: this.type,
+                price: this.price,
+                rent: this.rent,
+                rentTiers: this.rentTiers ? [...this.rentTiers] : null,
+                colorGroup: this.colorGroup
+            } : {}),
             owner: this.owner,
             houses: this.houses,
             isMortgaged: this.isMortgaged,
             landedCount: this.landedCount,
             rentCollected: this.rentCollected,
-            history: [...this.history]
+            history: includeHistory ? [...this.history] : null
         };
     }
 }
@@ -260,10 +267,13 @@ class GameState {
         return this.doublesCount > 0 && this.doublesCount < 3;
     }
 
-    getState() {
+    getState(options = {}) {
         return {
-            players: this.players.map(player => player.toJSON()),
-            properties: this.properties.map(property => property.toJSON()),
+            players: this.players.map(player => player.toJSON(options)),
+            properties: this.properties.map(property => property.toJSON({
+                includeHistory: options.includePropertyHistory === true,
+                includeStatic: options.includePropertyStatic !== false
+            })),
             currentPlayerIndex: this.currentPlayerIndex,
             currentPlayerId: this.getCurrentPlayer()?.id || null,
             isGameStarted: this.isGameStarted,

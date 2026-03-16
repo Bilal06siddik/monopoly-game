@@ -457,7 +457,7 @@
     }
 
     function setCurrentGameState(state) {
-        const normalizedState = normalizeSerializedGameState(state);
+        const normalizedState = normalizeSerializedGameState(state, currentGameState);
         if (isStaleSerializedGameState(normalizedState, currentGameState)) {
             return false;
         }
@@ -858,6 +858,7 @@
             });
         }
         window.addEventListener('resize', syncTopDownHudLayout);
+        window.addEventListener('history-layout-change', syncTopDownHudLayout);
     }
 
     saveGameBtn?.addEventListener('click', () => {
@@ -1204,6 +1205,12 @@
             TradeSystem.dismissTrade(data.tradeId);
         }
         Notifications.show('Trade rejected', 'error', 2000);
+    });
+    socket.on('trade-cancelled', (data) => {
+        if (data?.tradeId) {
+            TradeSystem.dismissTrade(data.tradeId);
+        }
+        Notifications.show(data?.message || 'Trade cancelled', 'info', 2500);
     });
     socket.on('trade-invalidated', (data) => {
         TradeSystem.handleTradeInvalidated(data);

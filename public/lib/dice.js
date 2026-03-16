@@ -18,6 +18,7 @@ const GameDice = (() => {
     const tempAxis = new THREE.Vector3();
     const tempPosition = new THREE.Vector3();
     const tempMotion = new THREE.Vector3();
+    const DICE_TIMING_SCALE = 0.78;
 
     // ── Create pip textures for each face (1-6) ───────────
     function createFaceTexture(pips) {
@@ -135,10 +136,10 @@ const GameDice = (() => {
 
     function createRollState(mesh, value, laneDirection) {
         const startPosition = new THREE.Vector3(0, THROW_START_Y, THROW_START_Z);
-        const windupDuration = 110 + (Math.random() * 35);
-        const airDuration = 700 + (Math.random() * 90);
-        const groundDuration = 880 + (Math.random() * 120);
-        const settleDuration = 300 + (Math.random() * 60);
+        const windupDuration = (110 + (Math.random() * 35)) * DICE_TIMING_SCALE;
+        const airDuration = (700 + (Math.random() * 90)) * DICE_TIMING_SCALE;
+        const groundDuration = (880 + (Math.random() * 120)) * DICE_TIMING_SCALE;
+        const settleDuration = (300 + (Math.random() * 60)) * DICE_TIMING_SCALE;
         const throwAngle = Math.random() * Math.PI * 2;
         const throwRadius = THROW_MIN_RADIUS + (Math.random() * (THROW_MAX_RADIUS - THROW_MIN_RADIUS));
         const directionX = Math.sin(throwAngle);

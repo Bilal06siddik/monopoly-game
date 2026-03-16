@@ -140,6 +140,83 @@ test('buying and done phases use short default timer windows', async () => {
     assert.ok(Number(doneTimer.remainingSeconds) <= 25 && Number(doneTimer.remainingSeconds) >= 24);
 });
 
+test('recovering from debt resumes the turn in done phase and restarts the timer', async () => {
+    const match = await bootstrapMatch();
+    const { actor, actorId } = getCurrentTurnPair(match);
+
+    actor.socket.emit('dev-command', {
+        type: 'set-owner',
+        playerId: actorId,
+        tileIndex: 39
+    });
+    await waitForSocketEvent(actor.socket, 'game-state-sync');
+
+    actor.socket.emit('dev-command', {
+        type: 'set-money',
+        playerId: actorId,
+        amount: 50
+    });
+    await waitForSocketEvent(actor.socket, 'game-state-sync');
+
+    const warningPromise = waitForSocketEventMatching(
+        actor.socket,
+        'bankruptcy-warning',
+        (payload) => payload?.playerId === actorId,
+        5000
+    );
+
+    actor.socket.emit('dev-command', {
+        type: 'set-position',
+        playerId: actorId,
+        tileIndex: 38
+    });
+
+    const warning = await warningPromise;
+    const warnedPlayer = warning.gameState.players.find((player) => player.id === actorId);
+    assert.equal(warning.gameState.turnPhase, 'waiting');
+    assert.ok(warnedPlayer?.bankruptcyDeadline, 'player should enter debt recovery');
+
+    const resolvedPromise = waitForSocketEventMatching(
+        actor.socket,
+        'bankruptcy-resolved',
+        (payload) => payload?.playerId === actorId,
+        5000
+    );
+    const resumedTurnPromise = waitForSocketEventMatching(
+        actor.socket,
+        'turn-changed',
+        (payload) => payload?.currentPlayerId === actorId && payload?.gameState?.turnPhase === 'done',
+        5000
+    );
+    const restartedTimerPromise = waitForSocketEventMatching(
+        actor.socket,
+        'turn-timer-start',
+        (payload) => payload?.currentPlayerId === actorId && payload?.phase === 'done',
+        5000
+    );
+
+    actor.socket.emit('sell-property', { tileIndex: 39 });
+
+    const resolved = await resolvedPromise;
+    const resumedTurn = await resumedTurnPromise;
+    const restartedTimer = await restartedTimerPromise;
+    const recoveredPlayer = resolved.gameState.players.find((player) => player.id === actorId);
+
+    assert.equal(recoveredPlayer?.bankruptcyDeadline, null);
+    assert.equal(recoveredPlayer?.pendingPostDebtPhase, null);
+    assert.equal(resumedTurn.gameState.turnPhase, 'done');
+    assert.ok(Number(restartedTimer.remainingSeconds) <= 25 && Number(restartedTimer.remainingSeconds) >= 24);
+
+    const nextTurnPromise = waitForSocketEventMatching(
+        actor.socket,
+        'turn-changed',
+        (payload) => payload?.currentPlayerId !== actorId,
+        5000
+    );
+    actor.socket.emit('end-turn');
+    await nextTurnPromise;
+});
+
 test('host can disable and re-enable turn timer during a live match', async () => {
     const { host, guest } = await bootstrapMatch();
 
@@ -381,6 +458,70 @@ test('late auction bid near timeout resolves to a consistent final state', async
     } else {
         assert.equal(tile.owner, null);
     }
+});
+
+test('own-auction debt recovery returns to done instead of rewinding to a fresh roll', async () => {
+    const match = await bootstrapMatch();
+    const { actor, actorId, target } = getCurrentTurnPair(match);
+
+    actor.socket.emit('dev-command', {
+        type: 'set-owner',
+        playerId: actorId,
+        tileIndex: 39
+    });
+    await waitForSocketEvent(actor.socket, 'game-state-sync');
+
+    actor.socket.emit('dev-command', {
+        type: 'set-money',
+        playerId: actorId,
+        amount: 50
+    });
+    await waitForSocketEvent(actor.socket, 'game-state-sync');
+
+    const warningPromise = waitForSocketEventMatching(
+        actor.socket,
+        'bankruptcy-warning',
+        (payload) => payload?.playerId === actorId,
+        5000
+    );
+
+    actor.socket.emit('dev-command', {
+        type: 'set-position',
+        playerId: actorId,
+        tileIndex: 38
+    });
+    await warningPromise;
+
+    const auctionStartedPromise = waitForSocketEvent(actor.socket, 'auction-started', 12000);
+    const resolvedPromise = waitForSocketEventMatching(
+        actor.socket,
+        'bankruptcy-resolved',
+        (payload) => payload?.playerId === actorId,
+        15000
+    );
+    const resumedTurnPromise = waitForSocketEventMatching(
+        actor.socket,
+        'turn-changed',
+        (payload) => payload?.currentPlayerId === actorId && payload?.gameState?.turnPhase === 'done',
+        15000
+    );
+
+    actor.socket.emit('own-auction', { tileIndex: 39, startPrice: 100 });
+
+    const auctionStarted = await auctionStartedPromise;
+    assert.equal(auctionStarted.auction.tileIndex, 39);
+
+    target.socket.emit('place-bid', { amount: 150 });
+
+    await waitForSocketEvent(actor.socket, 'auction-ended', 15000);
+    const resolved = await resolvedPromise;
+    const resumedTurn = await resumedTurnPromise;
+    const recoveredPlayer = resolved.gameState.players.find((player) => player.id === actorId);
+    const resumedPlayer = resumedTurn.gameState.players.find((player) => player.id === actorId);
+
+    assert.equal(recoveredPlayer?.bankruptcyDeadline, null);
+    assert.equal(resumedPlayer?.pendingPostDebtPhase, null);
+    assert.equal(resumedTurn.gameState.turnPhase, 'done');
 });
 
 test('custom avatar payloads over 2MB are rejected and valid payloads are accepted', async () => {

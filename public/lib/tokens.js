@@ -12,6 +12,7 @@ const GameTokens = (() => {
     const TOKEN_BASE_Y = 0.16;
     const TOKEN_MODEL_DEPTH = 0.18;
     const SPORTS_CAR_MODEL_URL = './models/hatchbackSports.glb';
+    const TOKEN_STEP_DURATION_MS = 160;
 
     function init(scene, tilePositionFn) {
         getTilePos = tilePositionFn;
@@ -182,6 +183,32 @@ const GameTokens = (() => {
         });
     }
 
+    function collectTintableMaterials(root) {
+        const tintableMaterials = [];
+        const seenMaterials = new Set();
+
+        root.traverse(node => {
+            if (!node.isMesh || !node.material) return;
+            const materials = Array.isArray(node.material) ? node.material : [node.material];
+            materials.forEach(material => {
+                if (!material || seenMaterials.has(material) || !material.color) return;
+                seenMaterials.add(material);
+
+                const hsl = { h: 0, s: 0, l: 0 };
+                material.color.getHSL(hsl);
+                const looksLikeGlass = /glass|window/i.test(material.name || '');
+                const looksLikeWheel = /wheel|tire|tyre|rubber/i.test(material.name || '');
+                const isTooDark = hsl.l < 0.12;
+                const isNeutralTrim = hsl.s < 0.08 && hsl.l < 0.72;
+                if (looksLikeGlass || looksLikeWheel || isTooDark || isNeutralTrim) return;
+
+                tintableMaterials.push(material);
+            });
+        });
+
+        return tintableMaterials;
+    }
+
     function normalizeImportedModel(root, { targetWidth = 0.92, targetHeight = 0.52, targetDepth = 0.6 } = {}) {
         const bounds = new THREE.Box3().setFromObject(root);
         const size = new THREE.Vector3();
@@ -229,7 +256,7 @@ const GameTokens = (() => {
         root.add(imported);
         root.rotation.y = -Math.PI / 6;
         root.userData.height = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()).y;
-        root.userData.colorMaterials = [];
+        root.userData.colorMaterials = collectTintableMaterials(imported);
         return root;
     }
 
@@ -321,6 +348,11 @@ const GameTokens = (() => {
             liveToken.modelRoot = importedModel;
             liveToken.group.add(importedModel);
             liveToken.colorMaterials = importedModel.userData.colorMaterials || [];
+            const liveColor = normalizeColor(liveToken.color);
+            liveToken.colorMaterials.forEach(material => {
+                material.color.copy(liveColor);
+                material.needsUpdate = true;
+            });
             liveToken.badge.position.set(0, (importedModel.userData.height || 1) + 0.32, 0);
             if (liveToken.pointLight) {
                 liveToken.pointLight.position.y = (importedModel.userData.height || 1) + 0.1;
@@ -648,7 +680,7 @@ const GameTokens = (() => {
 
         let passedGo = false;
         let stepIndex = 0;
-        const stepDuration = 220;
+        const stepDuration = TOKEN_STEP_DURATION_MS;
         const hopHeight = 0.42;
 
         function moveToNextTile() {

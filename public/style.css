@@ -891,6 +891,11 @@ body[data-view-mode="top-down"] .view-dock-toggle {
 }
 
 .camera-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 164px;
+  min-height: 42px;
   padding: 10px 18px;
   border-radius: 999px;
   border: 1px solid rgba(0, 210, 211, 0.16);
@@ -909,6 +914,8 @@ body[data-view-mode="top-down"] .camera-view-btn,
 body[data-view-mode="top-down"] .camera-action-btn {
   padding: 8px 14px;
   font-size: 11px;
+  min-width: 164px;
+  min-height: 40px;
 }
 
 .camera-view-btn:hover:not(:disabled) {
@@ -930,6 +937,11 @@ body[data-view-mode="top-down"] .camera-action-btn {
 }
 
 .camera-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 164px;
+  min-height: 42px;
   padding: 10px 16px;
   border-radius: 999px;
   border: 1px solid rgba(162, 155, 254, 0.2);
@@ -2036,6 +2048,11 @@ body[data-view-mode="top-down"] .history-log {
   border-color: rgba(126, 168, 255, 0.2);
 }
 
+body[data-view-mode="top-down"] .history-log.expanded {
+  width: min(340px, calc(100vw - 40px));
+  max-height: min(520px, calc(100vh - 180px));
+}
+
 .history-log.expanded {
   max-height: 440px;
 }
@@ -2055,6 +2072,11 @@ body[data-view-mode="top-down"] .history-log {
 }
 
 .panel-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 92px;
+  min-height: 44px;
   padding: 0 14px;
   border: none;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
@@ -2070,6 +2092,11 @@ body[data-view-mode="top-down"] .history-log {
 }
 
 .panel-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  min-height: 44px;
   width: 48px;
   border: none;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
@@ -4907,7 +4934,7 @@ body[data-view-mode="top-down"] #trades-content {
     flex-direction: column;
     align-items: flex-end;
     gap: 10px;
-    pointer-events: auto;
+    pointer-events: none;
 }
 
 .host-controls-toggle {
@@ -4924,6 +4951,7 @@ body[data-view-mode="top-down"] #trades-content {
     cursor: pointer;
     box-shadow: 0 12px 24px rgba(0, 0, 0, 0.24);
     backdrop-filter: blur(12px);
+    pointer-events: auto;
 }
 
 .host-controls-toggle:hover {

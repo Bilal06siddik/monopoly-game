@@ -107,6 +107,9 @@
         if (property.type === 'railroad') {
             const count = getOwnedPropertyCount(properties, property.owner, 'railroad');
             let rent = 25 * Math.pow(2, Math.max(count - 1, 0));
+            if (count >= 4) {
+                rent = 400;
+            }
             if (context.doubleRailroadRent) {
                 rent *= 2;
             }

@@ -63,6 +63,15 @@ test('mortgaged properties collect no rent', () => {
     assert.equal(Rules.calculateRent(game.properties, game.properties[1], 9), 0);
 });
 
+test('owning all railroads charges 400 rent', () => {
+    const { game, p1 } = createGame();
+    [5, 15, 25, 35].forEach(index => {
+        game.properties[index].owner = p1.id;
+    });
+
+    assert.equal(Rules.calculateRent(game.properties, game.properties[5], 7), 400);
+});
+
 test('building is blocked when any sibling in the set is mortgaged', () => {
     const { game, p1 } = createGame();
     [6, 8, 9].forEach(index => {
@@ -280,10 +289,13 @@ test('players serialize bankruptcy recovery state', () => {
   const game = new GameState(BOARD_DATA);
   const player = game.addPlayer('p1', 'Bilo', '#6c5ce7', 'session-1');
   player.bankruptcyDeadline = 123456789;
+  player.pendingPostDebtPhase = 'done';
 
   const payload = player.toJSON();
   assert.equal(payload.bankruptcyDeadline, 123456789);
+  assert.equal(payload.pendingPostDebtPhase, 'done');
   assert.equal(game.getState().players[0].bankruptcyDeadline, 123456789);
+  assert.equal(game.getState().players[0].pendingPostDebtPhase, 'done');
 });
 
 test('state exposes when a doubles bonus roll is pending', () => {

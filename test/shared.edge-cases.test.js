@@ -181,6 +181,57 @@ test('state normalization aligns current player id and index', () => {
     assert.equal(normalized.currentPlayerIndex, 1);
 });
 
+test('state normalization preserves known custom avatar URLs when gameplay sync omits them', () => {
+    const normalized = normalizeSerializedGameState({
+        players: [
+            { id: 'p1', isActive: true, customAvatarUrl: null },
+            { id: 'p2', isActive: false, customAvatarUrl: null }
+        ],
+        currentPlayerId: 'p1',
+        currentPlayerIndex: 0,
+        stateSequence: 10
+    }, {
+        players: [
+            { id: 'p1', customAvatarUrl: 'data:image/webp;base64,abc123' },
+            { id: 'p2', customAvatarUrl: null }
+        ]
+    });
+
+    assert.equal(normalized.players[0].customAvatarUrl, 'data:image/webp;base64,abc123');
+});
+
+test('state normalization preserves cached match and property history when lightweight sync omits them', () => {
+    const normalized = normalizeSerializedGameState({
+        players: [
+            { id: 'p1', isActive: true }
+        ],
+        properties: [
+            { index: 0, owner: null, history: null },
+            { index: 1, owner: 'p1', history: null }
+        ],
+        historyEvents: null,
+        currentPlayerId: 'p1',
+        currentPlayerIndex: 0,
+        stateSequence: 11
+    }, {
+        players: [
+            { id: 'p1', customAvatarUrl: null }
+        ],
+        properties: [
+            { index: 0, name: 'Old Kent Road', colorGroup: 'brown', owner: null, history: [{ type: 'buy', character: 'Bilo', color: '#fff', amount: 60 }] },
+            { index: 1, name: 'Whitechapel Road', colorGroup: 'brown', owner: null, history: [] }
+        ],
+        historyEvents: [{ text: 'Bilo bought GO', type: 'buy' }]
+    });
+
+    assert.equal(normalized.historyEvents.length, 1);
+    assert.equal(normalized.properties[0].history.length, 1);
+    assert.equal(normalized.properties[1].history.length, 0);
+    assert.equal(normalized.properties[0].name, 'Old Kent Road');
+    assert.equal(normalized.properties[0].colorGroup, 'brown');
+    assert.equal(normalized.properties[1].owner, 'p1');
+});
+
 test('stale state checks ignore snapshots without usable sequence numbers', () => {
     assert.equal(isStaleSerializedGameState({ stateSequence: 2 }, null), false);
     assert.equal(isStaleSerializedGameState({}, { stateSequence: 3 }), false);

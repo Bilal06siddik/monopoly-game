@@ -3,29 +3,68 @@ function getStateSequence(state) {
     return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-function normalizeSerializedGameState(state) {
+function normalizeSerializedGameState(state, previousState = null) {
     if (!state || !Array.isArray(state.players) || state.players.length === 0) {
         return state;
     }
 
+    const previousPlayersById = Array.isArray(previousState?.players)
+        ? new Map(previousState.players.map(player => [player.id, player]))
+        : null;
+    const players = previousPlayersById
+        ? state.players.map(player => {
+            const previousPlayer = previousPlayersById.get(player.id);
+            if (!previousPlayer) return player;
+
+            return {
+                ...player,
+                customAvatarUrl: player.customAvatarUrl || previousPlayer.customAvatarUrl || null
+            };
+        })
+        : state.players;
+    const previousPropertiesByIndex = Array.isArray(previousState?.properties)
+        ? new Map(previousState.properties.map(property => [property.index, property]))
+        : null;
+    const properties = previousPropertiesByIndex && Array.isArray(state.properties)
+        ? state.properties.map(property => {
+            const previousProperty = previousPropertiesByIndex.get(property.index);
+            if (!previousProperty) return property;
+
+            return {
+                ...previousProperty,
+                ...property,
+                history: Array.isArray(property.history)
+                    ? property.history
+                    : (Array.isArray(previousProperty.history) ? previousProperty.history : [])
+            };
+        })
+        : state.properties;
+    const historyEvents = Array.isArray(state.historyEvents)
+        ? state.historyEvents
+        : (Array.isArray(previousState?.historyEvents) ? previousState.historyEvents : []);
+
     const playerById = state.currentPlayerId
-        ? state.players.find(player => player.id === state.currentPlayerId) || null
+        ? players.find(player => player.id === state.currentPlayerId) || null
         : null;
     const playerByIndex = Number.isInteger(state.currentPlayerIndex)
-        ? state.players[state.currentPlayerIndex] || null
+        ? players[state.currentPlayerIndex] || null
         : null;
     const normalizedPlayer = playerById
         || playerByIndex
-        || state.players.find(player => player.isActive)
-        || state.players[0]
+        || players.find(player => player.isActive)
+        || players[0]
         || null;
 
     if (!normalizedPlayer) {
         return state;
     }
 
-    const normalizedIndex = state.players.findIndex(player => player.id === normalizedPlayer.id);
+    const normalizedIndex = players.findIndex(player => player.id === normalizedPlayer.id);
     if (
+        state.players === players
+        && state.properties === properties
+        && state.historyEvents === historyEvents
+        &&
         state.currentPlayerId === normalizedPlayer.id
         && state.currentPlayerIndex === normalizedIndex
     ) {
@@ -34,6 +73,9 @@ function normalizeSerializedGameState(state) {
 
     return {
         ...state,
+        players,
+        properties,
+        historyEvents,
         currentPlayerId: normalizedPlayer.id,
         currentPlayerIndex: normalizedIndex
     };

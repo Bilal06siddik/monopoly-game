@@ -214,7 +214,7 @@ const COUNTRIES_BOARD_DATA = [
     createRailroad(25, 'Italy Railroad', { iconImage: 'railroad' }),
     createProperty(26, 'Suwon', 260, 'yellow', 0xFFFF00, withFlagStyle('south-korea')),
     createProperty(27, 'Busan', 260, 'yellow', 0xFFFF00, withFlagStyle('south-korea')),
-    createUtility(28, 'Wind Power', { iconText: '🌬️', utilityKind: 'wind' }),
+    createUtility(28, 'Wind Power', { iconText: '💨', utilityKind: 'wind' }),
     createProperty(29, 'Seoul', 280, 'yellow', 0xFFFF00, withFlagStyle('south-korea')),
     createSpecialTile(30, 'Go To Jail', 'corner', 0, 0, 0x4444ff),
     createProperty(31, 'Odessa', 300, 'green', 0x00AA00, withFlagStyle('ukraine')),
