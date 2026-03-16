@@ -31,7 +31,7 @@ test('moving backwards wraps around the board without GO payout', () => {
     assert.equal(p1.money, 1200);
 });
 
-test('movePlayerTo GO collection respects option flags', () => {
+test('movePlayerTo GO collection pays $400 on land and $200 on pass', () => {
     const { game, p1 } = createGame();
     p1.position = 39;
     p1.money = 500;
@@ -46,9 +46,18 @@ test('movePlayerTo GO collection respects option flags', () => {
     assert.equal(p1.money, 500);
 
     p1.position = 39;
-    const withCollection = game.movePlayerTo(p1.id, 0);
+    const landOnGo = game.movePlayerTo(p1.id, 0);
 
-    assert.equal(withCollection.passedGo, true);
+    assert.equal(landOnGo.passedGo, true);
+    assert.equal(p1.money, 900);
+
+    p1.position = 39;
+    p1.money = 500;
+
+    const passGo = game.movePlayerTo(p1.id, 5);
+
+    assert.equal(passGo.passedGo, true);
+    assert.equal(passGo.newPosition, 5);
     assert.equal(p1.money, 700);
 });
 
