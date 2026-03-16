@@ -6,6 +6,7 @@ const HistoryLog = (() => {
     const MAX_EVENTS = 50;
     const events = [];
     let isExpanded = false;
+    let isCollapsed = false;
 
     const TYPE_META = {
         roll: { icon: '🎲', label: 'Roll' },
@@ -113,14 +114,21 @@ const HistoryLog = (() => {
 
     function init() {
         const expandBtn = document.getElementById('history-expand-btn');
+        const collapseBtn = document.getElementById('history-collapse-btn');
         if (expandBtn) {
             expandBtn.addEventListener('click', () => {
                 isExpanded = !isExpanded;
                 syncExpandState();
                 render();
             });
-            syncExpandState();
         }
+        if (collapseBtn) {
+            collapseBtn.addEventListener('click', () => {
+                isCollapsed = !isCollapsed;
+                syncExpandState();
+            });
+        }
+        syncExpandState();
     }
 
     function render() {
@@ -165,10 +173,18 @@ const HistoryLog = (() => {
     function syncExpandState() {
         const panel = document.querySelector('.history-log');
         const expandBtn = document.getElementById('history-expand-btn');
+        const collapseBtn = document.getElementById('history-collapse-btn');
         panel?.classList.toggle('expanded', isExpanded);
+        panel?.classList.toggle('collapsed', isCollapsed);
         if (expandBtn) {
             expandBtn.textContent = isExpanded ? 'Collapse' : 'Expand';
             expandBtn.setAttribute('aria-expanded', String(isExpanded));
+        }
+        if (collapseBtn) {
+            collapseBtn.setAttribute('aria-expanded', String(!isCollapsed));
+            collapseBtn.setAttribute('aria-label', isCollapsed ? 'Expand history and trades' : 'Collapse history and trades');
+            collapseBtn.setAttribute('title', isCollapsed ? 'Expand history and trades' : 'Collapse history and trades');
+            collapseBtn.textContent = isCollapsed ? '📜' : '🗕';
         }
     }
 

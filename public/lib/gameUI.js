@@ -131,6 +131,7 @@ const GameUI = (() => {
         button.setAttribute('aria-expanded', String(!leaderboardCollapsed));
         button.setAttribute('aria-label', leaderboardCollapsed ? 'Expand leaderboard' : 'Collapse leaderboard');
         button.setAttribute('title', leaderboardCollapsed ? 'Expand leaderboard' : 'Collapse leaderboard');
+        button.textContent = leaderboardCollapsed ? '🏆' : '-';
     }
 
     function init(socketInstance) {
@@ -678,7 +679,6 @@ const GameUI = (() => {
 
         sorted.forEach((player, index) => {
             const propertyCount = currentProperties.filter(property => property.owner === player.id).length;
-            const botBadge = player.isBot ? `<span class="lb-disconnected">Bot</span>` : '';
             const disconnectedBadge = player.isConnected ? '' : `<span class="lb-disconnected">Offline</span>`;
             const hostBadge = player.id === currentHostPlayerId ? `<span class="lb-host-badge">Host</span>` : '';
             const jailBadge = player.inJail ? `<span style="font-size:10px;color:#ff6b6b;"> 🔒</span>` : '';
@@ -711,7 +711,7 @@ const GameUI = (() => {
                     <div class="lb-player-info">
                         <div class="lb-name-badges">
                             <span class="lb-name" style="color:${player.color}">${displayName}</span>${jailBadge}
-                            ${hostBadge} ${botBadge} ${disconnectedBadge}
+                            ${hostBadge} ${disconnectedBadge}
                         </div>
                         ${propertyCount > 0 ? `<div class="lb-props-row"><span class="lb-props">🏠 ${propertyCount}</span></div>` : ''}
                     </div>
@@ -786,14 +786,19 @@ const GameUI = (() => {
         const displayName = playerName || character;
         element.innerHTML = `
       <span class="dr-char">${displayName}</span>
-      <span class="dr-dice">${getDiceFace(die1)} ${getDiceFace(die2)}</span>
+      <span class="dr-dice">
+        <span class="dr-die">${getDiceFace(die1)}</span>
+        <span class="dr-die">${getDiceFace(die2)}</span>
+      </span>
       <span class="dr-total">= ${die1 + die2}${isDoubles ? ' 🔥' : ''}</span>
     `;
         if (diceResultHideTimeout) {
             clearTimeout(diceResultHideTimeout);
             diceResultHideTimeout = null;
         }
-        element.classList.remove('hidden');
+        element.classList.remove('show', 'hidden');
+        element.classList.toggle('is-doubles', Boolean(isDoubles));
+        void element.offsetWidth;
         element.classList.add('show');
         diceResultHideTimeout = setTimeout(() => {
             element.classList.remove('show');

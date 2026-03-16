@@ -640,25 +640,9 @@
   box-shadow: 0 20px 32px rgba(85, 239, 196, 0.16);
 }
 
-.map-vote-card.leading::after {
-  content: 'Leading';
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(255, 215, 0, 0.16);
-  border: 1px solid rgba(255, 215, 0, 0.4);
-  color: #ffe08a;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .map-vote-title-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
@@ -668,9 +652,22 @@
   font-size: 20px;
   font-weight: 800;
   letter-spacing: 0.02em;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.map-vote-badges {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
 }
 
 .map-vote-badge {
+  display: inline-flex;
+  align-items: center;
   padding: 6px 10px;
   border-radius: 999px;
   background: rgba(255,255,255,0.08);
@@ -684,6 +681,12 @@
 .map-vote-card.selected .map-vote-badge {
   background: rgba(85, 239, 196, 0.18);
   color: #d9fff4;
+}
+
+.map-vote-badge-leading {
+  background: rgba(255, 215, 0, 0.16);
+  border: 1px solid rgba(255, 215, 0, 0.4);
+  color: #ffe08a;
 }
 
 .map-vote-description {

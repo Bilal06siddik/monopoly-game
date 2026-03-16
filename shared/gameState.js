@@ -192,7 +192,7 @@ class GameState {
             player.money += 200;
         }
         if (newPosition === 0 && steps > 0) {
-            player.money += 200;
+            player.money += 400;
         }
 
         return {
@@ -224,7 +224,7 @@ class GameState {
             player.money += 200;
         }
         if (collectGoOnLand && normalizedTarget === 0 && oldPosition !== 0) {
-            player.money += 200;
+            player.money += 400;
         }
 
         return {

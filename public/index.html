@@ -43,6 +43,11 @@
         <input type="file" id="load-game-input" accept=".json" style="display: none;" />
         <button id="load-game-btn" class="secondary-lobby-btn" type="button">📂 Load Game</button>
       </div>
+      <div class="host-room-actions">
+        <button id="host-copy-room-link-btn" class="secondary-lobby-btn" type="button">🔗 Copy Invite</button>
+        <button id="host-end-match-btn" class="secondary-lobby-btn subtle" type="button">🛑 End Match</button>
+        <button id="host-end-room-btn" class="secondary-lobby-btn subtle" type="button">🚪 End Room</button>
+      </div>
       <div class="host-timer-controls">
         <div class="host-section-title">TURN TIMER</div>
         <label class="host-timer-toggle" for="host-turn-timer-enabled">
@@ -126,12 +131,6 @@
 
     <!-- Top Bar -->
     <div class="top-bar">
-      <div id="hud-room-chip" class="hud-room-chip hidden">
-        <span id="hud-room-code">ROOM</span>
-        <button id="hud-copy-room-link-btn" class="hud-room-btn" type="button">Copy Invite</button>
-        <button id="hud-end-game-btn" class="hud-room-btn danger hidden" type="button">End Match</button>
-        <button id="hud-end-room-btn" class="hud-room-btn danger hidden" type="button">End Room</button>
-      </div>
       <div id="turn-indicator" class="turn-indicator"></div>
       <div id="turn-timer" class="turn-timer hidden"></div>
     </div>
@@ -148,7 +147,7 @@
           aria-label="Collapse leaderboard"
           title="Collapse leaderboard"
         >
-          🏆
+          -
         </button>
       </div>
       <div id="leaderboard-panel" class="leaderboard-panel"></div>
@@ -204,7 +203,10 @@
             <div id="tab-history" class="panel-tab active">📜 History</div>
             <div id="tab-trades" class="panel-tab">🤝 Trades (<span id="trades-count">0</span>)</div>
           </div>
-          <button id="history-expand-btn" class="panel-toggle-btn" type="button" aria-expanded="false">Expand</button>
+          <div class="panel-toolbar-actions">
+            <button id="history-expand-btn" class="panel-toggle-btn" type="button" aria-expanded="false">Expand</button>
+            <button id="history-collapse-btn" class="panel-icon-btn" type="button" aria-expanded="true" aria-label="Collapse history and trades" title="Collapse history and trades">📜</button>
+          </div>
         </div>
         <div id="history-content" class="panel-content active">
           <div id="history-log-list" class="hl-list"></div>

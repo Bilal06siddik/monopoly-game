@@ -343,7 +343,7 @@ const GameBoard = (() => {
     }
 
     function getProfileTextScale() {
-        return currentTextProfile === 'top-down' ? 1.28 : 1.12;
+        return currentTextProfile === 'top-down' ? 1.4 : 1.22;
     }
 
     function getOwnedTileDisplayValue(tile, propertyState = null) {
@@ -580,15 +580,23 @@ const GameBoard = (() => {
             ctx.fillStyle = '#f4f7ff';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            const fontSize = Math.floor(canvas.width * (isFlagTile ? 0.15 : 0.128) * textScale);
-            ctx.font = `800 ${fontSize}px 'Segoe UI', Arial, sans-serif`;
+            const baseFontSize = Math.floor(canvas.width * (isFlagTile ? 0.158 : 0.138) * textScale);
+            const maxNameWidth = canvas.width * (isFlagTile ? 0.92 : 0.86);
+            const fittedFontSize = fitWrappedTextSize(
+                ctx,
+                tile.name.toUpperCase(),
+                maxNameWidth,
+                baseFontSize,
+                Math.floor(baseFontSize * (isFlagTile ? 0.52 : 0.62))
+            );
+            ctx.font = `800 ${fittedFontSize}px 'Segoe UI', Arial, sans-serif`;
             ctx.strokeStyle = 'rgba(5, 8, 16, 0.8)';
             ctx.lineWidth = Math.max(5, Math.floor(canvas.width * 0.01));
             ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
             ctx.shadowBlur = 10;
 
-            const nameLines = wrapText(ctx, tile.name.toUpperCase(), canvas.width * (isFlagTile ? 0.9 : 0.84));
-            const lineHeight = fontSize * (isFlagTile ? 1 : 1.06);
+            const nameLines = wrapText(ctx, tile.name.toUpperCase(), maxNameWidth);
+            const lineHeight = fittedFontSize * (isFlagTile ? 1 : 1.06);
             const startY = tile.type === 'railroad'
                 ? canvas.height * 0.52
                 : (canDrawImageIcon || iconText)
@@ -602,7 +610,7 @@ const GameBoard = (() => {
             });
 
             if (tile.price > 0) {
-                const priceSize = Math.floor(canvas.width * 0.145 * textScale);
+                const priceSize = Math.floor(canvas.width * 0.16 * textScale);
                 ctx.font = `800 ${priceSize}px 'Segoe UI', Arial, sans-serif`;
                 const displayLabel = ownerColor
                     ? getOwnedTileDisplayValue(tile, propertyState).label
@@ -622,7 +630,9 @@ const GameBoard = (() => {
         canvas.height = 1024;
         const ctx = canvas.getContext('2d');
         const bailoutAmount = Number.isFinite(cornerState?.bailoutAmount) ? cornerState.bailoutAmount : 0;
-        const isBailoutTile = tile.name.toLowerCase().includes('bailout');
+        const tileName = tile.name.toLowerCase();
+        const isBailoutTile = tileName.includes('bailout');
+        const isJailTile = tileName.includes('visit');
         const rotationDegrees = getTileRotationDegrees(tileIndex, currentTextProfile, { activeSide: currentThirdPersonSide });
         const textScale = currentTextProfile === 'top-down' ? 1.18 : 1.05;
 
@@ -671,13 +681,51 @@ const GameBoard = (() => {
             ctx.lineWidth = 10;
             ctx.shadowColor = 'rgba(0, 0, 0, 0.42)';
             ctx.shadowBlur = 14;
-            const lines = wrapText(ctx, tile.name.toUpperCase(), canvas.width * 0.72);
+            const cornerLabel = isJailTile ? 'JAIL' : tile.name.toUpperCase();
+            const lines = wrapText(ctx, cornerLabel, canvas.width * 0.72);
             const lineHeight = canvas.width * 0.11;
             const startY = canvas.height * 0.56;
             lines.slice(0, 3).forEach((line, lineIndex) => {
                 ctx.strokeText(line, canvas.width / 2, startY + (lineIndex * lineHeight));
                 ctx.fillText(line, canvas.width / 2, startY + (lineIndex * lineHeight));
             });
+
+            if (isJailTile) {
+                const frameX = canvas.width * 0.19;
+                const frameY = canvas.height * 0.33;
+                const frameW = canvas.width * 0.62;
+                const frameH = canvas.height * 0.2;
+                const barCount = 5;
+
+                ctx.fillStyle = 'rgba(6, 10, 18, 0.52)';
+                ctx.beginPath();
+                addRoundedRectPath(ctx, frameX, frameY, frameW, frameH, 28);
+                ctx.fill();
+
+                ctx.strokeStyle = 'rgba(198, 214, 255, 0.55)';
+                ctx.lineWidth = 8;
+                ctx.beginPath();
+                addRoundedRectPath(ctx, frameX, frameY, frameW, frameH, 28);
+                ctx.stroke();
+
+                ctx.strokeStyle = 'rgba(220, 230, 255, 0.92)';
+                ctx.lineCap = 'round';
+                ctx.lineWidth = 16;
+                for (let index = 1; index <= barCount; index++) {
+                    const x = frameX + ((frameW / (barCount + 1)) * index);
+                    ctx.beginPath();
+                    ctx.moveTo(x, frameY + 18);
+                    ctx.lineTo(x, frameY + frameH - 18);
+                    ctx.stroke();
+                }
+
+                ctx.strokeStyle = 'rgba(170, 188, 228, 0.9)';
+                ctx.lineWidth = 14;
+                ctx.beginPath();
+                ctx.moveTo(frameX + 28, frameY + (frameH * 0.52));
+                ctx.lineTo(frameX + frameW - 28, frameY + (frameH * 0.52));
+                ctx.stroke();
+            }
 
             if (isBailoutTile) {
                 const amountLabel = `$${bailoutAmount}`;
@@ -792,6 +840,20 @@ const GameBoard = (() => {
 
         if (currentLine) lines.push(currentLine);
         return lines;
+    }
+
+    function fitWrappedTextSize(ctx, text, maxWidth, initialSize, minSize) {
+        let size = initialSize;
+        while (size >= minSize) {
+            ctx.font = `800 ${size}px 'Segoe UI', Arial, sans-serif`;
+            const lines = wrapText(ctx, text, maxWidth);
+            const widestLine = lines.reduce((max, line) => Math.max(max, ctx.measureText(line).width), 0);
+            if (lines.length <= 3 && widestLine <= maxWidth) {
+                return size;
+            }
+            size -= 2;
+        }
+        return minSize;
     }
 
     function shadeColor(hex, percent) {

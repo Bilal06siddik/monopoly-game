@@ -5,7 +5,7 @@
 const ACTION_CARDS = [
     {
         id: 1,
-        text: 'Advance to GO. Collect $200.',
+        text: 'Advance to GO. Collect $400.',
         emoji: '🏁',
         type: 'moveAbsolute',
         targetIndex: 0,

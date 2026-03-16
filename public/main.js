@@ -389,19 +389,15 @@
         const roomBanner = document.getElementById('room-banner');
         const roomCodeDisplay = document.getElementById('room-code-display');
         const lobbyEndBtn = document.getElementById('end-room-btn');
-        const hudRoomChip = document.getElementById('hud-room-chip');
-        const hudRoomCode = document.getElementById('hud-room-code');
-        const hudEndGameBtn = document.getElementById('hud-end-game-btn');
-        const hudEndBtn = document.getElementById('hud-end-room-btn');
+        const hostEndMatchBtn = document.getElementById('host-end-match-btn');
+        const hostEndRoomBtn = document.getElementById('host-end-room-btn');
 
         roomBanner?.classList.toggle('hidden', !roomCode);
         if (roomCodeDisplay) roomCodeDisplay.textContent = roomCode || '------';
-        if (hudRoomCode) hudRoomCode.textContent = roomCode ? `Room ${roomCode}` : 'Room';
-        hudRoomChip?.classList.toggle('hidden', !roomCode);
         hostControlsShell?.classList.toggle('hidden', !isHost);
         lobbyEndBtn?.classList.toggle('hidden', !isHost);
-        hudEndGameBtn?.classList.toggle('hidden', !isHost || !isGameStarted);
-        hudEndBtn?.classList.toggle('hidden', !isHost);
+        hostEndMatchBtn?.classList.toggle('hidden', !isHost || !isGameStarted);
+        hostEndRoomBtn?.classList.toggle('hidden', !isHost);
         if (!isHost) {
             document.getElementById('persistent-host-controls')?.classList.remove('is-collapsed');
             const hostControlsToggle = document.getElementById('host-controls-toggle');
@@ -932,16 +928,16 @@
     });
 
     document.getElementById('copy-room-link-btn')?.addEventListener('click', () => copyInvite());
-    document.getElementById('hud-copy-room-link-btn')?.addEventListener('click', () => copyInvite());
+    document.getElementById('host-copy-room-link-btn')?.addEventListener('click', () => copyInvite());
     document.getElementById('end-room-btn')?.addEventListener('click', () => {
         if (!window.confirm('End this room for everyone?')) return;
         socket.emit('end-room');
     });
-    document.getElementById('hud-end-room-btn')?.addEventListener('click', () => {
+    document.getElementById('host-end-room-btn')?.addEventListener('click', () => {
         if (!window.confirm('End this room for everyone?')) return;
         socket.emit('end-room');
     });
-    document.getElementById('hud-end-game-btn')?.addEventListener('click', () => {
+    document.getElementById('host-end-match-btn')?.addEventListener('click', () => {
         if (!window.confirm('End the current match and return everyone to the lobby?')) return;
         socket.emit('end-game');
     });

@@ -571,7 +571,10 @@ const Lobby = (() => {
             card.innerHTML = `
                 <div class="map-vote-title-row">
                     <h3 class="map-vote-name">${option.name}</h3>
-                    <span class="map-vote-badge">${option.id === myVoteId ? 'Your Vote' : 'Vote'}</span>
+                    <div class="map-vote-badges">
+                        <span class="map-vote-badge">${option.id === myVoteId ? 'Your Vote' : 'Vote'}</span>
+                        ${option.id === selectedBoardId ? '<span class="map-vote-badge map-vote-badge-leading">Leading</span>' : ''}
+                    </div>
                 </div>
                 <p class="map-vote-description">${option.description || 'Choose this map for the next match.'}</p>
                 <div class="map-vote-meta">
