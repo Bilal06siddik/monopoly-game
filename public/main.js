@@ -382,7 +382,8 @@
 
     function syncRoomChrome(state = currentGameState) {
         const roomCode = normalizeRoomCode(state?.roomCode || activeRoomCode);
-        const isHost = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
+        const hostPlayerId = state?.hostPlayerId || currentGameState?.hostPlayerId || null;
+        const isHost = Boolean(hostPlayerId && myPlayerId && hostPlayerId === myPlayerId);
         const isGameStarted = typeof state?.isGameStarted === 'boolean'
             ? state.isGameStarted
             : Boolean(currentGameState?.isGameStarted);

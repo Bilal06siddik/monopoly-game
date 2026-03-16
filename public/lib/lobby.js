@@ -644,7 +644,8 @@ const Lobby = (() => {
         const list = document.getElementById('host-player-list');
         if (!panel || !list) return;
 
-        const isHost = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
+        const hostPlayerId = state?.hostPlayerId || lobbyState?.hostPlayerId || null;
+        const isHost = Boolean(hostPlayerId && myPlayerId && hostPlayerId === myPlayerId);
         list.innerHTML = '';
 
         if (!isHost) {
@@ -745,7 +746,8 @@ const Lobby = (() => {
 
     function syncHostControlsAvailability(state) {
         const shell = document.getElementById('host-controls-shell');
-        const isHost = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
+        const hostPlayerId = state?.hostPlayerId || lobbyState?.hostPlayerId || null;
+        const isHost = Boolean(hostPlayerId && myPlayerId && hostPlayerId === myPlayerId);
         shell?.classList.toggle('hidden', !isHost);
 
         if (!isHost) {
