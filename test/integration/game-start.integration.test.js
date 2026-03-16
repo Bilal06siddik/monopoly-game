@@ -93,6 +93,37 @@ test('bots stay flagged as bots after game start', async () => {
     assert.equal(startedBot.isBot, true, 'bot flag should remain true in live game state');
 });
 
+test('lobby map votes decide which board starts', async () => {
+    const roomCode = randomRoomCode('MAP');
+
+    const host = track(await connectClient({ port, roomCode }));
+    const guest = track(await connectClient({ port, roomCode }));
+
+    await selectCharacter(host.socket, 'bilo');
+    await selectCharacter(guest.socket, 'osss');
+
+    const votedLobbyPromise = waitForSocketEventMatching(
+        host.socket,
+        'lobby-update',
+        (payload) => payload?.selectedBoardId === 'countries',
+        5000
+    );
+
+    host.socket.emit('vote-board-map', { boardId: 'countries' });
+    const votedLobby = await votedLobbyPromise;
+
+    assert.equal(votedLobby.selectedBoardId, 'countries');
+
+    const startedPromise = waitForSocketEvent(host.socket, 'gameStarted');
+    host.socket.emit('requestStartGame');
+    const startedState = await startedPromise;
+
+    assert.equal(startedState.boardId, 'countries');
+    assert.equal(startedState.boardName, 'Countries');
+    assert.equal(startedState.properties[1].name, 'Delhi');
+    assert.equal(startedState.properties[5].name, 'India Railroad');
+});
+
 test('host cannot start a match with fewer than two players', async () => {
     const roomCode = randomRoomCode('ERR');
 

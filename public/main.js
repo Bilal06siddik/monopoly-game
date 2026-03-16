@@ -4,11 +4,20 @@
 
 (function () {
     'use strict';
+
+    const SESSION_TOKEN_KEY = 'monopoly-session-token';
+    const ROOM_CODE_KEY = 'monopoly-room-code';
+    const hasExistingSession = Boolean(sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY));
     
     // --- INTRO ANIMATION SEQUENCE ---
     (function initIntro() {
         const introScreen = document.getElementById('intro-screen');
         if (!introScreen) return;
+
+        if (hasExistingSession) {
+            introScreen.remove();
+            return;
+        }
 
         // Sequence: 
         // 1. Pop-in completes (2s)
@@ -29,9 +38,7 @@
     GameBoard.build(scene, renderer);
     GameDice.init(scene);
     GameTokens.init(scene, GameBoard.getTileWorldPosition);
-
-    const SESSION_TOKEN_KEY = 'monopoly-session-token';
-    const ROOM_CODE_KEY = 'monopoly-room-code';
+    const BOARD_MAPS = window.BOARD_MAPS || {};
     const DEFAULT_VIEW_MODE = 'isometric';
     const sessionToken = getOrCreateSessionToken();
     const initialRoomCode = resolveInitialRoomCode();
@@ -42,6 +49,7 @@
     } = window.MonopolyStateSync || {};
     let myPlayerId = null;
     let currentGameState = null;
+    let currentBoardId = window.DEFAULT_BOARD_ID || 'egypt';
     let activeRoomCode = initialRoomCode;
     let focusedTileIndex = null;
     const cameraViewBtn = document.getElementById('camera-view-btn');
@@ -63,6 +71,23 @@
     const hostExtendTimer30Btn = document.getElementById('host-extend-timer-30-btn');
     const hostTurnTimerStatus = document.getElementById('host-turn-timer-status');
     let topBarResizeObserver = null;
+
+    function resolveBoardId(boardId) {
+        return BOARD_MAPS[boardId] ? boardId : (window.DEFAULT_BOARD_ID || 'egypt');
+    }
+
+    function getBoardTiles(boardId = currentBoardId) {
+        return BOARD_MAPS[resolveBoardId(boardId)]?.tiles || GameBoard.getTileData();
+    }
+
+    function syncBoardSelection(boardId = currentGameState?.boardId || currentBoardId) {
+        const resolvedBoardId = resolveBoardId(boardId);
+        if (resolvedBoardId === currentBoardId && GameBoard.getCurrentBoardId?.() === resolvedBoardId) {
+            return;
+        }
+        currentBoardId = resolvedBoardId;
+        GameBoard.setBoardMap(resolvedBoardId, scene, renderer);
+    }
 
     function getStoredValue(key) {
         return sessionStorage.getItem(key) || localStorage.getItem(key);
@@ -334,6 +359,14 @@
         lobbyEndBtn?.classList.toggle('hidden', !isHost);
         hudEndGameBtn?.classList.toggle('hidden', !isHost || !isGameStarted);
         hudEndBtn?.classList.toggle('hidden', !isHost);
+        if (!isHost) {
+            document.getElementById('persistent-host-controls')?.classList.remove('is-collapsed');
+            const hostControlsToggle = document.getElementById('host-controls-toggle');
+            if (hostControlsToggle) {
+                hostControlsToggle.setAttribute('aria-expanded', 'true');
+                hostControlsToggle.textContent = 'Host Controls';
+            }
+        }
         if (saveGameBtn) saveGameBtn.disabled = !isHost || !isGameStarted;
         if (loadGameBtn) loadGameBtn.disabled = !isHost || isGameStarted;
         syncHostTimerControls(state);
@@ -578,6 +611,7 @@
         if (!setCurrentGameState(state)) return;
 
         const appliedState = currentGameState;
+        syncBoardSelection(appliedState.boardId);
         if (syncWorld) syncWorldFromState(appliedState);
         else {
             GameTokens.layoutTokens(appliedState.players || []);
@@ -722,6 +756,7 @@
     });
 
     socket.on('lobby-update', (state) => {
+        syncBoardSelection(state?.selectedBoardId || state?.boardId);
         GameUI.updateHostPlayerId(state?.hostPlayerId || null);
         syncRoomChrome(state);
     });
@@ -1225,7 +1260,7 @@
     // ═══════════════════════════════════════════════════════
     function showPropertyDetailsModal(tileIndex) {
         if (!currentGameState) return;
-        const tile = BOARD_DATA[tileIndex];
+        const tile = getBoardTiles(currentGameState?.boardId)[tileIndex];
         const prop = currentGameState.properties[tileIndex];
         if (!tile) return;
 
@@ -1240,7 +1275,9 @@
             'green': '#00AA00', 'darkblue': '#0000CC', 'railroad': '#555',
             'utility': '#888'
         };
-        const accent = colorMap[tile.colorGroup] || colorMap[tile.type] || '#6c5ce7';
+        const accent = Number.isFinite(tile.color)
+            ? `#${tile.color.toString(16).padStart(6, '0')}`
+            : (colorMap[tile.colorGroup] || colorMap[tile.type] || '#6c5ce7');
 
         // ── LEFT COLUMN ──────────────────────────────────
         // Color block
@@ -1259,8 +1296,15 @@
 
         // Name
         const nameEl = document.getElementById('pd-name');
-        if (tile.type === 'railroad') {
-            nameEl.innerHTML = `<img src="/images/metro-logo.png" class="pdm-railroad-icon"> ${tile.name}`;
+        const railroadIconPath = tile.type === 'railroad'
+            ? tile.iconImage === 'metro'
+                ? '/images/metro-logo.png'
+                : tile.iconImage === 'railroad'
+                    ? '/images/railroad-icon.svg'
+                    : null
+            : null;
+        if (railroadIconPath) {
+            nameEl.innerHTML = `<img src="${railroadIconPath}" class="pdm-railroad-icon"> ${tile.name}`;
         } else {
             nameEl.textContent = tile.name;
         }
@@ -1487,8 +1531,8 @@
         } else {
             if (ownerEl) ownerEl.textContent = 'Unowned';
             if (ownerAvatar) {
-                if (tile.type === 'railroad') {
-                    ownerAvatar.innerHTML = `<img src="/images/metro-logo.png" style="width:70%; height:70%; object-fit:contain;">`;
+                if (railroadIconPath) {
+                    ownerAvatar.innerHTML = `<img src="${railroadIconPath}" style="width:70%; height:70%; object-fit:contain;">`;
                     ownerAvatar.style.borderColor = 'rgba(108, 92, 231, 0.2)';
                 } else {
                     ownerAvatar.textContent = '🏦';

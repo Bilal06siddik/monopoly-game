@@ -335,6 +335,18 @@ test('inactive players do not keep a doubles bonus turn', () => {
     assert.equal(game.doublesCount, 0);
 });
 
+test('board catalog exposes both Egypt and Countries maps', () => {
+    assert.equal(BOARD_DATA.DEFAULT_BOARD_ID, 'egypt');
+    assert.ok(BOARD_DATA.BOARD_MAPS.egypt);
+    assert.ok(BOARD_DATA.BOARD_MAPS.countries);
+    assert.equal(BOARD_DATA.BOARD_MAPS.egypt.name, 'Egypt');
+    assert.equal(BOARD_DATA.BOARD_MAPS.countries.name, 'Countries');
+    assert.equal(BOARD_DATA.BOARD_MAPS.egypt.tiles.length, 40);
+    assert.equal(BOARD_DATA.BOARD_MAPS.countries.tiles.length, 40);
+    assert.equal(BOARD_DATA.BOARD_MAPS.countries.tiles[1].name, 'Delhi');
+    assert.equal(BOARD_DATA.BOARD_MAPS.countries.tiles[5].name, 'India Railroad');
+});
+
 test('serialized state keeps current player id and index aligned', () => {
     const normalized = normalizeSerializedGameState({
         players: [

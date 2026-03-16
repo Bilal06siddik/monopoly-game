@@ -29,8 +29,8 @@
   </div>
 
   <div id="host-controls-shell" class="host-controls-shell hidden">
-    <button id="host-controls-toggle" class="host-controls-toggle" type="button" aria-expanded="false">Host Controls</button>
-    <div id="persistent-host-controls" class="persistent-host-controls hidden">
+    <button id="host-controls-toggle" class="host-controls-toggle" type="button" aria-controls="persistent-host-controls" aria-expanded="true">Host Controls</button>
+    <div id="persistent-host-controls" class="persistent-host-controls">
       <div class="host-controls-header">
         <div>
           <div class="host-controls-title">HOST CONTROLS</div>
@@ -137,8 +137,20 @@
     </div>
 
     <!-- Right Side: Leaderboard Panel -->
-    <div class="leaderboard-wrapper">
-      <div class="lb-header">🏆 Leaderboard</div>
+    <div class="leaderboard-wrapper" id="leaderboard-wrapper">
+      <div class="lb-header">
+        <span class="lb-header-title">🏆 Leaderboard</span>
+        <button
+          id="leaderboard-collapse-btn"
+          class="lb-collapse-btn"
+          type="button"
+          aria-expanded="true"
+          aria-label="Collapse leaderboard"
+          title="Collapse leaderboard"
+        >
+          🏆
+        </button>
+      </div>
       <div id="leaderboard-panel" class="leaderboard-panel"></div>
     </div>
 
@@ -583,6 +595,17 @@
           <p id="token-selection-hint" class="token-selection-hint">Pick a character first to unlock token choices.</p>
         </div>
         <div id="token-grid" class="token-grid"></div>
+      </section>
+
+      <section class="map-vote-panel">
+        <div class="map-vote-header">
+          <div>
+            <p class="token-selection-kicker">MAP VOTE</p>
+            <h2 class="token-selection-title">Vote for the board</h2>
+          </div>
+          <p id="map-vote-hint" class="token-selection-hint">Every human player gets one vote. Ties keep the current winner.</p>
+        </div>
+        <div id="map-vote-grid" class="map-vote-grid"></div>
       </section>
 
       <div class="lobby-footer">

@@ -27,14 +27,20 @@ const GameBoard = (() => {
     ];
     const upgradeModelCache = new Map();
     const upgradeModelPromises = new Map();
+    const flagImageCache = new Map();
+    const flagImageSubscribers = new Map();
+    const transportTileIndices = [5, 15, 25, 35];
     const metroLogoImg = new Image();
     metroLogoImg.src = '/images/metro-logo.png';
-    metroLogoImg.onload = () => {
-        const rrIndices = [5, 15, 25, 35];
-        if (typeof GameBoard !== 'undefined' && rrIndices.every(idx => tileMeshes[idx])) {
-            rrIndices.forEach(idx => refreshTileTexture(idx));
+    const railroadLogoImg = new Image();
+    railroadLogoImg.src = '/images/railroad-icon.svg';
+    const refreshTransportTileTextures = () => {
+        if (typeof GameBoard !== 'undefined' && transportTileIndices.every(idx => tileMeshes[idx])) {
+            transportTileIndices.forEach(idx => refreshTileTexture(idx));
         }
     };
+    metroLogoImg.onload = refreshTransportTileTextures;
+    railroadLogoImg.onload = refreshTransportTileTextures;
     let gltfLoader = null;
     let boardGroup = null;
     let edgeLen;
@@ -46,7 +52,12 @@ const GameBoard = (() => {
     let hoveredTileIndex = null;
     let focusedTileIndex = null;
     let onTileHoverCallback = null;
+    let sceneRef = null;
+    let rendererStateRef = null;
+    let currentBoardId = window.DEFAULT_BOARD_ID || 'egypt';
+    let boardData = Array.isArray(window.BOARD_DATA) ? window.BOARD_DATA : [];
     const interactionHighlightsEnabled = false;
+    const BOARD_MAPS = window.BOARD_MAPS || {};
 
     const COLOR_MAP = {
         brown: '#8c5a3c',
@@ -67,6 +78,23 @@ const GameBoard = (() => {
         north: [21, 22, 23, 24, 25, 26, 27, 28, 29],
         east: [31, 32, 33, 34, 35, 36, 37, 38, 39]
     };
+
+    function resolveBoardConfig(boardId = currentBoardId) {
+        return BOARD_MAPS[boardId] || BOARD_MAPS[window.DEFAULT_BOARD_ID] || {
+            id: boardId,
+            name: boardId,
+            tiles: Array.isArray(window.BOARD_DATA) ? window.BOARD_DATA : []
+        };
+    }
+
+    function setActiveBoard(boardId = currentBoardId) {
+        const board = resolveBoardConfig(boardId);
+        currentBoardId = board.id || window.DEFAULT_BOARD_ID || 'egypt';
+        boardData = Array.isArray(board.tiles) ? board.tiles : [];
+        window.BOARD_DATA = boardData;
+        window.CURRENT_BOARD_ID = currentBoardId;
+        return board;
+    }
 
     const TEXT_ROTATION_BY_PROFILE = {
         isometric: {
@@ -107,10 +135,37 @@ const GameBoard = (() => {
         }
     };
 
+    function resetBoardCollections() {
+        Object.keys(tilePositions).forEach(key => delete tilePositions[key]);
+        Object.keys(tileMeshes).forEach(key => delete tileMeshes[key]);
+        Object.keys(houseMeshes).forEach(key => delete houseMeshes[key]);
+        Object.keys(houseRenderTokens).forEach(key => delete houseRenderTokens[key]);
+        Object.keys(tileRenderState).forEach(key => delete tileRenderState[key]);
+        occupiedTiles.clear();
+        hoveredTileIndex = null;
+        focusedTileIndex = null;
+    }
+
+    function disposeBoard() {
+        if (!boardGroup) return;
+        const parentScene = sceneRef;
+        if (parentScene) {
+            parentScene.remove(boardGroup);
+        }
+        disposeObject(boardGroup);
+        boardGroup = null;
+        resetBoardCollections();
+    }
+
     function build(scene, rendererRef = null) {
+        sceneRef = scene;
+        rendererStateRef = rendererRef || rendererStateRef;
+        setActiveBoard(currentBoardId);
+        disposeBoard();
+
         boardGroup = new THREE.Group();
         boardGroup.position.y = 0.05;
-        maxTextureAnisotropy = rendererRef?.capabilities?.getMaxAnisotropy?.() || 1;
+        maxTextureAnisotropy = rendererStateRef?.capabilities?.getMaxAnisotropy?.() || 1;
 
         edgeLen = CORNER_SIZE + 9 * (TILE_W + GAP) + CORNER_SIZE;
         half = edgeLen / 2;
@@ -120,7 +175,7 @@ const GameBoard = (() => {
             new THREE.BoxGeometry(edgeLen + 1, 0.36, edgeLen + 1),
             new THREE.MeshStandardMaterial({
                 color: 0x09111f,
-                roughness: 0.98,
+                roughness: 0.96,
                 metalness: 0.02
             })
         );
@@ -135,14 +190,14 @@ const GameBoard = (() => {
                 color: 0x1d2b4b,
                 emissive: 0x0b1220,
                 emissiveIntensity: 0.26,
-                roughness: 0.9,
+                roughness: 0.86,
                 metalness: 0.06
             })
         );
         boardTrim.position.y = -0.18;
         boardGroup.add(boardTrim);
 
-        BOARD_DATA.forEach((tile, index) => {
+        boardData.forEach((tile, index) => {
             const isCorner = tile.type === 'corner';
             tileRenderState[index] = {
                 ownerColor: null,
@@ -172,7 +227,7 @@ const GameBoard = (() => {
                 tileName: tile.name,
                 tileType: tile.type,
                 tileColor: tile.colorGroup || tile.type,
-                tileAccent: COLOR_MAP[tile.colorGroup] || COLOR_MAP[tile.type] || '#7ea8ff',
+                tileAccent: `#${(tile.color || 0x7ea8ff).toString(16).padStart(6, '0')}`,
                 outwardVector: getTileOutwardVector(index)
             };
 
@@ -311,6 +366,107 @@ const GameBoard = (() => {
         };
     }
 
+    function getTileAccentColor(tile) {
+        if (Number.isFinite(tile?.color)) {
+            return `#${tile.color.toString(16).padStart(6, '0')}`;
+        }
+        return COLOR_MAP[tile?.colorGroup] || COLOR_MAP[tile?.type] || '#bac4d6';
+    }
+
+    function registerFlagImageUsage(imagePath, tileIndex) {
+        if (!imagePath || !Number.isInteger(tileIndex)) return;
+        if (!flagImageSubscribers.has(imagePath)) {
+            flagImageSubscribers.set(imagePath, new Set());
+        }
+        flagImageSubscribers.get(imagePath).add(tileIndex);
+    }
+
+    function getFlagImageEntry(imagePath, tileIndex) {
+        if (!imagePath) return null;
+
+        registerFlagImageUsage(imagePath, tileIndex);
+
+        if (flagImageCache.has(imagePath)) {
+            return flagImageCache.get(imagePath);
+        }
+
+        const image = new Image();
+        const entry = { image, status: 'loading' };
+
+        image.onload = () => {
+            entry.status = 'loaded';
+            const subscriberIndexes = flagImageSubscribers.get(imagePath);
+            if (!subscriberIndexes) return;
+            subscriberIndexes.forEach(index => {
+                if (tileMeshes[index]) {
+                    refreshTileTexture(index);
+                }
+            });
+        };
+
+        image.onerror = () => {
+            entry.status = 'error';
+        };
+
+        image.src = imagePath;
+        flagImageCache.set(imagePath, entry);
+        return entry;
+    }
+
+    function drawContainedImage(ctx, image, x, y, width, height, padding = 0) {
+        const safeWidth = Math.max(0, width - (padding * 2));
+        const safeHeight = Math.max(0, height - (padding * 2));
+        if (!safeWidth || !safeHeight || !image?.naturalWidth || !image?.naturalHeight) return;
+
+        const scale = Math.min(safeWidth / image.naturalWidth, safeHeight / image.naturalHeight);
+        const drawWidth = image.naturalWidth * scale;
+        const drawHeight = image.naturalHeight * scale;
+        const drawX = x + padding + ((safeWidth - drawWidth) / 2);
+        const drawY = y + padding + ((safeHeight - drawHeight) / 2);
+
+        ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+    }
+
+    function drawTileBand(ctx, tile, canvas, bandHeight) {
+        if (tile?.bandStyle === 'flag-image' && tile.flagImage) {
+            const flagImageEntry = getFlagImageEntry(tile.flagImage, tile.index);
+
+            const fallbackGradient = ctx.createLinearGradient(0, 0, canvas.width, bandHeight);
+            fallbackGradient.addColorStop(0, '#243246');
+            fallbackGradient.addColorStop(1, '#121b28');
+            ctx.fillStyle = fallbackGradient;
+            ctx.fillRect(0, 0, canvas.width, bandHeight);
+
+            if (flagImageEntry?.status === 'loaded') {
+                drawContainedImage(ctx, flagImageEntry.image, 0, 0, canvas.width, bandHeight, Math.round(bandHeight * 0.03));
+            }
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
+            ctx.fillRect(0, 0, canvas.width, 8);
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(6, 6, canvas.width - 12, bandHeight - 12);
+
+            ctx.fillStyle = 'rgba(6, 10, 18, 0.18)';
+            ctx.fillRect(0, bandHeight * 0.66, canvas.width, bandHeight * 0.34);
+            return;
+        }
+
+        const colorHex = getTileAccentColor(tile);
+        const bandGradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+        bandGradient.addColorStop(0, shadeColor(colorHex, 18));
+        bandGradient.addColorStop(1, shadeColor(colorHex, -14));
+        ctx.fillStyle = bandGradient;
+        ctx.fillRect(0, 0, canvas.width, bandHeight);
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+        ctx.fillRect(0, 0, canvas.width, 10);
+
+        ctx.fillStyle = 'rgba(6, 10, 18, 0.34)';
+        ctx.fillRect(0, bandHeight - 10, canvas.width, 10);
+    }
+
     function createTileTexture(tile, tileIndex, width, height, ownerColor = null, propertyState = null) {
         const canvas = document.createElement('canvas');
         const scale = 5;
@@ -323,14 +479,13 @@ const GameBoard = (() => {
 
         drawOrientedTexture(ctx, canvas, rotationDegrees, () => {
             const footerHeight = Math.round(canvas.height * 0.18);
-            const bandHeight = Math.round(canvas.height * 0.18);
-            const colorHex = COLOR_MAP[tile.colorGroup] || COLOR_MAP[tile.type] || '#bac4d6';
+            const bandHeight = Math.round(canvas.height * (tile?.bandStyle === 'flag-image' ? 0.23 : 0.18));
             const isPurchasable = ['property', 'railroad', 'utility'].includes(tile.type);
             const buildingCount = propertyState?.houses || 0;
 
             const tileGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-            tileGradient.addColorStop(0, '#141d30');
-            tileGradient.addColorStop(1, '#0b1120');
+            tileGradient.addColorStop(0, '#182235');
+            tileGradient.addColorStop(1, '#0b1220');
             ctx.fillStyle = tileGradient;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -346,17 +501,7 @@ const GameBoard = (() => {
             ctx.strokeRect(14, 14, canvas.width - 28, canvas.height - 28);
 
             if (isPurchasable) {
-                const bandGradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
-                bandGradient.addColorStop(0, shadeColor(colorHex, 18));
-                bandGradient.addColorStop(1, shadeColor(colorHex, -14));
-                ctx.fillStyle = bandGradient;
-                ctx.fillRect(0, 0, canvas.width, bandHeight);
-
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
-                ctx.fillRect(0, 0, canvas.width, 10);
-
-                ctx.fillStyle = 'rgba(6, 10, 18, 0.34)';
-                ctx.fillRect(0, bandHeight - 10, canvas.width, 10);
+                drawTileBand(ctx, tile, canvas, bandHeight);
             }
 
             if (ownerColor) {
@@ -393,11 +538,17 @@ const GameBoard = (() => {
             }
 
             const iconText = getTileIconText(tile);
-            if (iconText) {
-                if (tile.type === 'railroad' && metroLogoImg.complete && metroLogoImg.naturalWidth > 0) {
-                    const logoSize = canvas.width * 0.36;
+            const imageIcon = tile.iconImage === 'metro'
+                ? metroLogoImg
+                : tile.iconImage === 'railroad'
+                    ? railroadLogoImg
+                    : null;
+            const canDrawImageIcon = Boolean(imageIcon?.complete && imageIcon.naturalWidth > 0);
+            if (canDrawImageIcon || iconText) {
+                if (canDrawImageIcon) {
+                    const logoSize = canvas.width * (tile.iconImage === 'railroad' ? 0.42 : 0.36);
                     ctx.drawImage(
-                        metroLogoImg,
+                        imageIcon,
                         (canvas.width - logoSize) / 2,
                         canvas.height * 0.12,
                         logoSize,
@@ -424,19 +575,27 @@ const GameBoard = (() => {
                 }
             }
 
+            const isFlagTile = tile?.bandStyle === 'flag-image';
+
             ctx.fillStyle = '#f4f7ff';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            const fontSize = Math.floor(canvas.width * 0.128 * textScale);
-            ctx.font = `700 ${fontSize}px 'Segoe UI', Arial, sans-serif`;
+            const fontSize = Math.floor(canvas.width * (isFlagTile ? 0.15 : 0.128) * textScale);
+            ctx.font = `800 ${fontSize}px 'Segoe UI', Arial, sans-serif`;
             ctx.strokeStyle = 'rgba(5, 8, 16, 0.8)';
             ctx.lineWidth = Math.max(5, Math.floor(canvas.width * 0.01));
             ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
             ctx.shadowBlur = 10;
 
-            const nameLines = wrapText(ctx, tile.name.toUpperCase(), canvas.width * 0.84);
-            const lineHeight = fontSize * 1.06;
-            const startY = tile.type === 'railroad' ? canvas.height * 0.52 : (iconText ? canvas.height * 0.45 : canvas.height * 0.39);
+            const nameLines = wrapText(ctx, tile.name.toUpperCase(), canvas.width * (isFlagTile ? 0.9 : 0.84));
+            const lineHeight = fontSize * (isFlagTile ? 1 : 1.06);
+            const startY = tile.type === 'railroad'
+                ? canvas.height * 0.52
+                : (canDrawImageIcon || iconText)
+                    ? canvas.height * 0.45
+                    : isFlagTile
+                        ? canvas.height * 0.44
+                        : canvas.height * 0.39;
             nameLines.slice(0, 3).forEach((line, lineIndex) => {
                 ctx.strokeText(line, canvas.width / 2, startY + (lineIndex * lineHeight));
                 ctx.fillText(line, canvas.width / 2, startY + (lineIndex * lineHeight));
@@ -660,6 +819,7 @@ const GameBoard = (() => {
     }
 
     function getTileIconText(tile) {
+        if (tile?.iconText) return tile.iconText;
         const name = typeof tile.name === 'string' ? tile.name.toLowerCase() : '';
         if (name.includes('lucky wheel')) return '🎰';
         if (name.includes('happy birthday')) return '🎂';
@@ -679,7 +839,7 @@ const GameBoard = (() => {
     }
 
     function getCornerState(tileIndex) {
-        const tile = BOARD_DATA[tileIndex];
+        const tile = boardData[tileIndex];
         if (!tile || tile.type !== 'corner') return null;
         if (tile.name.toLowerCase().includes('bailout')) {
             return { bailoutAmount: cornerTileState.bailoutAmount };
@@ -742,7 +902,7 @@ const GameBoard = (() => {
     }
 
     function createMaterialSetForTile(tileIndex) {
-        const tile = BOARD_DATA[tileIndex];
+        const tile = boardData[tileIndex];
         if (!tile) return null;
         if (tile.type === 'corner') {
             return createCornerMaterials(tile, tileIndex, getCornerState(tileIndex));
@@ -1137,7 +1297,7 @@ const GameBoard = (() => {
         if (cornerTileState.bailoutAmount === safeAmount) return;
         cornerTileState.bailoutAmount = safeAmount;
 
-        const bailoutTileIndex = BOARD_DATA.findIndex(tile =>
+        const bailoutTileIndex = boardData.findIndex(tile =>
             tile.type === 'corner' && tile.name.toLowerCase().includes('bailout')
         );
         if (bailoutTileIndex >= 0) {
@@ -1146,7 +1306,7 @@ const GameBoard = (() => {
     }
 
     function setMortgaged(tileIndex, isMortgaged) {
-        const tile = BOARD_DATA[tileIndex];
+        const tile = boardData[tileIndex];
         if (!tile) return;
 
         const previousState = getTileRenderSnapshot(tileIndex);
@@ -1232,7 +1392,7 @@ const GameBoard = (() => {
 
         currentTextProfile = nextProfile;
         currentThirdPersonSide = nextThirdPersonSide;
-        refreshTileTextures(BOARD_DATA.map(tile => tile.index));
+        refreshTileTextures(boardData.map(tile => tile.index));
     }
 
     function replaceTileMaterial(tileIndex, materialSet) {
@@ -1303,7 +1463,20 @@ const GameBoard = (() => {
     }
 
     function getTileData() {
-        return BOARD_DATA;
+        return boardData;
+    }
+
+    function setBoardMap(boardId, scene = sceneRef, rendererRef = rendererStateRef) {
+        const resolvedBoard = setActiveBoard(boardId);
+        if (!scene) {
+            return resolvedBoard;
+        }
+        build(scene, rendererRef);
+        return resolvedBoard;
+    }
+
+    function getCurrentBoardId() {
+        return currentBoardId;
     }
 
     function getMesh(index) {
@@ -1359,6 +1532,8 @@ const GameBoard = (() => {
 
     return {
         build,
+        setBoardMap,
+        getCurrentBoardId,
         getTileData,
         getTileWorldPosition,
         getMesh,

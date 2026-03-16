@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+<title>Railroad icon</title>
+<rect width="128" height="128" rx="28" fill="#132033"/>
+<rect x="26" y="18" width="76" height="66" rx="14" fill="#dce8f7"/>
+<rect x="38" y="30" width="52" height="20" rx="6" fill="#6fa8ff"/>
+<rect x="46" y="58" width="12" height="12" rx="2" fill="#253449"/>
+<rect x="70" y="58" width="12" height="12" rx="2" fill="#253449"/>
+<rect x="56" y="8" width="16" height="18" rx="4" fill="#dce8f7"/>
+<path d="M22 94h84l-12 14H34L22 94Z" fill="#90a6c4"/>
+<circle cx="42" cy="88" r="10" fill="#253449"/>
+<circle cx="86" cy="88" r="10" fill="#253449"/>
+<circle cx="42" cy="88" r="4" fill="#dce8f7"/>
+<circle cx="86" cy="88" r="4" fill="#dce8f7"/>
+<path d="M32 112h8l-6 8h-8l6-8Zm28 0h8l-6 8h-8l6-8Zm28 0h8l-6 8h-8l6-8Z" fill="#dce8f7"/>
+</svg>

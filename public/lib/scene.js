@@ -19,11 +19,13 @@ const GameScene = (() => {
     const BOARD_MAX_DISTANCE = 46;
     const THIRD_PERSON_MIN_DISTANCE = 2.8;
     const THIRD_PERSON_MAX_DISTANCE = 9.5;
-    const DEFAULT_BOARD_TARGET = new THREE.Vector3(0, 1.55, 1.2);
-    const boardCameraOffset = new THREE.Vector3(-20, 26, -20);
+    const DEFAULT_BOARD_TARGET = new THREE.Vector3(0, 1.45, 1.2);
+    const boardCameraOffset = new THREE.Vector3(-20, 22.5, -20);
     const defaultBoardDistance = boardCameraOffset.length();
     const boardOffsetDirection = boardCameraOffset.clone().normalize();
     const topDownCameraPosition = new THREE.Vector3(0, 44, 0);
+    const FOG_FADE_START_DISTANCE = 26;
+    const FOG_DISABLED_DISTANCE = 36;
     const topDownLookTarget = new THREE.Vector3(0, 0, 0);
     const currentLookTarget = new THREE.Vector3();
     const desiredCameraPosition = new THREE.Vector3();
@@ -54,10 +56,10 @@ const GameScene = (() => {
         const canvas = document.getElementById('game-canvas');
 
         scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x070c16);
-        scene.fog = new THREE.Fog(0x070c16, 26, 78);
-        scene.userData.defaultBackground = new THREE.Color(0x070c16);
-        scene.userData.topDownBackground = new THREE.Color(0x111f34);
+        scene.background = new THREE.Color(0x0b1320);
+        scene.fog = new THREE.Fog(0x0b1320, 24, 70);
+        scene.userData.defaultBackground = new THREE.Color(0x0b1320);
+        scene.userData.topDownBackground = new THREE.Color(0x111c2f);
         scene.userData.defaultFogNear = 26;
         scene.userData.defaultFogFar = 78;
 
@@ -75,7 +77,7 @@ const GameScene = (() => {
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         renderer.outputEncoding = THREE.sRGBEncoding;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 0.92;
+        renderer.toneMappingExposure = 0.84;
 
         camera = new THREE.PerspectiveCamera(
             DEFAULT_FOV,
@@ -108,13 +110,13 @@ const GameScene = (() => {
         canvas.addEventListener('pointerdown', onCanvasPointerDown, true);
         canvas.addEventListener('contextmenu', event => event.preventDefault());
 
-        const hemisphereLight = new THREE.HemisphereLight(0x5f769d, 0x09111d, 0.56);
+        const hemisphereLight = new THREE.HemisphereLight(0x7f95b8, 0x060b14, 0.42);
         scene.add(hemisphereLight);
 
-        const ambientLight = new THREE.AmbientLight(0x8ea6d8, 0.16);
+        const ambientLight = new THREE.AmbientLight(0x6f88b7, 0.18);
         scene.add(ambientLight);
 
-        const keyLight = new THREE.DirectionalLight(0xdbe7ff, 0.94);
+        const keyLight = new THREE.DirectionalLight(0xd9e7ff, 0.78);
         keyLight.position.set(18, 30, 16);
         keyLight.castShadow = true;
         keyLight.shadow.mapSize.width = 2048;
@@ -127,21 +129,21 @@ const GameScene = (() => {
         keyLight.shadow.camera.bottom = -22;
         scene.add(keyLight);
 
-        const fillLight = new THREE.DirectionalLight(0x4f8fff, 0.34);
+        const fillLight = new THREE.DirectionalLight(0x476da8, 0.26);
         fillLight.position.set(-16, 18, -14);
         scene.add(fillLight);
 
-        const rimLight = new THREE.DirectionalLight(0x628dff, 0.16);
+        const rimLight = new THREE.DirectionalLight(0x5a82c7, 0.16);
         rimLight.position.set(10, 12, -18);
         scene.add(rimLight);
 
-        const centerLight = new THREE.PointLight(0x3e83ff, 0.26, 28);
+        const centerLight = new THREE.PointLight(0x2f5fa6, 0.22, 28);
         centerLight.position.set(0, 7, 0);
         scene.add(centerLight);
 
         const groundGeo = new THREE.PlaneGeometry(200, 200);
         const groundMat = new THREE.MeshStandardMaterial({
-            color: 0x060b14,
+            color: 0x0a101a,
             roughness: 0.96,
             metalness: 0.05
         });
@@ -156,7 +158,7 @@ const GameScene = (() => {
             new THREE.MeshBasicMaterial({
                 color: 0x2b6bff,
                 transparent: true,
-                opacity: 0.06
+                opacity: 0.05
             })
         );
         glow.rotation.x = -Math.PI / 2;
@@ -240,13 +242,23 @@ const GameScene = (() => {
         controls.maxPolarAngle = boardSpherical.phi;
         controls.minAzimuthAngle = boardSpherical.theta;
         controls.maxAzimuthAngle = boardSpherical.theta;
-        // Restore fog to defaults in board view
+        // Fade fog out as the player zooms away from the board.
         if (scene.fog) {
-            scene.fog.near = scene.userData.defaultFogNear || 26;
-            scene.fog.far = scene.userData.defaultFogFar || 78;
+            const currentDistance = controls.getDistance?.() || defaultBoardDistance;
+            if (currentDistance >= FOG_DISABLED_DISTANCE) {
+                scene.fog.near = 1000;
+                scene.fog.far = 1200;
+            } else if (currentDistance <= FOG_FADE_START_DISTANCE) {
+                scene.fog.near = scene.userData.defaultFogNear || 26;
+                scene.fog.far = scene.userData.defaultFogFar || 78;
+            } else {
+                const fadeProgress = (currentDistance - FOG_FADE_START_DISTANCE) / (FOG_DISABLED_DISTANCE - FOG_FADE_START_DISTANCE);
+                scene.fog.near = THREE.MathUtils.lerp(scene.userData.defaultFogNear || 26, 1000, fadeProgress);
+                scene.fog.far = THREE.MathUtils.lerp(scene.userData.defaultFogFar || 78, 1200, fadeProgress);
+            }
         }
         if (scene.background?.isColor) {
-            scene.background.copy(scene.userData.defaultBackground || new THREE.Color(0x070c16));
+            scene.background.copy(scene.userData.defaultBackground || new THREE.Color(0x0b1320));
         }
 
         if (shouldResetBoardView) {
@@ -284,7 +296,7 @@ const GameScene = (() => {
             scene.fog.far = 400;
         }
         if (scene.background?.isColor) {
-            scene.background.copy(scene.userData.topDownBackground || new THREE.Color(0x111f34));
+            scene.background.copy(scene.userData.topDownBackground || new THREE.Color(0x111c2f));
         }
     }
 
@@ -365,7 +377,7 @@ const GameScene = (() => {
             scene.fog.far = scene.userData.defaultFogFar || 78;
         }
         if (scene.background?.isColor) {
-            scene.background.copy(scene.userData.defaultBackground || new THREE.Color(0x070c16));
+            scene.background.copy(scene.userData.defaultBackground || new THREE.Color(0x0b1320));
         }
     }
 

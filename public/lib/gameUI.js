@@ -13,6 +13,7 @@ const GameUI = (() => {
     let lastRenderedTurnOwnerId = null;
     let hasRenderedTurnState = false;
     let avatarPreviewElement = null;
+    let leaderboardCollapsed = false;
 
     function resetTurnAwareness() {
         lastRenderedTurnOwnerId = null;
@@ -121,6 +122,17 @@ const GameUI = (() => {
         avatarPreviewElement.classList.remove('show');
     }
 
+    function syncLeaderboardCollapseState() {
+        const wrapper = document.getElementById('leaderboard-wrapper');
+        const button = document.getElementById('leaderboard-collapse-btn');
+        if (!wrapper || !button) return;
+
+        wrapper.classList.toggle('collapsed', leaderboardCollapsed);
+        button.setAttribute('aria-expanded', String(!leaderboardCollapsed));
+        button.setAttribute('aria-label', leaderboardCollapsed ? 'Expand leaderboard' : 'Collapse leaderboard');
+        button.setAttribute('title', leaderboardCollapsed ? 'Expand leaderboard' : 'Collapse leaderboard');
+    }
+
     function init(socketInstance) {
         socket = socketInstance;
         if (typeof GameAudio !== 'undefined' && typeof GameAudio.init === 'function') {
@@ -191,6 +203,16 @@ const GameUI = (() => {
                 if (!window.confirm('Declare bankruptcy and leave the match? This cannot be undone.')) return;
                 socket.emit('declare-bankruptcy');
             });
+        }
+
+        const leaderboardCollapseBtn = document.getElementById('leaderboard-collapse-btn');
+        if (leaderboardCollapseBtn) {
+            leaderboardCollapseBtn.addEventListener('click', () => {
+                leaderboardCollapsed = !leaderboardCollapsed;
+                hideAvatarPreview();
+                syncLeaderboardCollapseState();
+            });
+            syncLeaderboardCollapseState();
         }
 
         const tabHistory = document.getElementById('tab-history');

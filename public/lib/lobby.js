@@ -33,6 +33,16 @@ const Lobby = (() => {
         'custom':  'CUSTOM'
     };
 
+    const MAP_VISUALS = {
+        egypt: ['/images/flags/egypt.svg'],
+        countries: [
+            '/images/flags/india.svg',
+            '/images/flags/turkey.svg',
+            '/images/flags/canada.svg',
+            '/images/flags/uk.svg'
+        ]
+    };
+
     // User-provided TCG Data
     const CHARACTER_STATS = {
         'bilo': { 
@@ -88,6 +98,7 @@ const Lobby = (() => {
     let selectedCustomColor = '#ffffff';
     let localCustomAvatar = null; // base64 data URL for local preview
     let localCustomName   = '';
+    let hostControlsOpen  = true;
 
     function sanitizeCustomName(value) {
         const raw = typeof value === 'string' ? value.trim() : '';
@@ -204,6 +215,7 @@ const Lobby = (() => {
             if (lobbyState) {
                 renderCharacters(lobbyState);
                 renderTokens(lobbyState);
+                renderBoardVotes(lobbyState);
             }
         });
 
@@ -211,6 +223,7 @@ const Lobby = (() => {
             lobbyState = state;
             renderCharacters(state);
             renderTokens(state);
+            renderBoardVotes(state);
             updateStatus(state);
             renderHostControls(state);
         });
@@ -536,6 +549,46 @@ const Lobby = (() => {
         });
     }
 
+    function renderBoardVotes(state) {
+        const grid = document.getElementById('map-vote-grid');
+        const hint = document.getElementById('map-vote-hint');
+        if (!grid || !hint) return;
+
+        const options = Array.isArray(state?.boardOptions) ? state.boardOptions : [];
+        const members = Array.isArray(state?.members) ? state.members : [];
+        const myVoteId = members.find(member => member.playerId === myPlayerId)?.boardVoteId || null;
+        const selectedBoardId = state?.selectedBoardId || options.find(option => option.isSelected)?.id || 'egypt';
+
+        hint.textContent = `Every human player gets one vote. Winning map: ${(options.find(option => option.id === selectedBoardId)?.name || 'Egypt').toUpperCase()}.`;
+        grid.innerHTML = '';
+
+        options.forEach(option => {
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = 'map-vote-card'
+                + (option.id === myVoteId ? ' selected' : '')
+                + (option.id === selectedBoardId ? ' leading' : '');
+            card.innerHTML = `
+                <div class="map-vote-title-row">
+                    <h3 class="map-vote-name">${option.name}</h3>
+                    <span class="map-vote-badge">${option.id === myVoteId ? 'Your Vote' : 'Vote'}</span>
+                </div>
+                <p class="map-vote-description">${option.description || 'Choose this map for the next match.'}</p>
+                <div class="map-vote-meta">
+                    <span class="map-vote-count">${option.votes} vote${option.votes === 1 ? '' : 's'}</span>
+                    <span class="map-vote-visual">${(MAP_VISUALS[option.id] || []).map(src => `<img src="${src}" alt="" />`).join('')}</span>
+                </div>
+            `;
+
+            card.addEventListener('click', () => {
+                if (option.id === myVoteId) return;
+                socket.emit('vote-board-map', { boardId: option.id });
+            });
+
+            grid.appendChild(card);
+        });
+    }
+
     function updateStatus(state) {
         const statusEl     = document.getElementById('lobby-status');
         const readyPlayers = state.players.filter(p => p.character);
@@ -543,12 +596,13 @@ const Lobby = (() => {
         const botCount     = readyPlayers.filter(p => p.isBot).length;
         const humanCount   = count - botCount;
         const isHost       = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
+        const selectedBoardName = state?.boardOptions?.find(option => option.id === state?.selectedBoardId)?.name || 'Egypt';
 
         if (count === 0) {
             statusEl.textContent = 'AWAITING PLAYERS...';
         } else {
             const botText = botCount > 0 ? ` • ${botCount} BOTS` : '';
-            statusEl.textContent = `${count} READY (${humanCount} HUMANS)${botText}`;
+            statusEl.textContent = `${count} READY (${humanCount} HUMANS)${botText} • MAP ${selectedBoardName.toUpperCase()}`;
         }
 
         const startBtn = document.getElementById('start-game-btn');
@@ -558,9 +612,9 @@ const Lobby = (() => {
             startBtn.classList.toggle('disabled', disabled);
 
             if (!isHost) {
-                startBtn.textContent = count >= 2 ? 'HOST STARTS MATCH' : 'WAITING FOR HOST';
+                startBtn.textContent = count >= 2 ? `HOST STARTS ${selectedBoardName.toUpperCase()}` : 'WAITING FOR HOST';
             } else if (count >= 2) {
-                startBtn.textContent = 'START MATCH';
+                startBtn.textContent = `START ${selectedBoardName.toUpperCase()}`;
             } else {
                 startBtn.textContent = 'NEED 2+ PLAYERS';
             }
@@ -581,12 +635,13 @@ const Lobby = (() => {
     }
 
     function renderHostControls(state) {
+        syncHostControlsAvailability(state);
+
         const panel = document.getElementById('persistent-host-controls');
         const list = document.getElementById('host-player-list');
         if (!panel || !list) return;
 
         const isHost = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
-        panel.classList.toggle('hidden', !isHost);
         list.innerHTML = '';
 
         if (!isHost) {
@@ -646,8 +701,7 @@ const Lobby = (() => {
         const hostControlsClose = document.getElementById('host-controls-close');
 
         hostControlsToggle?.addEventListener('click', () => {
-            const panel = document.getElementById('persistent-host-controls');
-            setHostControlsOpen(panel?.classList.contains('hidden'));
+            setHostControlsOpen(!hostControlsOpen);
         });
 
         hostControlsClose?.addEventListener('click', () => setHostControlsOpen(false));
@@ -678,11 +732,26 @@ const Lobby = (() => {
         const toggle = document.getElementById('host-controls-toggle');
         if (!panel) return;
 
-        panel.classList.toggle('hidden', !isOpen);
+        hostControlsOpen = Boolean(isOpen);
+        panel.classList.toggle('is-collapsed', !hostControlsOpen);
         if (toggle) {
-            toggle.setAttribute('aria-expanded', String(Boolean(isOpen)));
-            toggle.textContent = isOpen ? 'Hide Host Controls' : 'Host Controls';
+            toggle.setAttribute('aria-expanded', String(hostControlsOpen));
+            toggle.textContent = hostControlsOpen ? 'Hide Host Controls' : 'Open Host Controls';
         }
+    }
+
+    function syncHostControlsAvailability(state) {
+        const shell = document.getElementById('host-controls-shell');
+        const isHost = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
+        shell?.classList.toggle('hidden', !isHost);
+
+        if (!isHost) {
+            hostControlsOpen = true;
+            const panel = document.getElementById('persistent-host-controls');
+            panel?.classList.remove('is-collapsed');
+        }
+
+        setHostControlsOpen(hostControlsOpen);
     }
 
     function showError(message) {

@@ -232,7 +232,7 @@ const DevPanel = (() => {
         const selectedIndex = refs.tileSelect.value;
         refs.tileSelect.innerHTML = '';
 
-        const properties = currentState?.properties || BOARD_DATA || [];
+        const properties = currentState?.properties || GameBoard.getTileData() || [];
         if (!properties.length) {
             refs.tileSelect.innerHTML = '<option value="">No tiles</option>';
             return;

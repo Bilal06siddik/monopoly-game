@@ -1614,6 +1614,12 @@ body[data-view-mode="top-down"] .jail-actions {
   animation: slide-in-right 0.5s ease;
 }
 
+.leaderboard-wrapper.collapsed {
+  width: 64px;
+  max-height: 64px;
+  border-radius: 18px;
+}
+
 body[data-view-mode="top-down"] .leaderboard-wrapper {
   top: 20px;
   right: 20px;
@@ -1629,6 +1635,57 @@ body[data-view-mode="top-down"] .leaderboard-wrapper {
   background: rgba(108, 92, 231, 0.1);
   border-bottom: 1px solid var(--border-glow);
   color: var(--accent-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.lb-header-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.lb-collapse-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--accent-gold);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+}
+
+.lb-collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.24);
+  transform: translateY(-1px);
+}
+
+.lb-collapse-btn:focus-visible {
+  outline: 2px solid rgba(253, 203, 110, 0.45);
+  outline-offset: 2px;
+}
+
+.leaderboard-wrapper.collapsed .lb-header {
+  padding: 14px;
+  justify-content: center;
+  border-bottom: none;
+}
+
+.leaderboard-wrapper.collapsed .lb-header-title,
+.leaderboard-wrapper.collapsed .leaderboard-panel {
+  display: none;
+}
+
+.leaderboard-wrapper.collapsed .lb-collapse-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
 }
 
 .leaderboard-panel {
@@ -1907,7 +1964,7 @@ body[data-view-mode="top-down"] .lb-name {
 
 .history-log {
   position: relative;
-  width: 360px;
+  width: 452px;
   max-height: 300px;
   background: var(--bg-panel);
   border: 1px solid var(--border-glow);
@@ -1922,7 +1979,7 @@ body[data-view-mode="top-down"] .hud-feed-stack {
 }
 
 body[data-view-mode="top-down"] .history-log {
-  width: 332px;
+  width: 280px;
   max-height: 276px;
   background: rgba(12, 22, 40, 0.92);
   border-color: rgba(126, 168, 255, 0.2);
@@ -2896,6 +2953,11 @@ body[data-view-mode="top-down"] #trades-content {
 
   .leaderboard-wrapper {
     width: min(336px, calc(100vw - 24px));
+  }
+
+  .leaderboard-wrapper.collapsed {
+    width: 58px;
+    max-height: 58px;
   }
 
   .lb-card {
@@ -4735,7 +4797,7 @@ body[data-view-mode="top-down"] #trades-content {
 /* Fast Follow #29: Persistent Host Controls */
 .host-controls-shell {
     position: fixed;
-    top: 20px;
+    top: 96px;
     right: 20px;
     z-index: 5000;
     display: flex;
@@ -4761,6 +4823,11 @@ body[data-view-mode="top-down"] #trades-content {
     backdrop-filter: blur(12px);
 }
 
+.host-controls-toggle:hover {
+    background: rgba(12, 24, 38, 0.94);
+    border-color: rgba(0, 210, 211, 0.4);
+}
+
 .persistent-host-controls {
     position: relative;
     background: rgba(14, 22, 39, 0.9);
@@ -4775,10 +4842,11 @@ body[data-view-mode="top-down"] #trades-content {
     transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-.persistent-host-controls.hidden {
+.persistent-host-controls.is-collapsed {
     opacity: 0;
     pointer-events: none;
     transform: translateY(-8px);
+    visibility: hidden;
 }
 
 .host-controls-header {

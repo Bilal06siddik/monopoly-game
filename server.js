@@ -17,6 +17,18 @@ const {
   normalizeTokenId,
   getDefaultTokenForCharacter
 } = require('./shared/tokenCatalog');
+const DEFAULT_BOARD_ID = BOARD_DATA.DEFAULT_BOARD_ID || 'egypt';
+const BOARD_IDS = BOARD_DATA.BOARD_IDS || [DEFAULT_BOARD_ID];
+const BOARD_MAPS = BOARD_DATA.BOARD_MAPS || {
+  [DEFAULT_BOARD_ID]: {
+    id: DEFAULT_BOARD_ID,
+    name: 'Egypt',
+    tiles: BOARD_DATA
+  }
+};
+const getBoardDataById = typeof BOARD_DATA.getBoardData === 'function'
+  ? BOARD_DATA.getBoardData.bind(BOARD_DATA)
+  : (boardId => BOARD_MAPS[boardId]?.tiles || BOARD_DATA);
 
 const app = express();
 const server = http.createServer(app);
@@ -190,6 +202,8 @@ function createRoomState(roomCode, hostSessionToken) {
   return {
     code: roomCode,
     hostSessionToken,
+    selectedBoardId: DEFAULT_BOARD_ID,
+    boardVotes: new Map(),
     turnTimerEnabled: true,
     createdAt: Date.now(),
     endedAt: null,
@@ -209,6 +223,70 @@ function createRoomState(roomCode, hostSessionToken) {
     lastDiceTotal: 0,
     stateSequence: 0
   };
+}
+
+function resolveBoardId(boardId) {
+  return BOARD_MAPS[boardId] ? boardId : DEFAULT_BOARD_ID;
+}
+
+function getBoardMapById(boardId = DEFAULT_BOARD_ID) {
+  const resolvedBoardId = resolveBoardId(boardId);
+  return BOARD_MAPS[resolvedBoardId] || {
+    id: resolvedBoardId,
+    name: resolvedBoardId,
+    tiles: getBoardDataById(resolvedBoardId)
+  };
+}
+
+function getBoardTiles(boardId = DEFAULT_BOARD_ID) {
+  return getBoardMapById(boardId).tiles || BOARD_DATA;
+}
+
+function pruneBoardVotes(roomState) {
+  if (!roomState) return;
+  if (!(roomState.boardVotes instanceof Map)) {
+    roomState.boardVotes = new Map();
+  }
+
+  for (const [sessionToken, boardId] of roomState.boardVotes.entries()) {
+    const entry = roomState.lobbyPlayers?.get(sessionToken) || null;
+    if (!entry || entry.isBot || !BOARD_MAPS[boardId]) {
+      roomState.boardVotes.delete(sessionToken);
+    }
+  }
+}
+
+function getBoardVoteCounts(roomState) {
+  const counts = Object.fromEntries(BOARD_IDS.map(boardId => [boardId, 0]));
+  pruneBoardVotes(roomState);
+
+  for (const boardId of roomState?.boardVotes?.values() || []) {
+    const resolvedBoardId = resolveBoardId(boardId);
+    counts[resolvedBoardId] = (counts[resolvedBoardId] || 0) + 1;
+  }
+
+  return counts;
+}
+
+function resolveSelectedBoardId(roomState) {
+  const fallbackBoardId = resolveBoardId(roomState?.selectedBoardId);
+  const voteCounts = getBoardVoteCounts(roomState);
+  const highestVoteCount = Math.max(0, ...Object.values(voteCounts));
+
+  if (highestVoteCount === 0) {
+    return fallbackBoardId;
+  }
+
+  const leadingBoardIds = BOARD_IDS.filter(boardId => voteCounts[boardId] === highestVoteCount);
+  return leadingBoardIds.length === 1 ? leadingBoardIds[0] : fallbackBoardId;
+}
+
+function syncSelectedBoardId(roomState) {
+  const selectedBoardId = resolveSelectedBoardId(roomState);
+  if (roomState) {
+    roomState.selectedBoardId = selectedBoardId;
+  }
+  return selectedBoardId;
 }
 
 function assignRoomState(roomState) {
@@ -302,6 +380,10 @@ function getOrCreateRoomState(roomCode, hostSessionToken = null) {
   if (!roomState.kickedSessionTokens) {
     roomState.kickedSessionTokens = new Set();
   }
+  if (!(roomState.boardVotes instanceof Map)) {
+    roomState.boardVotes = new Map();
+  }
+  roomState.selectedBoardId = resolveBoardId(roomState.selectedBoardId);
   if (typeof roomState.turnTimerEnabled !== 'boolean') {
     roomState.turnTimerEnabled = true;
   }
@@ -482,6 +564,8 @@ function getDefaultColorForLobbyEntry(entry, customIndex = 0) {
 
 function getLobbyState() {
   const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
+  const selectedBoardId = syncSelectedBoardId(roomState);
+  const boardVoteCounts = getBoardVoteCounts(roomState);
   const playerList = [...lobbyPlayers.values()]
     .filter(entry => entry.character)
     .map(entry => ({
@@ -496,6 +580,7 @@ function getLobbyState() {
   return {
     roomCode: currentRoomCode,
     joinUrl: currentRoomCode ? `/?room=${currentRoomCode}` : null,
+    selectedBoardId,
     turnTimerEnabled: isTurnTimerEnabled(roomState),
     hostPlayerId: roomState?.hostSessionToken
       ? (gameState?.getPlayerBySessionToken(roomState.hostSessionToken)?.id
@@ -509,6 +594,7 @@ function getLobbyState() {
       character: entry.character || null,
       tokenId: entry.tokenId || null,
       customAvatarUrl: entry.customAvatarUrl || null,
+      boardVoteId: roomState?.boardVotes?.get(entry.sessionToken) || null,
       isBot: Boolean(entry.isBot),
       isOnline: Boolean(entry.isBot || entry.socketId),
       isHost: Boolean(roomState?.hostSessionToken && entry.sessionToken === roomState.hostSessionToken)
@@ -525,6 +611,16 @@ function getLobbyState() {
         takenByBot: Boolean(holder?.isBot),
         takenByName: holder?.character === 'custom' ? (holder.customName || 'Custom Player') : (holder?.name || holder?.character || null),
         customAvatarUrl: holder?.customAvatarUrl || null
+      };
+    }),
+    boardOptions: BOARD_IDS.map(boardId => {
+      const board = getBoardMapById(boardId);
+      return {
+        id: board.id,
+        name: board.name,
+        description: board.description || '',
+        votes: boardVoteCounts[boardId] || 0,
+        isSelected: boardId === selectedBoardId
       };
     }),
     tokens: TOKEN_OPTIONS.map(token => ({
@@ -702,6 +798,8 @@ function snapshotGameState() {
 
 function buildGameStatePayload(viewerPlayerId = null) {
   const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
+  const selectedBoardId = syncSelectedBoardId(roomState);
+  const board = getBoardMapById(selectedBoardId);
   const payload = gameState ? snapshotGameState() : {
     players: [],
     properties: [],
@@ -727,6 +825,8 @@ function buildGameStatePayload(viewerPlayerId = null) {
   payload.historyEvents = [...eventHistory];
   payload.roomCode = currentRoomCode;
   payload.joinUrl = currentRoomCode ? `/?room=${currentRoomCode}` : null;
+  payload.boardId = board.id;
+  payload.boardName = board.name;
   payload.turnTimerEnabled = isTurnTimerEnabled(roomState);
   payload.hostPlayerId = roomState?.hostSessionToken
     ? (gameState?.getPlayerBySessionToken(roomState.hostSessionToken)?.id
@@ -743,6 +843,7 @@ function buildSavePayload() {
     version: SAVE_FILE_VERSION,
     savedAt: Date.now(),
     roomCode: currentRoomCode,
+    boardId: resolveBoardId(rooms.get(currentRoomCode)?.selectedBoardId),
     turnTimerEnabled: isTurnTimerEnabled(),
     actionDeck: Array.isArray(actionDeck) ? [...actionDeck] : [],
     eventHistory: Array.isArray(eventHistory) ? [...eventHistory] : [],
@@ -796,12 +897,14 @@ function restoreGameStateFromSave(saveState) {
   const payload = saveState?.gameState && Array.isArray(saveState.gameState.players)
     ? saveState.gameState
     : saveState;
+  const restoredBoardId = resolveBoardId(saveState?.boardId || payload?.boardId);
+  const restoredBoardData = getBoardTiles(restoredBoardId);
 
   if (!payload || !Array.isArray(payload.players) || !Array.isArray(payload.properties)) {
     throw new Error('Invalid save file format.');
   }
 
-  const restored = new GameState(BOARD_DATA);
+  const restored = new GameState(restoredBoardData);
   restored.players = [];
 
   payload.players.forEach((playerData, index) => {
@@ -825,7 +928,7 @@ function restoreGameStateFromSave(saveState) {
     );
 
     restoredPlayer.socketId = lobbyEntry?.socketId || null;
-    restoredPlayer.position = clampInt(playerData.position, 0, BOARD_DATA.length - 1) ?? 0;
+    restoredPlayer.position = clampInt(playerData.position, 0, restoredBoardData.length - 1) ?? 0;
     restoredPlayer.money = Number.isFinite(playerData.money) ? playerData.money : 1500;
     restoredPlayer.properties = Array.isArray(playerData.properties) ? [...playerData.properties] : [];
     restoredPlayer.inJail = Boolean(playerData.inJail);
@@ -869,6 +972,7 @@ function restoreGameStateFromSave(saveState) {
   }
 
   return {
+    restoredBoardId,
     restoredGameState: restored,
     restoredActionDeck: Array.isArray(saveState?.actionDeck) ? [...saveState.actionDeck] : [...ACTION_CARDS],
     restoredEventHistory: Array.isArray(saveState?.eventHistory) ? [...saveState.eventHistory] : [],
@@ -898,6 +1002,11 @@ function clearRoomGameRuntime({ preserveLobby = true } = {}) {
 
   if (!preserveLobby) {
     lobbyPlayers.clear();
+    const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
+    roomState?.boardVotes?.clear();
+    if (roomState) {
+      roomState.selectedBoardId = DEFAULT_BOARD_ID;
+    }
   }
 }
 
@@ -961,6 +1070,8 @@ function kickPlayerFromRoom(roomState, targetPlayerId, removedByCharacter = 'The
     }
 
     if (lobbyEntry) {
+      roomState.boardVotes?.delete(lobbyEntry.sessionToken);
+      syncSelectedBoardId(roomState);
       lobbyPlayers.delete(lobbyEntry.sessionToken);
     }
 
@@ -3031,6 +3142,28 @@ io.on('connection', socket => {
     emitLobbyUpdate();
   });
 
+  bindRoomHandler(socket, roomState, 'vote-board-map', data => {
+    if (gameState && gameState.isGameStarted) {
+      socket.emit('game-error', { message: 'Map voting is only available in the lobby.' });
+      return;
+    }
+
+    const sessionToken = socket.data.sessionToken;
+    const lobbyEntry = lobbyPlayers.get(sessionToken);
+    if (!sessionToken || !lobbyEntry || lobbyEntry.isBot) {
+      return;
+    }
+
+    const requestedBoardId = resolveBoardId(typeof data === 'string' ? data : data?.boardId);
+    if (roomState.boardVotes.get(sessionToken) === requestedBoardId) {
+      return;
+    }
+
+    roomState.boardVotes.set(sessionToken, requestedBoardId);
+    syncSelectedBoardId(roomState);
+    emitLobbyUpdate();
+  });
+
   bindRoomHandler(socket, roomState, 'requestStartGame', () => {
     if (!isRoomHost(socket, roomState)) {
       socket.emit('game-error', { message: 'Only the room host can start the match.' });
@@ -3046,7 +3179,8 @@ io.on('connection', socket => {
       return;
     }
 
-    gameState = new GameState(BOARD_DATA);
+    const selectedBoardId = syncSelectedBoardId(roomState);
+    gameState = new GameState(getBoardTiles(selectedBoardId));
     shuffleActionDeck();
     pendingTrades.clear();
     eventHistory.length = 0;
@@ -3946,6 +4080,7 @@ io.on('connection', socket => {
       pendingTrades.clear();
 
       gameState = restored.restoredGameState;
+      roomState.selectedBoardId = restored.restoredBoardId;
       roomState.turnTimerEnabled = restored.restoredTurnTimerEnabled;
       actionDeck = restored.restoredActionDeck;
       eventHistory.length = 0;
@@ -3976,6 +4111,8 @@ io.on('connection', socket => {
 
     const lobbyEntry = getLobbyEntryBySocketId(socket.id);
     if (lobbyEntry && !(gameState && gameState.isGameStarted)) {
+      roomState.boardVotes?.delete(lobbyEntry.sessionToken);
+      syncSelectedBoardId(roomState);
       lobbyPlayers.delete(lobbyEntry.sessionToken);
       emitLobbyUpdate();
     }
