@@ -841,6 +841,7 @@
     Lobby.init(socket);
     GameUI.init(socket);
     GameModals.init(socket);
+    if (typeof GameAudio !== 'undefined') GameAudio.init();
     HistoryLog.init();
     TradeSystem.init(socket);
     AuctionSystem.init(socket);

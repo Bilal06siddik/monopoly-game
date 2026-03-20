@@ -237,6 +237,143 @@ const GameAudio = (() => {
         });
     }
 
+    function playUiHover() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: 880,
+                glideTo: 1040,
+                type: 'triangle',
+                duration: 0.035,
+                gain: 0.012,
+                release: 0.05
+            });
+        });
+    }
+
+    function playUiClick() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            scheduleNoiseBurst(ctx, {
+                startTime: now,
+                duration: 0.04,
+                gain: 0.018,
+                fromFrequency: 1800,
+                toFrequency: 900,
+                q: 1.6
+            });
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: 540,
+                glideTo: 420,
+                type: 'square',
+                duration: 0.03,
+                gain: 0.01,
+                release: 0.05
+            });
+        });
+    }
+
+    function playSkinSwap() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            scheduleNoiseBurst(ctx, {
+                startTime: now,
+                duration: 0.08,
+                gain: 0.015,
+                fromFrequency: 2400,
+                toFrequency: 700,
+                q: 1.1
+            });
+            scheduleTone(ctx, {
+                startTime: now + 0.015,
+                frequency: 680,
+                glideTo: 980,
+                type: 'sawtooth',
+                duration: 0.08,
+                gain: 0.012,
+                release: 0.08
+            });
+        });
+    }
+
+    function playSelectConfirm() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.01;
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: 320,
+                glideTo: 440,
+                type: 'triangle',
+                duration: 0.11,
+                gain: 0.024,
+                release: 0.12
+            });
+            scheduleTone(ctx, {
+                startTime: now + 0.08,
+                frequency: 640,
+                glideTo: 880,
+                type: 'sine',
+                duration: 0.12,
+                gain: 0.018,
+                release: 0.14
+            });
+        });
+    }
+
+    function playPopupOpen() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            scheduleNoiseBurst(ctx, {
+                startTime: now,
+                duration: 0.12,
+                gain: 0.014,
+                fromFrequency: 2600,
+                toFrequency: 500,
+                q: 1.0
+            });
+            scheduleTone(ctx, {
+                startTime: now + 0.025,
+                frequency: 420,
+                glideTo: 760,
+                type: 'triangle',
+                duration: 0.14,
+                gain: 0.015,
+                release: 0.12
+            });
+        });
+    }
+
+    function playPopupClose() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            scheduleNoiseBurst(ctx, {
+                startTime: now,
+                duration: 0.08,
+                gain: 0.012,
+                fromFrequency: 1200,
+                toFrequency: 320,
+                q: 1.0
+            });
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: 620,
+                glideTo: 360,
+                type: 'triangle',
+                duration: 0.08,
+                gain: 0.01,
+                release: 0.08
+            });
+        });
+    }
+
     function init() {
         if (!AudioContextCtor) return;
         attachUnlockListeners();
@@ -247,6 +384,12 @@ const GameAudio = (() => {
         init,
         prime,
         playDiceRoll,
-        playTurnAlert
+        playTurnAlert,
+        playUiHover,
+        playUiClick,
+        playSkinSwap,
+        playSelectConfirm,
+        playPopupOpen,
+        playPopupClose
     };
 })();

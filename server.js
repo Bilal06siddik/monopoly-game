@@ -493,6 +493,11 @@ function normalizeCustomColor(value) {
   return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized.toLowerCase() : null;
 }
 
+function normalizeSkinId(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[a-z0-9-]{1,64}$/.test(normalized) ? normalized : null;
+}
+
 function normalizeCustomName(value) {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized.slice(0, 15);
@@ -572,6 +577,7 @@ function getLobbyState() {
       id: entry.playerId,
       name: entry.character === 'custom' ? (entry.customName || 'Custom Player') : entry.name,
       character: entry.character,
+      skinId: entry.skinId || null,
       tokenId: entry.tokenId || null,
       customAvatarUrl: entry.customAvatarUrl || null,
       isBot: Boolean(entry.isBot)
@@ -592,6 +598,7 @@ function getLobbyState() {
       playerId: entry.playerId,
       name: entry.character === 'custom' ? (entry.customName || 'Custom Player') : (entry.name || null),
       character: entry.character || null,
+      skinId: entry.skinId || null,
       tokenId: entry.tokenId || null,
       customAvatarUrl: entry.customAvatarUrl || null,
       boardVoteId: roomState?.boardVotes?.get(entry.sessionToken) || null,
@@ -768,6 +775,7 @@ function emitPlayerSession(socket, player) {
     sessionToken: socket.data.sessionToken,
     playerId: player?.id || null,
     character: player?.character || null,
+    skinId: player?.skinId || null,
     name: player?.name || null,
     customName: player?.customName || null,
     tokenId: player?.tokenId || null,
@@ -865,6 +873,7 @@ function buildSavePayload() {
         character: player.character,
         name: player.name,
         color: player.color,
+        skinId: player.skinId || null,
         tokenId: player.tokenId,
         sessionToken: player.sessionToken,
         customAvatarUrl: player.customAvatarUrl,
@@ -923,6 +932,7 @@ function restoreGameStateFromSave(saveState) {
         tokenId: resolveLobbyToken(playerData.character || lobbyEntry?.character, playerData.tokenId),
         customAvatarUrl: playerData.customAvatarUrl || lobbyEntry?.customAvatarUrl || null,
         customColor: playerData.customColor || lobbyEntry?.customColor || null,
+        skinId: playerData.skinId || lobbyEntry?.skinId || null,
         name: playerData.name || lobbyEntry?.customName || lobbyEntry?.name || playerData.character || lobbyEntry?.character || `Player ${index + 1}`
       }
     );
@@ -1181,6 +1191,7 @@ function createLobbyEntry(socket) {
     playerId: createPlayerId(),
     socketId: socket.id,
     character: null,
+    skinId: null,
     tokenId: null,
     name: null
   };
@@ -2971,6 +2982,7 @@ io.on('connection', socket => {
 
   bindRoomHandler(socket, roomState, 'select-character', data => {
     const characterName = typeof data === 'string' ? data : data?.name;
+    const skinId = normalizeSkinId(typeof data === 'object' ? data?.skinId : null);
     const customColor = normalizeCustomColor(typeof data === 'object' ? data?.customColor : null);
     const hasCustomPayload = characterName === 'custom' && typeof data === 'object';
     const customName = hasCustomPayload ? normalizeCustomName(data?.customName) : '';
@@ -2999,6 +3011,7 @@ io.on('connection', socket => {
     }
 
     currentEntry.character = characterName;
+    currentEntry.skinId = skinId;
     currentEntry.tokenId = resolveLobbyToken(characterName, currentEntry.tokenId);
 
     if (characterName === 'custom') {
@@ -3017,6 +3030,7 @@ io.on('connection', socket => {
     socket.data.playerId = currentEntry.playerId;
     socket.emit('character-confirmed', {
       character: characterName,
+      skinId: currentEntry.skinId || null,
       tokenId: currentEntry.tokenId,
       customColor: currentEntry.customColor || null,
       customName: currentEntry.customName || null,
@@ -3025,6 +3039,7 @@ io.on('connection', socket => {
     emitPlayerSession(socket, {
       id: currentEntry.playerId,
       character: characterName,
+      skinId: currentEntry.skinId || null,
       name: currentEntry.name,
       customName: currentEntry.customName || null,
       tokenId: currentEntry.tokenId,
@@ -3057,6 +3072,7 @@ io.on('connection', socket => {
     emitPlayerSession(socket, {
       id: currentEntry.playerId,
       character: currentEntry.character,
+      skinId: currentEntry.skinId || null,
       name: currentEntry.name,
       customName: currentEntry.customName || null,
       tokenId: currentEntry.tokenId,
@@ -3082,6 +3098,30 @@ io.on('connection', socket => {
     emitPlayerSession(socket, {
       id: entry.playerId,
       character: entry.character,
+      skinId: entry.skinId || null,
+      name: entry.name,
+      customName: entry.customName || null,
+      tokenId: entry.tokenId || null,
+      customColor: entry.customColor || null,
+      customAvatarUrl: entry.customAvatarUrl || null
+    });
+    emitLobbyUpdate();
+  });
+
+  bindRoomHandler(socket, roomState, 'update-character-skin', data => {
+    if (gameState && gameState.isGameStarted) {
+      socket.emit('character-error', { message: 'Game already in progress' });
+      return;
+    }
+
+    const entry = getLobbyEntryBySocketId(socket.id);
+    if (!entry || !entry.character) return;
+
+    entry.skinId = normalizeSkinId(typeof data === 'object' ? data?.skinId : null);
+    emitPlayerSession(socket, {
+      id: entry.playerId,
+      character: entry.character,
+      skinId: entry.skinId || null,
       name: entry.name,
       customName: entry.customName || null,
       tokenId: entry.tokenId || null,
@@ -3095,11 +3135,13 @@ io.on('connection', socket => {
     const entry = getLobbyEntryBySocketId(socket.id);
     if (!entry) return;
     entry.character = null;
+    entry.skinId = null;
     entry.tokenId = null;
     entry.name = null;
     emitPlayerSession(socket, {
       id: entry.playerId,
       character: null,
+      skinId: null,
       name: null,
       customName: entry.customName || null,
       tokenId: null,
@@ -3204,6 +3246,7 @@ io.on('connection', socket => {
         name: p.customName || p.character,
         customAvatarUrl: p.customAvatarUrl,
         customColor: p.customColor || null,
+        skinId: p.skinId || null,
         tokenId: resolveLobbyToken(p.character, p.tokenId),
         isConnected: Boolean(p.isBot || p.socketId)
       });

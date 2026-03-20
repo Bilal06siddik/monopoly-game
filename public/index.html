@@ -545,85 +545,87 @@
     </div>
 
     <div class="tcg-room">
-      <div class="tcg-header">
-        <h1 class="tcg-title">SELECT YOUR CHAMPION</h1>
-        <p class="tcg-subtitle">CHOOSE YOUR DEED TO BEGIN</p>
-      </div>
-
-      <div id="room-banner" class="room-banner hidden">
-        <div>
-          <div class="room-banner-label">ROOM CODE</div>
-          <div id="room-code-display" class="room-banner-code">------</div>
+      <div class="lobby-stage">
+        <div class="tcg-header">
+          <p class="tcg-kicker">Private Match Lobby</p>
+          <h1 class="tcg-title">Select Your Champion</h1>
+          <p class="tcg-subtitle">Lock in your deed, claim your token, and launch the match.</p>
         </div>
-        <div class="room-banner-actions">
-          <button id="copy-room-link-btn" class="secondary-lobby-btn subtle">COPY INVITE</button>
-          <button id="end-room-btn" class="secondary-lobby-btn danger hidden">END ROOM</button>
-        </div>
-      </div>
 
-      <!-- Dynamically generated TCG cards will go here in a 3x2 grid -->
-      <div id="character-grid" class="tcg-cards-grid"></div>
-
-      <div class="color-selection-panel">
-        <div class="color-selection-copy">
-          <div class="color-selection-title">TOKEN COLOR</div>
-          <div class="color-selection-subtitle">Stay with the default champion color or switch to a custom one.</div>
+        <div id="room-banner" class="room-banner hidden">
+          <div class="room-banner-copy">
+            <div class="room-banner-label">Room Code</div>
+            <div id="room-code-display" class="room-banner-code">------</div>
+          </div>
+          <div class="room-banner-actions">
+            <button id="copy-room-link-btn" class="secondary-lobby-btn subtle">COPY INVITE</button>
+            <button id="end-room-btn" class="secondary-lobby-btn danger hidden">END ROOM</button>
+          </div>
         </div>
-        <label class="color-toggle" for="custom-color-toggle">
-          <input type="checkbox" id="custom-color-toggle" />
-          <span class="color-toggle-track" aria-hidden="true"></span>
-          <span class="color-toggle-labels">
-            <span>Default</span>
-            <span>Custom</span>
-          </span>
-        </label>
-        <div class="color-picker-stack">
-          <label for="custom-color-picker" class="color-picker-label">Custom value</label>
-          <div class="color-picker-row">
-            <input type="color" id="custom-color-picker" value="#ffffff" disabled />
-            <span id="custom-color-value" class="color-picker-value">Default</span>
+
+        <!-- Dynamically generated TCG cards will go here in a 3x2 grid -->
+        <div id="character-grid" class="tcg-cards-grid"></div>
+
+        <div class="color-selection-panel">
+          <div class="color-selection-copy">
+            <div class="color-selection-title">Token Color</div>
+            <div class="color-selection-subtitle">Stay with the default champion color or switch to a custom one.</div>
+          </div>
+          <label class="color-toggle" for="custom-color-toggle">
+            <input type="checkbox" id="custom-color-toggle" />
+            <span class="color-toggle-track" aria-hidden="true"></span>
+            <span class="color-toggle-labels">
+              <span>Default</span>
+              <span>Custom</span>
+            </span>
+          </label>
+          <div class="color-picker-stack">
+            <label for="custom-color-picker" class="color-picker-label">Custom value</label>
+            <div class="color-picker-row">
+              <input type="color" id="custom-color-picker" value="#ffffff" disabled />
+              <span id="custom-color-value" class="color-picker-value">Default</span>
+            </div>
+          </div>
+        </div>
+
+        <section class="token-selection-panel">
+          <div class="token-selection-header">
+            <div>
+              <p class="token-selection-kicker">Token Select</p>
+              <h2 class="token-selection-title">Choose your board piece</h2>
+            </div>
+            <p id="token-selection-hint" class="token-selection-hint">Pick a character first to unlock token choices.</p>
+          </div>
+          <div id="token-grid" class="token-grid"></div>
+        </section>
+
+        <section class="map-vote-panel">
+          <div class="map-vote-header">
+            <div>
+              <p class="token-selection-kicker">Map Vote</p>
+              <h2 class="token-selection-title">Vote for the board</h2>
+            </div>
+            <p id="map-vote-hint" class="token-selection-hint">Every human player gets one vote. Ties keep the current winner.</p>
+          </div>
+          <div id="map-vote-grid" class="map-vote-grid"></div>
+        </section>
+
+        <div class="lobby-footer">
+          <div id="lobby-status">Loading...</div>
+          
+          <div class="lobby-actions">
+            <button id="start-game-btn" class="start-game-btn disabled">WAITING FOR PLAYERS</button>
+            <div class="lobby-secondary-actions">
+              <button id="add-bot-btn" class="secondary-lobby-btn">
+                  + RANDOM BOT
+              </button>
+              <button id="clear-bots-btn" class="secondary-lobby-btn subtle disabled" disabled>
+                  CLEAR BOTS
+              </button>
+            </div>
           </div>
         </div>
       </div>
-
-      <section class="token-selection-panel">
-        <div class="token-selection-header">
-          <div>
-            <p class="token-selection-kicker">TOKEN SELECT</p>
-            <h2 class="token-selection-title">Choose your board piece</h2>
-          </div>
-          <p id="token-selection-hint" class="token-selection-hint">Pick a character first to unlock token choices.</p>
-        </div>
-        <div id="token-grid" class="token-grid"></div>
-      </section>
-
-      <section class="map-vote-panel">
-        <div class="map-vote-header">
-          <div>
-            <p class="token-selection-kicker">MAP VOTE</p>
-            <h2 class="token-selection-title">Vote for the board</h2>
-          </div>
-          <p id="map-vote-hint" class="token-selection-hint">Every human player gets one vote. Ties keep the current winner.</p>
-        </div>
-        <div id="map-vote-grid" class="map-vote-grid"></div>
-      </section>
-
-      <div class="lobby-footer">
-        <div id="lobby-status">Loading...</div>
-        
-        <div class="lobby-actions">
-          <button id="start-game-btn" class="start-game-btn disabled">WAITING FOR PLAYERS</button>
-          <div class="lobby-secondary-actions">
-            <button id="add-bot-btn" class="secondary-lobby-btn">
-                + RANDOM BOT
-            </button>
-            <button id="clear-bots-btn" class="secondary-lobby-btn subtle disabled" disabled>
-                CLEAR BOTS
-            </button>
-          </div>
-        </div>
-
-              </div>
     </div>
   </div>
 
