@@ -10,10 +10,16 @@
     }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (rulePresets) {
     const HOUSE_MULTIPLIERS = [1, 5, 15, 45, 80, 125];
+    const RAILROAD_RENT_TIERS = [25, 50, 100, 400];
     const normalizeRulesConfig = rulePresets?.normalizeRulesConfig || ((rulesConfig = {}) => ({ ...rulesConfig }));
 
     function resolveRulesConfig(rulesConfig = null) {
         return normalizeRulesConfig(rulesConfig || {}, rulePresets?.DEFAULT_RULE_PRESET || 'capitalista_v2');
+    }
+
+    function getRailroadRent(count) {
+        const index = Math.min(Math.max(count - 1, 0), RAILROAD_RENT_TIERS.length - 1);
+        return RAILROAD_RENT_TIERS[index];
     }
 
     function getStreetGroupProperties(properties, colorGroup) {
@@ -125,10 +131,7 @@
 
         if (property.type === 'railroad') {
             const count = getOwnedPropertyCount(properties, property.owner, 'railroad');
-            let rent = 25 * Math.pow(2, Math.max(count - 1, 0));
-            if (count >= 4) {
-                rent = 400;
-            }
+            let rent = getRailroadRent(count);
             if (context.doubleRailroadRent) {
                 rent *= 2;
             }

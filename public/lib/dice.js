@@ -6,6 +6,7 @@ const GameDice = (() => {
     let die1Mesh, die2Mesh;
     let isRolling = false;
     let rollAnimation = null;
+    let activeRollState = null;
     const DICE_SIZE = 0.7;
     const BASE_Y = DICE_SIZE / 2 + 0.15;
     const ROLL_RADIUS = DICE_SIZE * 0.36;
@@ -347,8 +348,32 @@ const GameDice = (() => {
         scene.add(die2Mesh);
     }
 
+    function finishRoll(animationState = activeRollState) {
+        if (!animationState || animationState.completed) return;
+
+        animationState.completed = true;
+        if (rollAnimation) {
+            cancelAnimationFrame(rollAnimation);
+            rollAnimation = null;
+        }
+
+        animationState.rollStates.forEach(state => {
+            state.mesh.quaternion.copy(state.targetQuaternion);
+            state.mesh.position.copy(state.finalPosition);
+            state.mesh.scale.set(1, 1, 1);
+        });
+
+        isRolling = false;
+        activeRollState = null;
+        if (animationState.onComplete) animationState.onComplete();
+    }
+
+    function fastForwardRoll() {
+        finishRoll(activeRollState);
+    }
+
     // ── Animate Dice Roll ─────────────────────────────────
-    function roll(value1, value2, onComplete) {
+    function roll(value1, value2, onComplete, options = {}) {
         if (isRolling) return;
         isRolling = true;
 
@@ -366,7 +391,17 @@ const GameDice = (() => {
             state.mesh.scale.set(1, 1, 1);
         });
 
+        activeRollState = {
+            rollStates,
+            onComplete,
+            completed: false
+        };
+
         if (rollAnimation) cancelAnimationFrame(rollAnimation);
+        if (options?.skipAnimation === true) {
+            finishRoll(activeRollState);
+            return;
+        }
 
         function animateRoll() {
             const now = performance.now();
@@ -379,14 +414,7 @@ const GameDice = (() => {
             if (progress < 1) {
                 rollAnimation = requestAnimationFrame(animateRoll);
             } else {
-                rollStates.forEach(state => {
-                    state.mesh.quaternion.copy(state.targetQuaternion);
-                    state.mesh.position.copy(state.finalPosition);
-                    state.mesh.scale.set(1, 1, 1);
-                });
-                rollAnimation = null;
-                isRolling = false;
-                if (onComplete) onComplete();
+                finishRoll(activeRollState);
             }
         }
 
@@ -395,5 +423,5 @@ const GameDice = (() => {
 
     function getIsRolling() { return isRolling; }
 
-    return { init, roll, getIsRolling };
+    return { init, roll, fastForwardRoll, getIsRolling };
 })();

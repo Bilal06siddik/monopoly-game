@@ -4,6 +4,7 @@
 
 const GameModals = (() => {
     let socket = null;
+    let activeActionCard = null;
 
     function init(socketInstance) {
         socket = socketInstance;
@@ -72,13 +73,46 @@ const GameModals = (() => {
     }
 
     // ── Action Card Modal (3D Flip Animation) ─────────────
-    function showActionCard(card, result = {}, callback) {
+    function clearActiveActionCardTimers() {
+        if (!activeActionCard) return;
+        clearTimeout(activeActionCard.flipTimeoutId);
+        clearTimeout(activeActionCard.dismissTimeoutId);
+        activeActionCard.flipTimeoutId = null;
+        activeActionCard.dismissTimeoutId = null;
+    }
+
+    function finishActionCard(cardState = activeActionCard) {
+        if (!cardState || cardState.completed) return;
+
+        cardState.completed = true;
+        clearActiveActionCardTimers();
+        const overlay = document.getElementById('card-modal');
+        overlay.classList.remove('show');
+        overlay.classList.add('hidden');
+        activeActionCard = null;
+        if (cardState.callback) cardState.callback();
+    }
+
+    function fastForwardActionCard() {
+        finishActionCard(activeActionCard);
+    }
+
+    function showActionCard(card, result = {}, callback, options = {}) {
         const overlay = document.getElementById('card-modal');
         const inner = document.getElementById('card-inner');
         const frontEmoji = document.getElementById('card-front-emoji');
         const backEmoji = document.getElementById('card-back-emoji');
         const backText = document.getElementById('card-back-text');
         const backAmount = document.getElementById('card-back-amount');
+        const shouldSkipAnimation = options?.skipAnimation === true;
+
+        clearActiveActionCardTimers();
+        activeActionCard = {
+            callback,
+            flipTimeoutId: null,
+            dismissTimeoutId: null,
+            completed: false
+        };
 
         // Reset
         inner.classList.remove('flipped');
@@ -112,16 +146,19 @@ const GameModals = (() => {
         overlay.classList.remove('hidden');
         overlay.classList.add('show');
 
+        if (shouldSkipAnimation) {
+            finishActionCard(activeActionCard);
+            return;
+        }
+
         // Flip after a brief delay
-        setTimeout(() => {
+        activeActionCard.flipTimeoutId = setTimeout(() => {
             inner.classList.add('flipped');
         }, 400);
 
         // Auto-dismiss after reading
-        setTimeout(() => {
-            overlay.classList.remove('show');
-            overlay.classList.add('hidden');
-            if (callback) callback();
+        activeActionCard.dismissTimeoutId = setTimeout(() => {
+            finishActionCard(activeActionCard);
         }, 4000);
     }
 
@@ -179,6 +216,7 @@ const GameModals = (() => {
 
     return {
         init, showBuyModal, hideBuyModal, showActionCard,
+        fastForwardActionCard,
         showRentPaid, showTaxPaid, showBankruptcy, showPropertyBought
     };
 })();

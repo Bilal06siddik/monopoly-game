@@ -4,6 +4,7 @@
 
 const GameTokens = (() => {
     const tokens = {};
+    const activeMoveAnimations = new Map();
     let getTilePos = null;
     let sportsCarTemplate = null;
     let sportsCarLoadPromise = null;
@@ -657,9 +658,55 @@ const GameTokens = (() => {
         }
     }
 
-    function animateMove(playerId, fromTile, toTile, onComplete) {
+    function finishMoveAnimation(animationState) {
+        if (!animationState || animationState.completed) return;
+
+        const {
+            playerId,
+            token,
+            toTile,
+            onComplete
+        } = animationState;
+        animationState.completed = true;
+
+        if (animationState.rafId) {
+            cancelAnimationFrame(animationState.rafId);
+            animationState.rafId = null;
+        }
+
+        activeMoveAnimations.delete(playerId);
+        if (token) {
+            setTokenPosition(playerId, toTile);
+            token.animating = false;
+            token.group.rotation.set(0, 0, 0);
+        }
+
+        if (animationState.passedGo || toTile === 0) {
+            Notifications.notifyGo();
+        }
+
+        if (onComplete) onComplete();
+    }
+
+    function fastForwardAnimations() {
+        [...activeMoveAnimations.values()].forEach(finishMoveAnimation);
+    }
+
+    function animateMove(playerId, fromTile, toTile, onComplete, options = {}) {
         const token = tokens[playerId];
         if (!token) {
+            if (onComplete) onComplete();
+            return;
+        }
+
+        const totalSteps = ((toTile - fromTile) + 40) % 40;
+        const shouldSkipAnimation = options?.skipAnimation === true;
+        if (shouldSkipAnimation || totalSteps === 0) {
+            setTokenPosition(playerId, toTile);
+            token.animating = false;
+            if (toTile === 0 || totalSteps > 0 && toTile < fromTile) {
+                Notifications.notifyGo();
+            }
             if (onComplete) onComplete();
             return;
         }
@@ -667,33 +714,28 @@ const GameTokens = (() => {
         token.animating = true;
 
         const path = [];
-        const totalSteps = ((toTile - fromTile) + 40) % 40;
         for (let index = 1; index <= totalSteps; index++) {
             path.push((fromTile + index) % 40);
         }
 
-        if (!path.length) {
-            token.animating = false;
-            if (onComplete) onComplete();
-            return;
-        }
+        const animationState = {
+            playerId,
+            token,
+            toTile,
+            onComplete,
+            passedGo: false,
+            rafId: null,
+            completed: false
+        };
+        activeMoveAnimations.set(playerId, animationState);
 
-        let passedGo = false;
         let stepIndex = 0;
         const stepDuration = TOKEN_STEP_DURATION_MS;
         const hopHeight = 0.42;
 
         function moveToNextTile() {
             if (stepIndex >= path.length) {
-                token.currentTile = toTile;
-                token.animating = false;
-                token.group.rotation.set(0, 0, 0);
-
-                if (passedGo || toTile === 0) {
-                    Notifications.notifyGo();
-                }
-
-                if (onComplete) onComplete();
+                finishMoveAnimation(animationState);
                 return;
             }
 
@@ -707,7 +749,7 @@ const GameTokens = (() => {
             const startTime = performance.now();
 
             if (targetTileIndex === 0) {
-                passedGo = true;
+                animationState.passedGo = true;
             }
 
             function animateStep() {
@@ -726,7 +768,7 @@ const GameTokens = (() => {
                 token.group.rotation.y += 0.08;
 
                 if (t < 1) {
-                    requestAnimationFrame(animateStep);
+                    animationState.rafId = requestAnimationFrame(animateStep);
                     return;
                 }
 
@@ -736,7 +778,7 @@ const GameTokens = (() => {
                 moveToNextTile();
             }
 
-            requestAnimationFrame(animateStep);
+            animationState.rafId = requestAnimationFrame(animateStep);
         }
 
         moveToNextTile();
@@ -836,6 +878,7 @@ const GameTokens = (() => {
         createToken,
         syncToken,
         animateMove,
+        fastForwardAnimations,
         layoutTokens,
         getToken,
         setTokenPosition,

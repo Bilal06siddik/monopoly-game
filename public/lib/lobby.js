@@ -690,6 +690,14 @@ const Lobby = (() => {
     }
 
     function bindButtons() {
+        const startBtn = document.getElementById('start-game-btn');
+        if (startBtn) {
+            startBtn.addEventListener('click', () => {
+                if (startBtn.disabled) return;
+                socket.emit('requestStartGame');
+            });
+        }
+
         const addBotBtn = document.getElementById('add-bot-btn');
         if (addBotBtn) addBotBtn.addEventListener('click', () => socket.emit('add-random-bot'));
 

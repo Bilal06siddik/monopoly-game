@@ -69,18 +69,53 @@ const GameBoard = (() => {
     let boardData = Array.isArray(window.BOARD_DATA) ? window.BOARD_DATA : [];
     const interactionHighlightsEnabled = false;
     const BOARD_MAPS = window.BOARD_MAPS || {};
-
-    const COLOR_MAP = {
-        brown: '#8c5a3c',
-        lightblue: '#8ccbf3',
-        pink: '#d984c4',
-        orange: '#e7a24f',
-        red: '#d55f57',
-        yellow: '#e8ce63',
-        green: '#56ab71',
-        darkblue: '#4964d7',
-        railroad: '#6b7285',
-        utility: '#8f97a7'
+    const BOARD_PALETTE = window.MonopolyBoardPalette || {};
+    const TILE_COLOR_HEX = BOARD_PALETTE.TILE_COLOR_HEX || {
+        brown: '#9a6a49',
+        lightblue: '#59c4ee',
+        pink: '#db75b4',
+        orange: '#f19a42',
+        red: '#e66461',
+        yellow: '#e3c44f',
+        green: '#4eb073',
+        darkblue: '#4b6bd8',
+        railroad: '#6b7b8f',
+        utility: '#7b889d',
+        chance: '#5a92ef',
+        chest: '#f18b67',
+        tax: '#7e8ba0',
+        corner: '#dfe7f5'
+    };
+    const BOARD_THEME_PALETTES = BOARD_PALETTE.BOARD_THEME_PALETTES || {
+        default: {
+            boardBase: '#101929',
+            boardTrim: '#274564',
+            boardTrimEmissive: '#12263c',
+            centerBase: '#152336',
+            centerFelt: '#1c314a',
+            centerFeltEmissive: '#0f1d30',
+            tileFaceTop: '#24364f',
+            tileFaceBottom: '#132032',
+            tileSheen: 'rgba(130, 168, 245, 0.09)',
+            tileBorder: '#798db4',
+            tileInnerBorder: 'rgba(255, 255, 255, 0.18)',
+            tileFooterTop: '#22354e',
+            tileFooterBottom: '#121d2f',
+            tileSide: '#2e4464',
+            tileSideEmissive: '#0a1321',
+            cornerFaceTop: '#213651',
+            cornerFaceBottom: '#142031',
+            cornerBorder: '#7e92b8',
+            mortgageTop: '#4a5363',
+            mortgageBottom: '#282f3a',
+            mortgageBorder: '#8c98ae',
+            textPrimary: '#f5f8ff',
+            textSecondary: '#dce7ff',
+            textAccent: '#ffe08e',
+            outerRing: '#6daeff',
+            innerRing: '#ffca73',
+            logoOpacity: 0.84
+        }
     };
 
     const SIDE_TILE_INDEXES = {
@@ -105,6 +140,23 @@ const GameBoard = (() => {
         window.BOARD_DATA = boardData;
         window.CURRENT_BOARD_ID = currentBoardId;
         return board;
+    }
+
+    function hexToNumber(hex, fallback = 0x7ea8ff) {
+        if (typeof BOARD_PALETTE.hexToNumber === 'function') {
+            return BOARD_PALETTE.hexToNumber(hex, fallback);
+        }
+
+        const value = typeof hex === 'string' ? hex.replace('#', '') : '';
+        return /^[0-9a-f]{6}$/i.test(value)
+            ? Number.parseInt(value, 16)
+            : fallback;
+    }
+
+    function getBoardSurfacePalette(boardId = currentBoardId) {
+        const board = resolveBoardConfig(boardId);
+        const themeId = board.theme || board.id || 'default';
+        return BOARD_THEME_PALETTES[themeId] || BOARD_THEME_PALETTES.default;
     }
 
     const TEXT_ROTATION_BY_PROFILE = {
@@ -171,7 +223,8 @@ const GameBoard = (() => {
     function build(scene, rendererRef = null) {
         sceneRef = scene;
         rendererStateRef = rendererRef || rendererStateRef;
-        setActiveBoard(currentBoardId);
+        const activeBoard = setActiveBoard(currentBoardId);
+        const surfacePalette = getBoardSurfacePalette(activeBoard.id);
         disposeBoard();
 
         boardGroup = new THREE.Group();
@@ -187,7 +240,7 @@ const GameBoard = (() => {
         const boardBase = new THREE.Mesh(
             new THREE.BoxGeometry(edgeLen + 1, 0.36, edgeLen + 1),
             new THREE.MeshStandardMaterial({
-                color: 0x09111f,
+                color: hexToNumber(surfacePalette.boardBase, 0x09111f),
                 roughness: 0.96,
                 metalness: 0.02
             })
@@ -200,8 +253,8 @@ const GameBoard = (() => {
         const boardTrim = new THREE.Mesh(
             new THREE.BoxGeometry(edgeLen + 0.42, 0.08, edgeLen + 0.42),
             new THREE.MeshStandardMaterial({
-                color: 0x1d2b4b,
-                emissive: 0x0b1220,
+                color: hexToNumber(surfacePalette.boardTrim, 0x1d2b4b),
+                emissive: hexToNumber(surfacePalette.boardTrimEmissive, 0x0b1220),
                 emissiveIntensity: 0.26,
                 roughness: 0.86,
                 metalness: 0.06
@@ -253,7 +306,7 @@ const GameBoard = (() => {
         const centerBase = new THREE.Mesh(
             new THREE.BoxGeometry(innerSize, 0.14, innerSize),
             new THREE.MeshStandardMaterial({
-                color: 0x0b1120,
+                color: hexToNumber(surfacePalette.centerBase, 0x0b1120),
                 roughness: 1,
                 metalness: 0.02
             })
@@ -265,8 +318,8 @@ const GameBoard = (() => {
         const centerFelt = new THREE.Mesh(
             new THREE.PlaneGeometry(innerSize - 0.6, innerSize - 0.6),
             new THREE.MeshStandardMaterial({
-                color: 0x101b31,
-                emissive: 0x08101c,
+                color: hexToNumber(surfacePalette.centerFelt, 0x101b31),
+                emissive: hexToNumber(surfacePalette.centerFeltEmissive, 0x08101c),
                 emissiveIntensity: 0.22,
                 roughness: 1,
                 metalness: 0
@@ -278,8 +331,8 @@ const GameBoard = (() => {
         boardGroup.add(centerFelt);
 
         [
-            { inner: 2.5, outer: 2.82, color: 0x4f8fff, opacity: 0.045 },
-            { inner: 1.4, outer: 1.62, color: 0xb38cff, opacity: 0.035 }
+            { inner: 2.5, outer: 2.82, color: hexToNumber(surfacePalette.outerRing, 0x4f8fff), opacity: 0.045 },
+            { inner: 1.4, outer: 1.62, color: hexToNumber(surfacePalette.innerRing, 0xffca73), opacity: 0.035 }
         ].forEach(({ inner, outer, color, opacity }) => {
             const ring = new THREE.Mesh(
                 new THREE.RingGeometry(inner, outer, 64),
@@ -307,7 +360,7 @@ const GameBoard = (() => {
                 new THREE.MeshBasicMaterial({
                     map: texture,
                     transparent: true,
-                    opacity: 0.9
+                    opacity: surfacePalette.logoOpacity ?? 0.9
                 })
             );
             logoPlane.rotation.x = -Math.PI / 2;
@@ -383,7 +436,7 @@ const GameBoard = (() => {
         if (Number.isFinite(tile?.color)) {
             return `#${tile.color.toString(16).padStart(6, '0')}`;
         }
-        return COLOR_MAP[tile?.colorGroup] || COLOR_MAP[tile?.type] || '#bac4d6';
+        return TILE_COLOR_HEX[tile?.colorGroup] || TILE_COLOR_HEX[tile?.type] || TILE_COLOR_HEX.corner || '#bac4d6';
     }
 
     function registerFlagImageUsage(imagePath, tileIndex) {
@@ -440,13 +493,64 @@ const GameBoard = (() => {
         ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
     }
 
+    function isCountriesFlagTile(tile) {
+        return currentBoardId === 'countries' && tile?.bandStyle === 'flag-image' && Boolean(tile.flagImage);
+    }
+
+    function drawDefaultTileBand(ctx, tile, canvas, bandHeight) {
+        const colorHex = getTileAccentColor(tile);
+        const bandGradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+        bandGradient.addColorStop(0, shadeColor(colorHex, 12));
+        bandGradient.addColorStop(1, shadeColor(colorHex, -8));
+        ctx.fillStyle = bandGradient;
+        ctx.fillRect(0, 0, canvas.width, bandHeight);
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+        ctx.fillRect(0, 0, canvas.width, 10);
+
+        ctx.fillStyle = 'rgba(6, 10, 18, 0.34)';
+        ctx.fillRect(0, bandHeight - 10, canvas.width, 10);
+    }
+
+    function drawCenteredFlagCard(ctx, tile, canvas) {
+        const flagImageEntry = getFlagImageEntry(tile.flagImage, tile.index);
+        const cardX = canvas.width * 0.17;
+        const cardY = canvas.height * 0.23;
+        const cardWidth = canvas.width * 0.66;
+        const cardHeight = canvas.height * 0.2;
+
+        ctx.fillStyle = 'rgba(8, 14, 24, 0.36)';
+        ctx.beginPath();
+        addRoundedRectPath(ctx, cardX, cardY, cardWidth, cardHeight, 24);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        addRoundedRectPath(ctx, cardX + 2, cardY + 2, cardWidth - 4, cardHeight - 4, 22);
+        ctx.stroke();
+
+        if (flagImageEntry?.status === 'loaded') {
+            drawContainedImage(
+                ctx,
+                flagImageEntry.image,
+                cardX,
+                cardY,
+                cardWidth,
+                cardHeight,
+                Math.round(cardHeight * 0.08)
+            );
+        }
+    }
+
     function drawTileBand(ctx, tile, canvas, bandHeight) {
-        if (tile?.bandStyle === 'flag-image' && tile.flagImage) {
+        const surfacePalette = getBoardSurfacePalette();
+        if (tile?.bandStyle === 'flag-image' && tile.flagImage && !isCountriesFlagTile(tile)) {
             const flagImageEntry = getFlagImageEntry(tile.flagImage, tile.index);
 
             const fallbackGradient = ctx.createLinearGradient(0, 0, canvas.width, bandHeight);
-            fallbackGradient.addColorStop(0, '#243246');
-            fallbackGradient.addColorStop(1, '#121b28');
+            fallbackGradient.addColorStop(0, surfacePalette.tileFaceTop);
+            fallbackGradient.addColorStop(1, surfacePalette.tileFaceBottom);
             ctx.fillStyle = fallbackGradient;
             ctx.fillRect(0, 0, canvas.width, bandHeight);
 
@@ -466,18 +570,7 @@ const GameBoard = (() => {
             return;
         }
 
-        const colorHex = getTileAccentColor(tile);
-        const bandGradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
-        bandGradient.addColorStop(0, shadeColor(colorHex, 18));
-        bandGradient.addColorStop(1, shadeColor(colorHex, -14));
-        ctx.fillStyle = bandGradient;
-        ctx.fillRect(0, 0, canvas.width, bandHeight);
-
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
-        ctx.fillRect(0, 0, canvas.width, 10);
-
-        ctx.fillStyle = 'rgba(6, 10, 18, 0.34)';
-        ctx.fillRect(0, bandHeight - 10, canvas.width, 10);
+        drawDefaultTileBand(ctx, tile, canvas, bandHeight);
     }
 
     function createTileTexture(tile, tileIndex, width, height, ownerColor = null, propertyState = null) {
@@ -489,27 +582,29 @@ const GameBoard = (() => {
         const ctx = canvas.getContext('2d');
         const rotationDegrees = getTileRotationDegrees(tileIndex, currentTextProfile, { activeSide: currentThirdPersonSide });
         const textScale = getProfileTextScale();
+        const surfacePalette = getBoardSurfacePalette();
+        const isCenteredCountriesFlagTile = isCountriesFlagTile(tile);
 
         drawOrientedTexture(ctx, canvas, rotationDegrees, () => {
             const footerHeight = Math.round(canvas.height * 0.18);
-            const bandHeight = Math.round(canvas.height * (tile?.bandStyle === 'flag-image' ? 0.23 : 0.18));
+            const bandHeight = Math.round(canvas.height * (isCenteredCountriesFlagTile ? 0.13 : tile?.bandStyle === 'flag-image' ? 0.23 : 0.18));
             const isPurchasable = ['property', 'railroad', 'utility'].includes(tile.type);
             const buildingCount = propertyState?.houses || 0;
 
             const tileGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-            tileGradient.addColorStop(0, '#182235');
-            tileGradient.addColorStop(1, '#0b1220');
+            tileGradient.addColorStop(0, surfacePalette.tileFaceTop);
+            tileGradient.addColorStop(1, surfacePalette.tileFaceBottom);
             ctx.fillStyle = tileGradient;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            ctx.fillStyle = 'rgba(114, 145, 216, 0.08)';
+            ctx.fillStyle = surfacePalette.tileSheen || 'rgba(114, 145, 216, 0.08)';
             ctx.fillRect(0, canvas.height * 0.52, canvas.width, canvas.height * 0.18);
 
-            ctx.strokeStyle = '#6576a6';
+            ctx.strokeStyle = surfacePalette.tileBorder;
             ctx.lineWidth = 8;
             ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
 
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+            ctx.strokeStyle = surfacePalette.tileInnerBorder || 'rgba(255, 255, 255, 0.12)';
             ctx.lineWidth = 2;
             ctx.strokeRect(14, 14, canvas.width - 28, canvas.height - 28);
 
@@ -524,21 +619,28 @@ const GameBoard = (() => {
                 ctx.globalAlpha = 1;
             } else {
                 const footerGradient = ctx.createLinearGradient(0, canvas.height - footerHeight, 0, canvas.height);
-                footerGradient.addColorStop(0, '#182235');
-                footerGradient.addColorStop(1, '#0b1220');
+                footerGradient.addColorStop(0, surfacePalette.tileFooterTop);
+                footerGradient.addColorStop(1, surfacePalette.tileFooterBottom);
                 ctx.fillStyle = footerGradient;
                 ctx.fillRect(0, canvas.height - footerHeight, canvas.width, footerHeight);
             }
 
+            if (isCenteredCountriesFlagTile) {
+                drawCenteredFlagCard(ctx, tile, canvas);
+            }
+
             if (buildingCount > 0 && tile.type === 'property' && !propertyState?.isMortgaged) {
+                const badgeY = isCenteredCountriesFlagTile ? canvas.height * 0.12 : canvas.height * 0.26;
+                const badgeHeight = isCenteredCountriesFlagTile ? canvas.height * 0.1 : canvas.height * 0.12;
+                const badgeLabelY = isCenteredCountriesFlagTile ? canvas.height * 0.17 : canvas.height * 0.32;
                 ctx.fillStyle = 'rgba(6, 10, 18, 0.78)';
                 ctx.beginPath();
                 addRoundedRectPath(
                     ctx,
                     canvas.width * 0.62,
-                    canvas.height * 0.26,
+                    badgeY,
                     canvas.width * 0.22,
-                    canvas.height * 0.12,
+                    badgeHeight,
                     18
                 );
                 ctx.fill();
@@ -547,7 +649,7 @@ const GameBoard = (() => {
                 ctx.font = `800 ${Math.floor(canvas.width * 0.072 * textScale)}px 'Segoe UI', Arial, sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(buildingCount >= 5 ? 'HOTEL' : `${buildingCount}H`, canvas.width * 0.73, canvas.height * 0.32);
+                ctx.fillText(buildingCount >= 5 ? 'HOTEL' : `${buildingCount}H`, canvas.width * 0.73, badgeLabelY);
             }
 
             const iconText = getTileIconText(tile);
@@ -580,7 +682,7 @@ const GameBoard = (() => {
                     );
                     ctx.fill();
 
-                    ctx.fillStyle = '#d9e6ff';
+                    ctx.fillStyle = surfacePalette.textSecondary;
                     ctx.font = `700 ${Math.floor(canvas.width * 0.12 * textScale)}px 'Segoe UI', Arial, sans-serif`;
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
@@ -590,7 +692,7 @@ const GameBoard = (() => {
 
             const isFlagTile = tile?.bandStyle === 'flag-image';
 
-            ctx.fillStyle = '#f4f7ff';
+            ctx.fillStyle = surfacePalette.textPrimary;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             const baseFontSize = Math.floor(canvas.width * (isFlagTile ? 0.158 : 0.138) * textScale);
@@ -614,6 +716,8 @@ const GameBoard = (() => {
                 ? canvas.height * 0.52
                 : (canDrawImageIcon || iconText)
                     ? canvas.height * 0.45
+                    : isCenteredCountriesFlagTile
+                        ? canvas.height * 0.56
                     : isFlagTile
                         ? canvas.height * 0.44
                         : canvas.height * 0.39;
@@ -628,7 +732,7 @@ const GameBoard = (() => {
                 const displayLabel = ownerColor
                     ? getOwnedTileDisplayValue(tile, propertyState).label
                     : `$${tile.price}`;
-                ctx.fillStyle = ownerColor ? '#ffffff' : '#ffd87f';
+                ctx.fillStyle = ownerColor ? '#ffffff' : surfacePalette.textAccent;
                 ctx.strokeText(displayLabel, canvas.width / 2, canvas.height - (footerHeight * 0.5));
                 ctx.fillText(displayLabel, canvas.width / 2, canvas.height - (footerHeight * 0.5));
             }
@@ -648,19 +752,20 @@ const GameBoard = (() => {
         const isJailTile = tileName.includes('visit');
         const rotationDegrees = getTileRotationDegrees(tileIndex, currentTextProfile, { activeSide: currentThirdPersonSide });
         const textScale = currentTextProfile === 'top-down' ? 1.18 : 1.05;
+        const surfacePalette = getBoardSurfacePalette();
 
         drawOrientedTexture(ctx, canvas, rotationDegrees, () => {
             const cornerColor = `#${tile.color.toString(16).padStart(6, '0')}`;
             const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-            gradient.addColorStop(0, '#162138');
-            gradient.addColorStop(1, '#0b1220');
+            gradient.addColorStop(0, surfacePalette.cornerFaceTop);
+            gradient.addColorStop(1, surfacePalette.cornerFaceBottom);
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             ctx.fillStyle = `${cornerColor}33`;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            ctx.strokeStyle = '#6678a8';
+            ctx.strokeStyle = surfacePalette.cornerBorder;
             ctx.lineWidth = 18;
             ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
 
@@ -688,7 +793,7 @@ const GameBoard = (() => {
             ctx.font = `800 ${Math.floor(canvas.width * 0.1 * textScale)}px 'Segoe UI', Arial, sans-serif`;
             ctx.fillText(getCornerBadge(tile), canvas.width / 2, canvas.height * 0.21);
 
-            ctx.fillStyle = '#f4f7ff';
+            ctx.fillStyle = surfacePalette.textPrimary;
             ctx.font = `800 ${Math.floor(canvas.width * 0.102 * textScale)}px 'Segoe UI', Arial, sans-serif`;
             ctx.strokeStyle = 'rgba(5, 8, 16, 0.8)';
             ctx.lineWidth = 10;
@@ -754,7 +859,7 @@ const GameBoard = (() => {
                 );
                 ctx.fill();
 
-                ctx.fillStyle = '#ffd87f';
+                ctx.fillStyle = surfacePalette.textAccent;
                 ctx.font = `700 ${Math.floor(canvas.width * 0.055 * textScale)}px 'Segoe UI', Arial, sans-serif`;
                 ctx.fillText('FUND', canvas.width / 2, canvas.height * 0.80);
 
@@ -779,7 +884,7 @@ const GameBoard = (() => {
                 );
                 ctx.fill();
 
-                ctx.fillStyle = '#7dff98';
+                ctx.fillStyle = surfacePalette.textAccent;
                 ctx.font = `700 ${Math.floor(canvas.width * 0.048 * textScale)}px 'Segoe UI', Arial, sans-serif`;
                 ctx.fillText('LAND $400 · PASS $200', canvas.width / 2, canvas.height * 0.82);
             }
@@ -789,6 +894,7 @@ const GameBoard = (() => {
     }
 
     function createTileMaterials(tile, tileIndex, ownerColor = null, propertyState = null) {
+        const surfacePalette = getBoardSurfacePalette();
         const topTexture = createTileTexture(tile, tileIndex, TILE_TEXTURE_WIDTH, TILE_TEXTURE_HEIGHT, ownerColor, propertyState);
         const topMaterial = new THREE.MeshStandardMaterial({
             map: topTexture,
@@ -798,16 +904,17 @@ const GameBoard = (() => {
             emissiveIntensity: 0.08
         });
         const sideMaterial = new THREE.MeshStandardMaterial({
-            color: 0x273651,
+            color: hexToNumber(surfacePalette.tileSide, 0x273651),
             roughness: 0.94,
             metalness: 0.03,
-            emissive: 0x09111e,
+            emissive: hexToNumber(surfacePalette.tileSideEmissive, 0x09111e),
             emissiveIntensity: 0.08
         });
         return [sideMaterial, sideMaterial, topMaterial, sideMaterial, sideMaterial, sideMaterial];
     }
 
     function createCornerMaterials(tile, tileIndex, cornerState = null) {
+        const surfacePalette = getBoardSurfacePalette();
         const topTexture = createCornerTexture(tile, tileIndex, cornerState);
         const topMaterial = new THREE.MeshStandardMaterial({
             map: topTexture,
@@ -817,10 +924,10 @@ const GameBoard = (() => {
             emissiveIntensity: 0.08
         });
         const sideMaterial = new THREE.MeshStandardMaterial({
-            color: 0x22314b,
+            color: hexToNumber(surfacePalette.tileSide, 0x22314b),
             roughness: 0.94,
             metalness: 0.03,
-            emissive: 0x09111e,
+            emissive: hexToNumber(surfacePalette.tileSideEmissive, 0x09111e),
             emissiveIntensity: 0.08
         });
         return [sideMaterial, sideMaterial, topMaterial, sideMaterial, sideMaterial, sideMaterial];
@@ -958,6 +1065,7 @@ const GameBoard = (() => {
     }
 
     function createMortgagedMaterials(tile, tileIndex) {
+        const surfacePalette = getBoardSurfacePalette();
         const topTexture = createMortgagedTexture(tile, tileIndex);
         const topMaterial = new THREE.MeshStandardMaterial({
             map: topTexture,
@@ -967,10 +1075,10 @@ const GameBoard = (() => {
             emissiveIntensity: 0.08
         });
         const sideMaterial = new THREE.MeshStandardMaterial({
-            color: 0x4f5a71,
+            color: hexToNumber(surfacePalette.mortgageTop, 0x4f5a71),
             roughness: 0.96,
             metalness: 0.02,
-            emissive: 0x09111e,
+            emissive: hexToNumber(surfacePalette.tileSideEmissive, 0x09111e),
             emissiveIntensity: 0.08
         });
         return [sideMaterial, sideMaterial, topMaterial, sideMaterial, sideMaterial, sideMaterial];
@@ -1253,11 +1361,11 @@ const GameBoard = (() => {
         const renderToken = Symbol(`house-${tileIndex}-${houseCount}`);
         houseRenderTokens[tileIndex] = renderToken;
         const cluster = new THREE.Group();
-        const { rotationY } = getBuildingOrientation(tileIndex);
+        const { rotationY, offsetX, offsetZ } = getBuildingOrientation(tileIndex);
         cluster.position.set(
-            position.x,
+            position.x + offsetX,
             (TILE_H / 2) + 0.04,
-            position.z
+            position.z + offsetZ
         );
         cluster.rotation.y = rotationY;
 
@@ -1300,19 +1408,27 @@ const GameBoard = (() => {
     }
 
     function getBuildingOrientation(index) {
+        const tile = boardData[index];
+        const topEdgeOffset = currentBoardId === 'countries'
+            && tile?.type === 'property'
+            && tile?.bandStyle === 'flag-image'
+            ? 0.7
+            : 0;
+        const outward = topEdgeOffset > 0 ? getTileOutwardVector(index) : { x: 0, z: 0 };
+
         if (index >= 1 && index <= 9) {
-            return { inward: { x: 0, z: -1 }, rotationY: 0 };
+            return { inward: { x: 0, z: -1 }, rotationY: 0, offsetX: outward.x * topEdgeOffset, offsetZ: outward.z * topEdgeOffset };
         }
         if (index >= 11 && index <= 19) {
-            return { inward: { x: 1, z: 0 }, rotationY: Math.PI / 2 };
+            return { inward: { x: 1, z: 0 }, rotationY: Math.PI / 2, offsetX: outward.x * topEdgeOffset, offsetZ: outward.z * topEdgeOffset };
         }
         if (index >= 21 && index <= 29) {
-            return { inward: { x: 0, z: 1 }, rotationY: 0 };
+            return { inward: { x: 0, z: 1 }, rotationY: 0, offsetX: outward.x * topEdgeOffset, offsetZ: outward.z * topEdgeOffset };
         }
         if (index >= 31 && index <= 39) {
-            return { inward: { x: -1, z: 0 }, rotationY: Math.PI / 2 };
+            return { inward: { x: -1, z: 0 }, rotationY: Math.PI / 2, offsetX: outward.x * topEdgeOffset, offsetZ: outward.z * topEdgeOffset };
         }
-        return { inward: { x: 0, z: 0 }, rotationY: 0 };
+        return { inward: { x: 0, z: 0 }, rotationY: 0, offsetX: 0, offsetZ: 0 };
     }
 
     function getTileOutwardVector(index) {
@@ -1404,22 +1520,23 @@ const GameBoard = (() => {
         canvas.height = 820;
         const ctx = canvas.getContext('2d');
         const rotationDegrees = getTileRotationDegrees(tileIndex, currentTextProfile, { activeSide: currentThirdPersonSide });
+        const surfacePalette = getBoardSurfacePalette();
 
         drawOrientedTexture(ctx, canvas, rotationDegrees, () => {
             const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-            gradient.addColorStop(0, '#303746');
-            gradient.addColorStop(1, '#181c25');
+            gradient.addColorStop(0, surfacePalette.mortgageTop);
+            gradient.addColorStop(1, surfacePalette.mortgageBottom);
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            ctx.strokeStyle = '#7a889f';
+            ctx.strokeStyle = surfacePalette.mortgageBorder;
             ctx.lineWidth = 10;
             ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10);
 
             ctx.fillStyle = 'rgba(155, 170, 194, 0.12)';
             ctx.fillRect(0, 0, canvas.width, canvas.height * 0.22);
 
-            ctx.fillStyle = '#e9eefb';
+            ctx.fillStyle = surfacePalette.textPrimary;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.font = `700 ${Math.floor(canvas.width * 0.09 * getProfileTextScale())}px 'Segoe UI', Arial, sans-serif`;

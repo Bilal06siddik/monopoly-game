@@ -52,25 +52,58 @@
     let currentBoardId = window.DEFAULT_BOARD_ID || 'egypt';
     let activeRoomCode = initialRoomCode;
     let focusedTileIndex = null;
-    const cameraViewBtn = document.getElementById('camera-view-btn');
-    const cameraTopdownBtn = document.getElementById('camera-topdown-btn');
-    const cameraIsoBtn = document.getElementById('camera-iso-btn');
-    const cameraResetBtn = document.getElementById('camera-reset-btn');
-    const viewDockToggle = document.getElementById('view-dock-toggle');
-    const viewDock = document.getElementById('view-dock');
+    function shouldFastForwardHiddenTabAnimation() {
+        if (document.visibilityState !== 'visible') return true;
+        if (typeof document.hasFocus === 'function') {
+            return !document.hasFocus();
+        }
+        return false;
+    }
+
+    function isCompactGameplayLayout() {
+        const width = window.innerWidth || document.documentElement.clientWidth || 0;
+        return width < 1200;
+    }
+
+    const fallbackGameplayBridge = {
+        mount: () => {},
+        update: () => {},
+        destroy: () => {}
+    };
+    const gameHud = document.getElementById('game-hud');
+    const gameplayUiRoot = document.getElementById('gameplay-ui-root');
     const roomGate = document.getElementById('room-gate');
     const roomGateStatus = document.getElementById('room-gate-status');
     const roomCodeInput = document.getElementById('room-code-input');
-    const topBar = document.querySelector('.top-bar');
-    const saveGameBtn = document.getElementById('save-game-btn');
-    const loadGameBtn = document.getElementById('load-game-btn');
     const loadGameInput = document.getElementById('load-game-input');
-    const hostControlsShell = document.getElementById('host-controls-shell');
-    const hostTurnTimerEnabledInput = document.getElementById('host-turn-timer-enabled');
-    const hostExtendTimer15Btn = document.getElementById('host-extend-timer-15-btn');
-    const hostExtendTimer30Btn = document.getElementById('host-extend-timer-30-btn');
-    const hostTurnTimerStatus = document.getElementById('host-turn-timer-status');
     let topBarResizeObserver = null;
+    let lobbyState = null;
+    let gameplayUiMounted = false;
+    let gameplayUiMountTimer = null;
+    let actionCardFlipTimeout = null;
+    let actionCardDismissTimeout = null;
+    let diceResultTimeout = null;
+    const uiState = {
+        historyEvents: [],
+        pendingTrades: [],
+        buyPrompt: null,
+        auctionState: null,
+        ownAuction: { open: false, selectedTileIndex: null, startPrice: 0, timeSeconds: 3 },
+        tradeComposer: { open: false, targetId: null, counterTradeId: null, offerCash: 0, requestCash: 0, offerProperties: [], requestProperties: [], validation: null },
+        tradeIncomingModalTradeId: null,
+        propertyDetailsTileIndex: null,
+        summary: null,
+        endStats: { visible: false, summary: null, winner: null },
+        actionCard: null,
+        diceResult: null,
+        overflowOpen: false,
+        leaderboardCollapsed: false,
+        hostControlsOpen: false,
+        lowerTab: 'history',
+        lowerExpanded: false,
+        lowerCollapsed: false,
+        viewDockOpen: false
+    };
 
     function startRuntime() {
         if (hasStartedRuntime) return;
@@ -87,10 +120,9 @@
         GameBoard.initRaycaster(camera, renderer);
         GameBoard.onTileClick((tileIndex) => {
             if (!currentGameState) return;
-            const anyModal = document.querySelector('.modal-overlay.show');
-            if (anyModal) return;
+            if (uiState.buyPrompt || uiState.auctionState || uiState.tradeComposer.open || uiState.tradeIncomingModalTradeId || uiState.ownAuction.open || uiState.actionCard) return;
             setFocusedTile(tileIndex);
-            showPropertyDetailsModal(tileIndex);
+            openPropertyDetails(tileIndex);
         });
         GameScene.animate(renderRuntimeUI);
     }
@@ -129,6 +161,438 @@
         }
         currentBoardId = resolvedBoardId;
         GameBoard.setBoardMap(resolvedBoardId, scene, renderer);
+    }
+
+    function getViewDockElement() {
+        return document.getElementById('view-dock');
+    }
+
+    function getViewDockToggleElement() {
+        return document.getElementById('view-dock-toggle');
+    }
+
+    function getTopBarElement() {
+        return document.querySelector('.gpu-top-bar');
+    }
+
+    function resetOwnAuctionState() {
+        uiState.ownAuction = { open: false, selectedTileIndex: null, startPrice: 0, timeSeconds: 3 };
+    }
+
+    function resetTradeComposer() {
+        uiState.tradeComposer = { open: false, targetId: null, counterTradeId: null, offerCash: 0, requestCash: 0, offerProperties: [], requestProperties: [], validation: null };
+    }
+
+    function setDiceResult(payload) {
+        if (diceResultTimeout) clearTimeout(diceResultTimeout);
+        uiState.diceResult = payload;
+        refreshGameplayUI();
+        diceResultTimeout = window.setTimeout(() => {
+            uiState.diceResult = null;
+            refreshGameplayUI();
+        }, 4000);
+    }
+
+    function clearActionCardTimers() {
+        if (actionCardFlipTimeout) {
+            clearTimeout(actionCardFlipTimeout);
+            actionCardFlipTimeout = null;
+        }
+        if (actionCardDismissTimeout) {
+            clearTimeout(actionCardDismissTimeout);
+            actionCardDismissTimeout = null;
+        }
+    }
+
+    function finishActionCard(cardState = uiState.actionCard) {
+        if (!cardState || cardState.completed) return;
+
+        cardState.completed = true;
+        clearActionCardTimers();
+        if (uiState.actionCard === cardState) {
+            uiState.actionCard = null;
+            refreshGameplayUI();
+        }
+        if (typeof cardState.callback === 'function') {
+            cardState.callback();
+        }
+    }
+
+    function showActionCard(card, result = {}, callback, options = {}) {
+        clearActionCardTimers();
+        const actionCardState = {
+            card,
+            result,
+            phase: 'front',
+            callback,
+            completed: false
+        };
+        uiState.actionCard = actionCardState;
+        refreshGameplayUI();
+
+        if (options?.skipAnimation === true) {
+            finishActionCard(actionCardState);
+            return;
+        }
+
+        actionCardFlipTimeout = window.setTimeout(() => {
+            if (uiState.actionCard !== actionCardState || actionCardState.completed) return;
+            actionCardState.phase = 'flipped';
+            refreshGameplayUI();
+        }, 400);
+        actionCardDismissTimeout = window.setTimeout(() => {
+            finishActionCard(actionCardState);
+        }, 4000);
+    }
+
+    function updatePendingTrades(trades = currentGameState?.pendingTrades || []) {
+        uiState.pendingTrades = Array.isArray(trades) ? trades.map(trade => ({ ...trade })) : [];
+    }
+
+    function updateHistoryEvents(events = currentGameState?.historyEvents || []) {
+        uiState.historyEvents = Array.isArray(events)
+            ? events.slice(-50).map(event => ({ text: event.text, type: event.type }))
+            : [];
+    }
+
+    function buildOrientationState() {
+        const width = window.innerWidth || document.documentElement.clientWidth || 0;
+        const height = window.innerHeight || document.documentElement.clientHeight || 0;
+        const isPortrait = height > width;
+        const isPhoneWidth = Math.min(width, height) <= 812;
+        return {
+            width,
+            height,
+            isPortrait,
+            shouldRotate: isPortrait && isPhoneWidth
+        };
+    }
+
+    function buildGameplaySnapshot() {
+        return {
+            visible: Boolean(currentGameState?.isGameStarted),
+            myPlayerId,
+            roomCode: activeRoomCode,
+            viewMode: GameScene.getViewMode?.() || DEFAULT_VIEW_MODE,
+            gameState: currentGameState,
+            lobbyState,
+            orientation: buildOrientationState(),
+            ui: {
+                historyEvents: uiState.historyEvents,
+                pendingTrades: uiState.pendingTrades,
+                buyPrompt: uiState.buyPrompt,
+                auctionState: uiState.auctionState,
+                ownAuction: uiState.ownAuction,
+                tradeComposer: uiState.tradeComposer,
+                tradeIncomingModalTradeId: uiState.tradeIncomingModalTradeId,
+                propertyDetailsTileIndex: uiState.propertyDetailsTileIndex,
+                summary: uiState.summary,
+                endStats: uiState.endStats,
+                actionCard: uiState.actionCard,
+                diceResult: uiState.diceResult,
+                overflowOpen: uiState.overflowOpen,
+                leaderboardCollapsed: uiState.leaderboardCollapsed,
+                hostControlsOpen: uiState.hostControlsOpen,
+                lowerTab: uiState.lowerTab,
+                lowerExpanded: uiState.lowerExpanded,
+                lowerCollapsed: uiState.lowerCollapsed,
+                viewDockOpen: uiState.viewDockOpen
+            }
+        };
+    }
+
+    function getGameplayBridge() {
+        return window.GameplayUIBridge || fallbackGameplayBridge;
+    }
+
+    function refreshGameplayUI() {
+        if (!gameplayUiMounted) {
+            mountGameplayUi();
+        }
+        getGameplayBridge().update(buildGameplaySnapshot());
+        syncTopDownHudLayout();
+    }
+
+    function closePropertyDetails() {
+        uiState.propertyDetailsTileIndex = null;
+        setFocusedTile(null);
+        refreshGameplayUI();
+    }
+
+    function openPropertyDetails(tileIndex) {
+        if (!currentGameState) return;
+        const tile = getBoardTiles(currentGameState?.boardId)[tileIndex];
+        if (!tile || tile.type === 'corner') return;
+        uiState.propertyDetailsTileIndex = tileIndex;
+        setFocusedTile(tileIndex);
+        refreshGameplayUI();
+    }
+
+    function closeIncomingTradeModal() {
+        uiState.tradeIncomingModalTradeId = null;
+        refreshGameplayUI();
+    }
+
+    function openTradeComposer(targetId, options = {}) {
+        const offer = options.prefillOffer || null;
+        uiState.tradeComposer = {
+            open: true,
+            targetId,
+            counterTradeId: options.counterTradeId || null,
+            offerCash: offer?.requestCash || 0,
+            requestCash: offer?.offerCash || 0,
+            offerProperties: Array.isArray(offer?.requestProperties) ? [...offer.requestProperties] : [],
+            requestProperties: Array.isArray(offer?.offerProperties) ? [...offer.offerProperties] : [],
+            validation: null
+        };
+        uiState.lowerTab = 'trades';
+        uiState.tradeIncomingModalTradeId = null;
+        refreshGameplayUI();
+    }
+
+    function validateTradeComposer() {
+        const composer = uiState.tradeComposer;
+        const me = currentGameState?.players?.find(player => player.id === myPlayerId);
+        const target = currentGameState?.players?.find(player => player.id === composer.targetId);
+        if (!me || !target) {
+            return { ok: false, message: 'Trade participants are no longer available.' };
+        }
+        if (composer.offerCash < 0 || composer.requestCash < 0) {
+            return { ok: false, message: 'Trade cash values cannot be negative.' };
+        }
+        if (composer.offerCash > me.money) {
+            return { ok: false, message: 'You do not have enough cash for this offer.' };
+        }
+        if (composer.requestCash > target.money) {
+            return { ok: false, message: `${target.character} does not have that much cash right now.` };
+        }
+        if (!composer.offerProperties.length && !composer.requestProperties.length && !composer.offerCash && !composer.requestCash) {
+            return { ok: false, message: 'Add cash or property before sending a trade.' };
+        }
+        return {
+            ok: true,
+            offer: {
+                targetId: composer.targetId,
+                offerProperties: composer.offerProperties,
+                offerCash: composer.offerCash,
+                requestProperties: composer.requestProperties,
+                requestCash: composer.requestCash,
+                counterToTradeId: composer.counterTradeId || null
+            }
+        };
+    }
+
+    function mountGameplayUi() {
+        if (gameplayUiMounted || !gameplayUiRoot) return;
+
+        const gameplayBridge = window.GameplayUIBridge;
+        if (!gameplayBridge || typeof gameplayBridge.mount !== 'function') {
+            if (!gameplayUiMountTimer) {
+                gameplayUiMountTimer = window.setTimeout(() => {
+                    gameplayUiMountTimer = null;
+                    mountGameplayUi();
+                }, 50);
+            }
+            return;
+        }
+
+        gameplayBridge.mount(gameplayUiRoot, {
+            toggleViewDock: () => {
+                uiState.viewDockOpen = !uiState.viewDockOpen;
+                refreshGameplayUI();
+            },
+            setViewMode: (mode) => {
+                const nextMode = mode === 'third-person' && GameScene.getViewMode() === 'third-person'
+                    ? DEFAULT_VIEW_MODE
+                    : mode === 'top-down' && GameScene.getViewMode() === 'top-down'
+                        ? DEFAULT_VIEW_MODE
+                        : mode;
+                if (GameScene.setViewMode(nextMode)) {
+                    if (nextMode !== 'top-down') {
+                        uiState.viewDockOpen = false;
+                    }
+                    syncCameraViewState();
+                }
+            },
+            resetView: () => {
+                GameScene.resetBoardView();
+                syncCameraViewState();
+            },
+            rollDice: () => socket.emit('roll-dice'),
+            endTurn: () => socket.emit('end-turn'),
+            jailRoll: () => socket.emit('jail-roll'),
+            buyOutJail: () => socket.emit('buy-out-jail'),
+            usePardon: () => socket.emit('use-pardon'),
+            toggleOverflow: () => {
+                uiState.overflowOpen = !uiState.overflowOpen;
+                refreshGameplayUI();
+            },
+            openOwnAuction: () => {
+                uiState.overflowOpen = false;
+                uiState.ownAuction.open = true;
+                refreshGameplayUI();
+            },
+            closeOwnAuction: () => {
+                resetOwnAuctionState();
+                refreshGameplayUI();
+            },
+            selectOwnAuctionProperty: (tileIndex) => {
+                const property = currentGameState?.properties?.find(item => item.index === tileIndex);
+                const maxValue = property ? property.price + ((property.houses || 0) * Math.floor(property.price * 0.25)) : 0;
+                uiState.ownAuction = {
+                    open: true,
+                    selectedTileIndex: tileIndex,
+                    startPrice: Math.floor(maxValue / 2),
+                    timeSeconds: 3
+                };
+                refreshGameplayUI();
+            },
+            setOwnAuctionTime: (seconds) => {
+                uiState.ownAuction.timeSeconds = seconds;
+                refreshGameplayUI();
+            },
+            setOwnAuctionPrice: (value) => {
+                uiState.ownAuction.startPrice = value;
+                refreshGameplayUI();
+            },
+            submitOwnAuction: () => {
+                socket.emit('own-auction', {
+                    tileIndex: uiState.ownAuction.selectedTileIndex,
+                    startPrice: uiState.ownAuction.startPrice
+                });
+                resetOwnAuctionState();
+                refreshGameplayUI();
+            },
+            declareBankruptcy: () => {
+                if (!window.confirm('Declare bankruptcy and leave the match? This cannot be undone.')) return;
+                uiState.overflowOpen = false;
+                socket.emit('declare-bankruptcy');
+                refreshGameplayUI();
+            },
+            openTradeComposer: (targetId) => openTradeComposer(targetId),
+            closeTradeComposer: () => {
+                resetTradeComposer();
+                refreshGameplayUI();
+            },
+            toggleTradeProperty: (side, tileIndex) => {
+                const key = side === 'offer' ? 'offerProperties' : 'requestProperties';
+                const current = new Set(uiState.tradeComposer[key]);
+                if (current.has(tileIndex)) current.delete(tileIndex);
+                else current.add(tileIndex);
+                uiState.tradeComposer[key] = [...current];
+                refreshGameplayUI();
+            },
+            setTradeCash: (side, value) => {
+                const key = side === 'offer' ? 'offerCash' : 'requestCash';
+                uiState.tradeComposer[key] = Math.max(0, Number.parseInt(value, 10) || 0);
+                refreshGameplayUI();
+            },
+            submitTradeOffer: () => {
+                const validation = validateTradeComposer();
+                uiState.tradeComposer.validation = validation.ok ? null : { ok: false, message: validation.message };
+                refreshGameplayUI();
+                if (!validation.ok) return;
+                socket.emit('trade-offer', validation.offer);
+                resetTradeComposer();
+                Notifications.show(validation.offer.counterToTradeId ? 'Counter-offer sent!' : 'Trade offer sent!', 'info', 3000);
+                refreshGameplayUI();
+            },
+            acceptTrade: (tradeId) => {
+                closeIncomingTradeModal();
+                socket.emit('trade-accept', { tradeId });
+            },
+            rejectTrade: (tradeId) => {
+                closeIncomingTradeModal();
+                socket.emit('trade-reject', { tradeId });
+            },
+            cancelTrade: (tradeId) => socket.emit('trade-cancel', { tradeId }),
+            counterTrade: (tradeId) => {
+                const trade = uiState.pendingTrades.find(item => item.id === tradeId);
+                if (!trade) return;
+                openTradeComposer(trade.fromId, { counterTradeId: trade.id, prefillOffer: trade });
+            },
+            closeIncomingTradeModal,
+            toggleLeaderboard: () => {
+                uiState.leaderboardCollapsed = !uiState.leaderboardCollapsed;
+                refreshGameplayUI();
+            },
+            toggleHostControls: () => {
+                uiState.hostControlsOpen = !uiState.hostControlsOpen;
+                if (uiState.hostControlsOpen && isCompactGameplayLayout()) {
+                    uiState.lowerCollapsed = true;
+                }
+                refreshGameplayUI();
+            },
+            setLowerTab: (tab) => {
+                uiState.lowerTab = tab;
+                refreshGameplayUI();
+            },
+            toggleFeedExpanded: () => {
+                uiState.lowerExpanded = !uiState.lowerExpanded;
+                refreshGameplayUI();
+            },
+            toggleFeedCollapsed: () => {
+                uiState.lowerCollapsed = !uiState.lowerCollapsed;
+                if (!uiState.lowerCollapsed && isCompactGameplayLayout()) {
+                    uiState.hostControlsOpen = false;
+                }
+                refreshGameplayUI();
+            },
+            buyProperty: (tileIndex) => {
+                socket.emit('buy-property', { tileIndex });
+                uiState.buyPrompt = null;
+                refreshGameplayUI();
+            },
+            passProperty: () => {
+                socket.emit('pass-property');
+                uiState.buyPrompt = null;
+                refreshGameplayUI();
+            },
+            placeBid: (amount) => socket.emit('place-bid', { amount }),
+            closePropertyDetails,
+            runPropertyAction: (action, tileIndex) => {
+                const eventByAction = {
+                    upgrade: 'upgrade-property',
+                    downgrade: 'downgrade-property',
+                    mortgage: 'mortgage-property',
+                    unmortgage: 'unmortgage-property',
+                    sell: 'sell-property'
+                };
+                if (!eventByAction[action]) return;
+                socket.emit(eventByAction[action], { tileIndex });
+                closePropertyDetails();
+            },
+            copyInvite: () => copyInvite(),
+            saveGame: () => socket.emit('save-game'),
+            loadGame: () => {
+                if (!window.confirm('Loading a saved game will replace the current match state for everyone in the room. Continue?')) return;
+                loadGameInput?.click();
+            },
+            endMatch: () => {
+                if (!window.confirm('End the current match and return everyone to the lobby?')) return;
+                socket.emit('end-game');
+            },
+            endRoom: () => {
+                if (!window.confirm('End the room for everyone?')) return;
+                socket.emit('end-room');
+            },
+            setTurnTimerEnabled: (enabled) => socket.emit('host-set-turn-timer-enabled', { enabled: Boolean(enabled) }),
+            extendTurnTimer: (seconds) => socket.emit('host-extend-turn-timer', { seconds }),
+            kickPlayer: (playerId, playerName) => {
+                if (!window.confirm(`Kick ${playerName || 'this player'} from the room?`)) return;
+                socket.emit('kick-player', { playerId });
+            },
+            closeSummary: () => {
+                uiState.summary = null;
+                refreshGameplayUI();
+            },
+            closeEndStats: () => {
+                uiState.endStats = { visible: false, summary: null, winner: null };
+                refreshGameplayUI();
+            }
+        });
+        gameplayUiMounted = true;
+        refreshGameplayUI();
     }
 
     function getStoredValue(key) {
@@ -244,11 +708,9 @@
 
     function setTopDownViewOptionsOpen(isOpen) {
         const nextState = Boolean(isOpen);
+        uiState.viewDockOpen = nextState;
         document.body.classList.toggle('top-down-view-options-open', nextState);
-        if (viewDockToggle) {
-            viewDockToggle.setAttribute('aria-expanded', String(nextState));
-            viewDockToggle.textContent = nextState ? '✕ View' : '👁 View';
-        }
+        refreshGameplayUI();
         syncTopDownHudLayout();
     }
 
@@ -278,7 +740,9 @@
 
         if (prop.type === 'railroad') {
             const ownedRailroads = MonopolyRules.getOwnedPropertyCount(properties, prop.owner, 'railroad');
-            const amount = 25 * Math.pow(2, Math.max(ownedRailroads - 1, 0));
+            const tiers = [25, 50, 100, 400];
+            const index = Math.min(Math.max(ownedRailroads - 1, 0), tiers.length - 1);
+            const amount = tiers[index];
             return { amount, label: `$${amount}` };
         }
 
@@ -287,36 +751,14 @@
     }
 
     function hideEndStatsScreen() {
-        const screen = document.getElementById('end-stats-screen');
-        if (!screen) return;
-        screen.classList.remove('visible');
-        screen.classList.add('hidden');
+        uiState.endStats = { visible: false, summary: null, winner: null };
+        refreshGameplayUI();
     }
 
     function showEndStatsScreen(summary, winner) {
-        const screen = document.getElementById('end-stats-screen');
-        const titleEl = document.getElementById('es-winner-title');
-        const gridEl = document.getElementById('es-player-grid');
-        if (!screen || !titleEl || !gridEl || !summary) return;
-
-        const placements = Array.isArray(summary.placements) ? summary.placements : [];
-        const winnerName = winner?.name || winner?.character || placements.find(player => player.isWinner)?.name || placements.find(player => player.isWinner)?.character || 'Winner';
-        titleEl.textContent = winner?.id === myPlayerId ? 'You Win!' : `${winnerName} Wins!`;
-
-        gridEl.innerHTML = placements.map(player => `
-            <div class="end-stats-card${player.isWinner ? ' winner' : ''}">
-                <div class="esc-avatar">${player.isWinner ? '👑' : player.isActive ? '👤' : '💀'}</div>
-                <div class="esc-name" style="color:${player.color}">${player.name || player.character}</div>
-                <div class="esc-stat"><span class="esc-stat-label">Placement</span><span class="esc-stat-value">#${player.placement}</span></div>
-                <div class="esc-stat"><span class="esc-stat-label">Net Worth</span><span class="esc-stat-value money">$${player.netWorth}</span></div>
-                <div class="esc-stat"><span class="esc-stat-label">Properties</span><span class="esc-stat-value">${player.propertiesOwned}</span></div>
-                <div class="esc-stat"><span class="esc-stat-label">Rent Paid</span><span class="esc-stat-value">$${player.stats?.rentPaid ?? 0}</span></div>
-                <div class="esc-stat"><span class="esc-stat-label">Rent Recv</span><span class="esc-stat-value">$${player.stats?.rentReceived ?? 0}</span></div>
-            </div>
-        `).join('');
-
-        screen.classList.remove('hidden');
-        screen.classList.add('visible');
+        if (!summary) return;
+        uiState.endStats = { visible: true, summary, winner };
+        refreshGameplayUI();
     }
 
     function getTurnTimerPhaseLabel(phase) {
@@ -330,54 +772,7 @@
     }
 
     function syncHostTimerControls(state = currentGameState) {
-        const hostPlayerId = state?.hostPlayerId || currentGameState?.hostPlayerId || null;
-        const isHost = Boolean(hostPlayerId && myPlayerId && hostPlayerId === myPlayerId);
-        const turnTimerEnabled = (state?.turnTimerEnabled ?? currentGameState?.turnTimerEnabled) !== false;
-        const isGameStarted = typeof state?.isGameStarted === 'boolean'
-            ? state.isGameStarted
-            : Boolean(currentGameState?.isGameStarted);
-        const pauseState = state?.pauseState || currentGameState?.pauseState || null;
-        const timerState = pauseState
-            ? null
-            : (state?.turnTimer || currentGameState?.turnTimer || null);
-        const canExtend = isHost && turnTimerEnabled && isGameStarted && Boolean(timerState) && !pauseState;
-
-        if (hostTurnTimerEnabledInput) {
-            hostTurnTimerEnabledInput.checked = turnTimerEnabled;
-            hostTurnTimerEnabledInput.disabled = !isHost;
-        }
-        if (hostExtendTimer15Btn) {
-            hostExtendTimer15Btn.disabled = !canExtend;
-            hostExtendTimer15Btn.classList.toggle('disabled', !canExtend);
-        }
-        if (hostExtendTimer30Btn) {
-            hostExtendTimer30Btn.disabled = !canExtend;
-            hostExtendTimer30Btn.classList.toggle('disabled', !canExtend);
-        }
-        if (!hostTurnTimerStatus) return;
-
-        if (!isHost) {
-            hostTurnTimerStatus.textContent = 'Host-only timer controls are hidden for other players.';
-            return;
-        }
-        if (!turnTimerEnabled) {
-            hostTurnTimerStatus.textContent = 'Turn timer is disabled. Turns will not auto-timeout.';
-            return;
-        }
-        if (!isGameStarted) {
-            hostTurnTimerStatus.textContent = 'Turn timer is enabled and will apply after the match starts.';
-            return;
-        }
-        if (pauseState) {
-            hostTurnTimerStatus.textContent = 'Game is paused. Timer will resume when play resumes.';
-            return;
-        }
-        if (!timerState) {
-            hostTurnTimerStatus.textContent = 'No active turn timer right now (move/auction or non-timed phase).';
-            return;
-        }
-
-        hostTurnTimerStatus.textContent = `${getTurnTimerPhaseLabel(timerState.phase)}: ${timerState.remainingSeconds}s remaining.`;
+        refreshGameplayUI();
     }
 
     function syncRoomChrome(state = currentGameState) {
@@ -390,26 +785,15 @@
         const roomBanner = document.getElementById('room-banner');
         const roomCodeDisplay = document.getElementById('room-code-display');
         const lobbyEndBtn = document.getElementById('end-room-btn');
-        const hostEndMatchBtn = document.getElementById('host-end-match-btn');
-        const hostEndRoomBtn = document.getElementById('host-end-room-btn');
 
         roomBanner?.classList.toggle('hidden', !roomCode);
         if (roomCodeDisplay) roomCodeDisplay.textContent = roomCode || '------';
-        hostControlsShell?.classList.toggle('hidden', !isHost);
         lobbyEndBtn?.classList.toggle('hidden', !isHost);
-        hostEndMatchBtn?.classList.toggle('hidden', !isHost || !isGameStarted);
-        hostEndRoomBtn?.classList.toggle('hidden', !isHost);
         if (!isHost) {
-            document.getElementById('persistent-host-controls')?.classList.remove('is-collapsed');
-            const hostControlsToggle = document.getElementById('host-controls-toggle');
-            if (hostControlsToggle) {
-                hostControlsToggle.setAttribute('aria-expanded', 'true');
-                hostControlsToggle.textContent = 'Host Controls';
-            }
+            uiState.hostControlsOpen = false;
         }
-        if (saveGameBtn) saveGameBtn.disabled = !isHost || !isGameStarted;
-        if (loadGameBtn) loadGameBtn.disabled = !isHost || isGameStarted;
         syncHostTimerControls(state);
+        refreshGameplayUI();
     }
 
     function setFocusedTile(tileIndex) {
@@ -436,7 +820,27 @@
         syncBoardTextProfile();
     }
 
+    function fastForwardTransientAnimations() {
+        if (typeof GameDice !== 'undefined' && typeof GameDice.fastForwardRoll === 'function') {
+            GameDice.fastForwardRoll();
+        }
+        if (typeof GameTokens !== 'undefined' && typeof GameTokens.fastForwardAnimations === 'function') {
+            GameTokens.fastForwardAnimations();
+        }
+        finishActionCard();
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        if (!shouldFastForwardHiddenTabAnimation()) return;
+        fastForwardTransientAnimations();
+    });
+    window.addEventListener('blur', fastForwardTransientAnimations);
+    window.addEventListener('pagehide', fastForwardTransientAnimations);
+
     function syncTopDownHudLayout() {
+        const topBar = getTopBarElement();
+        const viewDockToggle = getViewDockToggleElement();
+        const viewDock = getViewDockElement();
         if (!topBar) return;
 
         const topBarHeight = Math.max(Math.ceil(topBar.getBoundingClientRect().height), 0);
@@ -463,7 +867,6 @@
         }
 
         currentGameState = normalizedState;
-        GameUI.updateHostPlayerId(normalizedState?.hostPlayerId || null);
         if (typeof DevPanel !== 'undefined' && DevPanel.updateState) {
             DevPanel.updateState(normalizedState);
         }
@@ -482,44 +885,16 @@
     function syncCameraViewState() {
         const tokenGroup = getCurrentPlayerTokenGroup();
         GameScene.setFollowTarget(tokenGroup);
-        const canFollow = Boolean(tokenGroup);
         const viewMode = GameScene.getViewMode();
         document.body.dataset.viewMode = viewMode;
-        const isThirdPerson = viewMode === 'third-person';
         const isTopDown = viewMode === 'top-down';
-        const isIsometric = viewMode === 'isometric';
-
-        // #13: Each button shows its view name and is highlighted (active) when that view is active
-        if (cameraIsoBtn) {
-            cameraIsoBtn.classList.toggle('active', isIsometric);
-            cameraIsoBtn.setAttribute('aria-pressed', String(isIsometric));
-        }
-        if (cameraViewBtn) {
-            cameraViewBtn.disabled = !canFollow;
-            cameraViewBtn.classList.toggle('active', isThirdPerson);
-            cameraViewBtn.setAttribute('aria-pressed', String(isThirdPerson));
-            cameraViewBtn.textContent = '🎥 Third Person';
-            cameraViewBtn.title = canFollow
-                ? 'Follow your token in third person'
-                : 'Join a game to enable third-person view';
-        }
-        if (cameraTopdownBtn) {
-            cameraTopdownBtn.classList.toggle('active', isTopDown);
-            cameraTopdownBtn.setAttribute('aria-pressed', String(isTopDown));
-            cameraTopdownBtn.textContent = '⬆ Top Down';
-        }
-        if (cameraResetBtn) {
-            cameraResetBtn.title = 'Recenter the isometric framing and reset zoom';
-        }
         if (!isTopDown) {
+            uiState.viewDockOpen = false;
             setTopDownViewOptionsOpen(false);
         }
         syncBoardTextProfile();
+        refreshGameplayUI();
         syncTopDownHudLayout();
-    }
-
-    function syncTurnTimerUI(state = currentGameState) {
-        GameUI.updateTurnTimer(state?.pauseState ? null : (state?.turnTimer || null));
     }
 
     function showLuckPopup(duration = 3500) {
@@ -600,49 +975,39 @@
     }
 
     function syncHistoryFromState(state) {
-        if (state?.historyEvents) {
-            HistoryLog.replaceEvents(state.historyEvents);
-        }
+        updateHistoryEvents(state?.historyEvents);
     }
 
     function maybeRestoreBuyPrompt(state) {
         if (!state || state.turnPhase !== 'buying' || state.currentPlayerId !== myPlayerId) {
-            GameModals.hideBuyModal();
+            uiState.buyPrompt = null;
             return;
         }
 
         const me = state.players.find(player => player.id === myPlayerId);
         const tile = me ? state.properties[me.position] : null;
         if (!tile || tile.owner !== null) {
-            GameModals.hideBuyModal();
+            uiState.buyPrompt = null;
             return;
         }
 
-        GameModals.showBuyModal({
+        uiState.buyPrompt = {
             playerId: myPlayerId,
             tileIndex: tile.index,
             tileName: tile.name,
             tileType: tile.type,
             price: tile.price,
             colorGroup: tile.colorGroup,
-            canAfford: (me?.money || 0) >= tile.price,
-            gameState: state
-        });
+            canAfford: (me?.money || 0) >= tile.price
+        };
     }
 
     function syncPendingTrades(state) {
-        if (Array.isArray(state?.pendingTrades)) {
-            TradeSystem.replaceTrades(state.pendingTrades);
-        }
+        updatePendingTrades(state?.pendingTrades);
     }
 
     function syncAuctionFromState(state) {
-        if (!state?.auctionState) {
-            AuctionSystem.hideAuction();
-            return;
-        }
-
-        AuctionSystem.showAuction({ auction: state.auctionState }, state.players);
+        uiState.auctionState = state?.auctionState ? { ...state.auctionState } : null;
     }
 
     function applyState(state, { syncWorld = true, syncHistory = true, syncTrades = true, syncAuction = true, syncBuyPrompt = true } = {}) {
@@ -662,21 +1027,22 @@
         if (syncAuction) syncAuctionFromState(appliedState);
         if (appliedState.isGameStarted) {
             Lobby.hideLobby();
-            GameUI.showGameUI();
-            GameUI.updateLeaderboard(appliedState.players, appliedState.properties);
-            const currentPlayer = appliedState.players[appliedState.currentPlayerIndex];
-            if (currentPlayer) {
-                GameUI.updateTurnIndicator(currentPlayer.id, currentPlayer.character, appliedState.players, appliedState);
-            }
+            gameHud?.classList.remove('hidden');
         } else {
             Lobby.showLobby();
-            GameUI.hideGameUI();
-            GameUI.updateLeaderboard([], []);
-            GameUI.updateTurnTimer(null);
-            hideSummaryModal();
+            gameHud?.classList.add('hidden');
+            updatePendingTrades([]);
+            uiState.buyPrompt = null;
+            uiState.auctionState = null;
+            uiState.propertyDetailsTileIndex = null;
+            uiState.summary = null;
+            uiState.endStats = { visible: false, summary: null, winner: null };
+            resetOwnAuctionState();
+            resetTradeComposer();
+            closeIncomingTradeModal();
         }
         if (syncBuyPrompt) maybeRestoreBuyPrompt(appliedState);
-        syncTurnTimerUI(appliedState);
+        refreshGameplayUI();
     }
 
     function ownsFullColorGroup(playerId, tile) {
@@ -708,65 +1074,9 @@
     }
 
     function showSummaryModal(summary) {
-        const modal = document.getElementById('summary-modal');
-        if (!modal || !summary) return;
-
-        const winner = summary.placements.find(player => player.isWinner);
-        document.getElementById('summary-winner').textContent = winner
-            ? `${winner.name || winner.character} wins the match`
-            : 'Match complete';
-
-        const minutes = Math.floor((summary.durationMs || 0) / 60000);
-        const seconds = Math.floor(((summary.durationMs || 0) % 60000) / 1000);
-        document.getElementById('summary-meta').textContent = `Turns: ${summary.turnCount} • Duration: ${minutes}m ${seconds}s`;
-
-        document.getElementById('summary-placements').innerHTML = summary.placements.map(player => `
-            <div class="summary-placement${player.playerId === myPlayerId ? ' is-me' : ''}">
-                <div>
-                    <strong>#${player.placement} ${player.name || player.character}</strong>
-                    <div>Cash: $${player.money} • Net worth: $${player.netWorth}</div>
-                </div>
-                <div class="summary-stats-inline">
-                    <span>Cards ${player.stats.cardsDrawn}</span>
-                    <span>GO ${player.stats.goPasses}</span>
-                    <span>Trades ${player.stats.tradesCompleted}</span>
-                </div>
-            </div>
-        `).join('');
-
-        document.getElementById('summary-visited').innerHTML = (summary.topVisitedProperties || []).map(property => `
-            <div class="summary-list-row">
-                <span>${property.name}</span>
-                <strong>${property.landedCount}</strong>
-            </div>
-        `).join('') || '<div class="summary-list-row empty">No visits recorded.</div>';
-
-        document.getElementById('summary-rent').innerHTML = (summary.topRentProperties || []).map(property => `
-            <div class="summary-list-row">
-                <span>${property.name}</span>
-                <strong>$${property.rentCollected}</strong>
-            </div>
-        `).join('') || '<div class="summary-list-row empty">No rent recorded.</div>';
-
-        modal.classList.remove('hidden');
-        modal.classList.add('show');
-    }
-
-    function createActionButton(variant, html, onClick) {
-        const btn = document.createElement('button');
-        btn.className = `pdm-action-btn ${variant}`;
-        btn.innerHTML = html;
-        btn.onclick = onClick;
-        return btn;
-    }
-
-    function createDisabledActionButton(variant, html, title) {
-        const btn = document.createElement('button');
-        btn.className = `pdm-action-btn ${variant} disabled`;
-        btn.innerHTML = html;
-        btn.disabled = true;
-        if (title) btn.title = title;
-        return btn;
+        if (!summary) return;
+        uiState.summary = summary;
+        refreshGameplayUI();
     }
 
     socket.on('connect', () => {
@@ -784,9 +1094,8 @@
             persistValue(SESSION_TOKEN_KEY, data.sessionToken);
         }
         myPlayerId = data.playerId || null;
-        GameUI.updateMyPlayerId(myPlayerId);
-        TradeSystem.updatePlayerId(myPlayerId);
-        AuctionSystem.updatePlayerId(myPlayerId);
+        const hostPlayerId = currentGameState?.hostPlayerId || lobbyState?.hostPlayerId || null;
+        uiState.hostControlsOpen = Boolean(hostPlayerId && myPlayerId === hostPlayerId ? uiState.hostControlsOpen : false);
         if (currentGameState) {
             applyState(currentGameState, { syncWorld: false, syncHistory: false });
         } else {
@@ -796,9 +1105,10 @@
     });
 
     socket.on('lobby-update', (state) => {
+        lobbyState = state;
         syncBoardSelection(state?.selectedBoardId || state?.boardId);
-        GameUI.updateHostPlayerId(state?.hostPlayerId || null);
         syncRoomChrome(state);
+        refreshGameplayUI();
     });
 
     socket.on('room-error', (data) => {
@@ -821,7 +1131,7 @@
 
     socket.on('game-ended-by-host', (data) => {
         Notifications.show(data?.message || 'The host ended the current match.', 'info', 5000);
-        hideSummaryModal();
+        uiState.summary = null;
         hideEndStatsScreen();
     });
 
@@ -836,41 +1146,27 @@
 
     // ── Init all systems ──────────────────────────────────
     Lobby.init(socket);
-    GameUI.init(socket);
-    GameModals.init(socket);
-    HistoryLog.init();
-    TradeSystem.init(socket);
-    AuctionSystem.init(socket);
     if (typeof DevPanel !== 'undefined') DevPanel.init(socket);
+    mountGameplayUi();
     GameBoard.setTextProfile(DEFAULT_VIEW_MODE);
     GameScene.onViewModeChange(() => {
         syncCameraViewState();
     });
 
-    if (topBar || viewDockToggle || viewDock) {
+    if (getTopBarElement() || getViewDockToggleElement() || getViewDockElement()) {
         syncTopDownHudLayout();
         if (typeof ResizeObserver !== 'undefined') {
             topBarResizeObserver = new ResizeObserver(() => {
                 syncTopDownHudLayout();
             });
-            [topBar, viewDockToggle, viewDock].filter(Boolean).forEach(element => {
+            [getTopBarElement(), getViewDockToggleElement(), getViewDockElement()].filter(Boolean).forEach(element => {
                 topBarResizeObserver.observe(element);
             });
         }
         window.addEventListener('resize', syncTopDownHudLayout);
+        window.addEventListener('resize', refreshGameplayUI);
         window.addEventListener('history-layout-change', syncTopDownHudLayout);
     }
-
-    saveGameBtn?.addEventListener('click', () => {
-        if (saveGameBtn.disabled) return;
-        socket.emit('save-game');
-    });
-
-    loadGameBtn?.addEventListener('click', () => {
-        if (loadGameBtn.disabled) return;
-        if (!window.confirm('Loading a saved game will replace the current match state for everyone in the room. Continue?')) return;
-        loadGameInput?.click();
-    });
 
     loadGameInput?.addEventListener('change', (event) => {
         const file = event.target.files?.[0];
@@ -887,26 +1183,6 @@
         };
         reader.readAsText(file);
         event.target.value = '';
-    });
-
-    hostTurnTimerEnabledInput?.addEventListener('change', () => {
-        socket.emit('host-set-turn-timer-enabled', {
-            enabled: Boolean(hostTurnTimerEnabledInput.checked)
-        });
-    });
-
-    hostExtendTimer15Btn?.addEventListener('click', () => {
-        if (hostExtendTimer15Btn.disabled) return;
-        socket.emit('host-extend-turn-timer', { seconds: 15 });
-    });
-
-    hostExtendTimer30Btn?.addEventListener('click', () => {
-        if (hostExtendTimer30Btn.disabled) return;
-        socket.emit('host-extend-turn-timer', { seconds: 30 });
-    });
-
-    viewDockToggle?.addEventListener('click', () => {
-        setTopDownViewOptionsOpen(!document.body.classList.contains('top-down-view-options-open'));
     });
 
     document.getElementById('create-room-btn')?.addEventListener('click', () => {
@@ -950,40 +1226,7 @@
         showRoomGate();
     }
 
-    // #13: Isometric button — always switches to isometric
-    cameraIsoBtn?.addEventListener('click', () => {
-        if (GameScene.getViewMode() !== 'isometric') {
-            GameScene.setViewMode('isometric');
-            syncCameraViewState();
-        } else {
-            GameScene.resetBoardView();
-            syncCameraViewState();
-        }
-    });
-
-    if (cameraViewBtn) {
-        cameraViewBtn.addEventListener('click', () => {
-            // Toggle third person: if already in it, switch to isometric
-            const nextMode = GameScene.getViewMode() === 'third-person' ? DEFAULT_VIEW_MODE : 'third-person';
-            if (GameScene.setViewMode(nextMode)) {
-                syncCameraViewState();
-            }
-        });
-        syncCameraViewState();
-    }
-
-    cameraTopdownBtn?.addEventListener('click', () => {
-        // Toggle top-down: if already in it, switch to isometric
-        const nextMode = GameScene.getViewMode() === 'top-down' ? DEFAULT_VIEW_MODE : 'top-down';
-        if (GameScene.setViewMode(nextMode)) {
-            syncCameraViewState();
-        }
-    });
-
-    cameraResetBtn?.addEventListener('click', () => {
-        GameScene.resetBoardView();
-        syncCameraViewState();
-    });
+    syncCameraViewState();
 
     document.addEventListener('keydown', (event) => {
         if (isTypingTarget()) return;
@@ -1006,7 +1249,9 @@
 
     // ── History Log ───────────────────────────────────────
     socket.on('history-event', (data) => {
-        HistoryLog.addEvent(data.text, data.type);
+        uiState.historyEvents.push({ text: data.text, type: data.type });
+        uiState.historyEvents = uiState.historyEvents.slice(-50);
+        refreshGameplayUI();
     });
 
     socket.on('gameStarted', (state) => {
@@ -1015,7 +1260,13 @@
 
     socket.on('dice-rolled', (data) => {
         if (!setCurrentGameState(data.gameState)) return;
-        GameUI.showDiceResult(data.die1, data.die2, data.character, data.isDoubles, data.playerName);
+        setDiceResult({
+            die1: data.die1,
+            die2: data.die2,
+            character: data.character,
+            playerName: data.playerName,
+            isDoubles: data.isDoubles
+        });
         if (data.isDoubles) Notifications.notifyDoubles();
         if (typeof GameAudio !== 'undefined' && typeof GameAudio.playDiceRoll === 'function') {
             GameAudio.playDiceRoll({ isDoubles: data.isDoubles });
@@ -1035,18 +1286,36 @@
                         }
                         socket.emit('move-complete');
                     }
-                }
+                },
+                { skipAnimation: shouldFastForwardHiddenTabAnimation() }
             );
-        });
+        }, { skipAnimation: shouldFastForwardHiddenTabAnimation() });
     });
 
     socket.on('buy-prompt', (data) => {
         if (!setCurrentGameState(data.gameState)) return;
-        GameModals.showBuyModal(data);
-        syncTurnTimerUI(currentGameState);
+        uiState.buyPrompt = {
+            playerId: data.playerId,
+            tileIndex: data.tileIndex,
+            tileName: data.tileName,
+            tileType: data.tileType,
+            price: data.price,
+            colorGroup: data.colorGroup,
+            canAfford: data.canAfford
+        };
+        refreshGameplayUI();
     });
 
-    socket.on('player-deciding', () => { });
+    socket.on('player-deciding', (data) => {
+        if (data?.gameState) {
+            applyState(data.gameState, {
+                syncHistory: false,
+                syncTrades: false,
+                syncAuction: false,
+                syncBuyPrompt: false
+            });
+        }
+    });
 
     socket.on('property-bought', (data) => {
         applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false });
@@ -1057,12 +1326,18 @@
 
     socket.on('rent-paid', (data) => {
         applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
-        GameModals.showRentPaid(data, data.payerId === myPlayerId, data.ownerId === myPlayerId);
+        if (data.payerId === myPlayerId) {
+            Notifications.show(`Paid <strong>$${data.amount}</strong> rent to <strong>${data.ownerCharacter}</strong> for ${data.tileName}`, 'error', 5000);
+        } else if (data.ownerId === myPlayerId) {
+            Notifications.show(`<strong>${data.payerCharacter}</strong> paid you <strong>$${data.amount}</strong> rent for ${data.tileName}`, 'success', 5000);
+        }
     });
 
     socket.on('tax-paid', (data) => {
         applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
-        GameModals.showTaxPaid(data, data.playerId === myPlayerId);
+        if (data.playerId === myPlayerId) {
+            Notifications.show(`Paid <strong>$${data.amount}</strong> in ${data.tileName}`, 'error', 4000);
+        }
     });
 
     socket.on('card-drawn', (data) => {
@@ -1078,7 +1353,8 @@
                         if (data.playerId === myPlayerId) {
                             socket.emit('move-complete');
                         }
-                    }
+                    },
+                    { skipAnimation: shouldFastForwardHiddenTabAnimation() }
                 );
                 return;
             }
@@ -1086,12 +1362,20 @@
             applyState(data.gameState, { syncWorld: true, syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: false });
         };
 
-        GameModals.showActionCard(data.card, data.result, onAfterCard);
+        showActionCard(data.card, data.result, onAfterCard, {
+            skipAnimation: shouldFastForwardHiddenTabAnimation()
+        });
     });
 
     socket.on('player-bankrupt', (data) => {
         applyState(data.gameState, { syncHistory: false, syncTrades: true, syncAuction: true, syncBuyPrompt: false });
-        GameModals.showBankruptcy(data, data.playerId === myPlayerId);
+        Notifications.show(
+            data.playerId === myPlayerId
+                ? '💀 You are BANKRUPT! Game over for you.'
+                : `💀 <strong>${data.character}</strong> went bankrupt!`,
+            data.playerId === myPlayerId ? 'error' : 'hype',
+            data.playerId === myPlayerId ? 8000 : 5000
+        );
     });
 
     socket.on('bankruptcy-warning', (data) => {
@@ -1123,12 +1407,7 @@
         if (data.gameState) {
             applyState(data.gameState, { syncTrades: true, syncAuction: true, syncBuyPrompt: false });
         }
-        GameUI.updateTurnTimer(null);
         showEndStatsScreen(data.summary, data.winner);
-    });
-
-    document.getElementById('es-return-btn')?.addEventListener('click', () => {
-        hideEndStatsScreen();
     });
     socket.on('turn-changed', (data) => {
         applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false });
@@ -1161,13 +1440,28 @@
 
     socket.on('auction-started', (data) => {
         applyState({ ...data.gameState, auctionState: data.auction }, { syncHistory: false, syncTrades: false, syncBuyPrompt: false });
-        GameModals.hideBuyModal();
+        uiState.buyPrompt = null;
+        uiState.auctionState = { ...data.auction };
+        refreshGameplayUI();
         Notifications.show(`🔨 Auction: ${data.auction.tileName}!`, 'hype', 3000);
     });
-    socket.on('auction-bid', (data) => { AuctionSystem.onBid(data); });
-    socket.on('auction-tick', (data) => { AuctionSystem.onTick(data); });
+    socket.on('auction-bid', (data) => {
+        uiState.auctionState = { ...data.auction };
+        if (data.gameState?.players && currentGameState) {
+            currentGameState.players = data.gameState.players;
+        }
+        refreshGameplayUI();
+    });
+    socket.on('auction-tick', (data) => {
+        if (uiState.auctionState) {
+            uiState.auctionState = { ...uiState.auctionState, timeRemaining: data.timeRemaining };
+            refreshGameplayUI();
+        }
+    });
     socket.on('auction-ended', (data) => {
         applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: true, syncBuyPrompt: true });
+        uiState.auctionState = null;
+        refreshGameplayUI();
         if (data.winnerId) {
             const isMe = data.winnerId === myPlayerId;
             Notifications.show(
@@ -1179,44 +1473,59 @@
     });
 
     socket.on('trade-incoming', (offer) => {
-        TradeSystem.showIncomingTrade(offer);
+        updatePendingTrades([offer, ...uiState.pendingTrades.filter(item => item.id !== offer.id)]);
+        uiState.tradeIncomingModalTradeId = offer.id;
+        uiState.lowerTab = 'trades';
+        refreshGameplayUI();
         Notifications.show(`${offer.isCounterOffer ? '↩️' : '🤝'} ${offer.fromCharacter} sent ${offer.isCounterOffer ? 'a counter-offer' : 'a trade offer'}!`, 'hype', 3000);
     });
     socket.on('trade-sent', (data) => {
         if (data?.replacedTradeId) {
-            TradeSystem.handleTradeInvalidated({
-                tradeId: data.replacedTradeId,
-                message: 'The original offer was replaced by your counter-offer.',
-                code: 'countered'
-            });
+            updatePendingTrades(uiState.pendingTrades.filter(trade => trade.id !== data.replacedTradeId));
         }
         if (data?.trade) {
-            TradeSystem.showSentTrade(data.trade);
+            updatePendingTrades([data.trade, ...uiState.pendingTrades.filter(item => item.id !== data.trade.id)]);
+            uiState.lowerTab = 'trades';
+            refreshGameplayUI();
         }
         Notifications.show('Trade sent!', 'success', 2000);
     });
     socket.on('trade-completed', (data) => {
-        TradeSystem.dismissTrade(data.tradeId);
+        updatePendingTrades(uiState.pendingTrades.filter(trade => trade.id !== data.tradeId));
         applyState(data.gameState, { syncHistory: false, syncTrades: true, syncAuction: false, syncBuyPrompt: false });
         Notifications.show('✅ Trade completed!', 'success', 3000);
     });
     socket.on('trade-rejected', (data) => {
         if (data?.tradeId) {
-            TradeSystem.dismissTrade(data.tradeId);
+            updatePendingTrades(uiState.pendingTrades.filter(trade => trade.id !== data.tradeId));
+            refreshGameplayUI();
         }
         Notifications.show('Trade rejected', 'error', 2000);
     });
     socket.on('trade-cancelled', (data) => {
         if (data?.tradeId) {
-            TradeSystem.dismissTrade(data.tradeId);
+            updatePendingTrades(uiState.pendingTrades.filter(trade => trade.id !== data.tradeId));
+            refreshGameplayUI();
         }
         Notifications.show(data?.message || 'Trade cancelled', 'info', 2500);
     });
     socket.on('trade-invalidated', (data) => {
-        TradeSystem.handleTradeInvalidated(data);
+        updatePendingTrades(uiState.pendingTrades.filter(trade => trade.id !== data.tradeId));
+        if (uiState.tradeComposer.counterTradeId === data.tradeId) {
+            uiState.tradeComposer.validation = { ok: false, message: data.message };
+            uiState.tradeComposer.counterTradeId = null;
+        }
+        if (uiState.tradeIncomingModalTradeId === data.tradeId) {
+            uiState.tradeIncomingModalTradeId = null;
+        }
+        refreshGameplayUI();
+        Notifications.show(data.message, 'error', 3000);
     });
     socket.on('trade-validation', (data) => {
-        TradeSystem.handleTradeValidation(data);
+        if (data?.message) {
+            uiState.tradeComposer.validation = { ok: data.ok !== false, message: data.message };
+            refreshGameplayUI();
+        }
     });
 
     socket.on('property-upgraded', (data) => {
@@ -1248,27 +1557,23 @@
     socket.on('turn-timer-start', (data) => {
         if (!currentGameState) currentGameState = { turnTimer: data };
         else currentGameState.turnTimer = data;
-        GameUI.updateTurnTimer(data);
         syncHostTimerControls(currentGameState);
     });
 
     socket.on('turn-timer-tick', (data) => {
         if (!currentGameState) currentGameState = { turnTimer: data };
         else currentGameState.turnTimer = data;
-        GameUI.updateTurnTimer(data);
         syncHostTimerControls(currentGameState);
     });
 
     socket.on('turn-timer-stop', () => {
         if (currentGameState) currentGameState.turnTimer = null;
-        GameUI.updateTurnTimer(null);
         syncHostTimerControls(currentGameState);
     });
 
     socket.on('game-paused', (data) => {
         if (!currentGameState) return;
         currentGameState.pauseState = data.pauseState;
-        GameUI.updateTurnIndicator(currentGameState.currentPlayerId, null, currentGameState.players, currentGameState);
         syncHostTimerControls(currentGameState);
         Notifications.show(`⏸ Game paused while waiting for ${data.pauseState.character} to reconnect.`, 'info', 4000);
     });
@@ -1284,364 +1589,8 @@
 
     socket.on('game-error', (data) => {
         Notifications.notifyError(data.message);
-        if (currentGameState?.players?.length) {
-            const currentPlayer = currentGameState.players[currentGameState.currentPlayerIndex];
-            if (currentPlayer) {
-                GameUI.updateTurnIndicator(currentPlayer.id, currentPlayer.character, currentGameState.players, currentGameState);
-            }
-        }
+        refreshGameplayUI();
     });
-
-    // ═══════════════════════════════════════════════════════
-    //  PROPERTY DETAILS MODAL — 2-column gidd.io layout
-    // ═══════════════════════════════════════════════════════
-    function showPropertyDetailsModal(tileIndex) {
-        if (!currentGameState) return;
-        const tile = getBoardTiles(currentGameState?.boardId)[tileIndex];
-        const prop = currentGameState.properties[tileIndex];
-        if (!tile) return;
-
-        // Don't show modal for corners
-        if (tile.type === 'corner') return;
-
-        const modal = document.getElementById('prop-details-modal');
-
-        const colorMap = {
-            'brown': '#8B4513', 'lightblue': '#87CEEB', 'pink': '#DA70D6',
-            'orange': '#FFA500', 'red': '#FF0000', 'yellow': '#FFD700',
-            'green': '#00AA00', 'darkblue': '#0000CC', 'railroad': '#555',
-            'utility': '#888'
-        };
-        const accent = Number.isFinite(tile.color)
-            ? `#${tile.color.toString(16).padStart(6, '0')}`
-            : (colorMap[tile.colorGroup] || colorMap[tile.type] || '#6c5ce7');
-
-        // ── LEFT COLUMN ──────────────────────────────────
-        // Color block
-        const colorBlock = document.getElementById('pdm-color-block');
-        if (colorBlock) colorBlock.style.background = accent;
-
-        // Type badge
-        const typeBadge = document.getElementById('pdm-type-badge');
-        if (typeBadge) {
-            typeBadge.textContent = tile.type === 'railroad' ? '🚂 Railroad'
-                : tile.type === 'utility' ? '⚡ Utility'
-                    : tile.type === 'tax' ? '💸 Tax'
-                        : tile.type === 'chance' || tile.type === 'chest' ? '🃏 Card'
-                            : '🏠 Property';
-        }
-
-        // Name
-        const nameEl = document.getElementById('pd-name');
-        const railroadIconPath = tile.type === 'railroad'
-            ? tile.iconImage === 'metro'
-                ? '/images/metro-logo.png'
-                : tile.iconImage === 'railroad'
-                    ? '/images/railroad-icon.svg'
-                    : null
-            : null;
-        if (railroadIconPath) {
-            nameEl.innerHTML = `<img src="${railroadIconPath}" class="pdm-railroad-icon"> ${tile.name}`;
-        } else {
-            nameEl.textContent = tile.name;
-        }
-
-        // Stats grid
-        const upgradeCost = tile.price > 0 ? `$${Math.floor(tile.price * 0.5)}` : '—';
-        const hotelCost = tile.price > 0 ? `$${Math.floor(tile.price * 2.5)}` : '—';
-        const currentCost = getTileDisplayRent(prop, currentGameState.properties);
-        const priceLabelEl = document.getElementById('pdm-price-label');
-        if (priceLabelEl) {
-            priceLabelEl.textContent = prop?.owner ? 'Rent' : 'Price';
-        }
-        document.getElementById('pd-price').textContent = prop?.owner ? currentCost.label : (tile.price > 0 ? `$${tile.price}` : '—');
-        const hcEl = document.getElementById('pdm-house-cost');
-        const htEl = document.getElementById('pdm-hotel-cost');
-        if (hcEl) hcEl.textContent = tile.type === 'property' ? upgradeCost : '—';
-        if (htEl) htEl.textContent = tile.type === 'property' ? hotelCost : '—';
-
-        // Rent tiers
-        const rentTiersEl = document.getElementById('pd-rent-tiers');
-        rentTiersEl.innerHTML = '';
-        if (tile.type === 'property' && tile.rent > 0) {
-            const ownerHasFullSet = prop?.owner && ownsFullColorGroup(prop.owner, tile);
-            const rentTiers = Array.isArray(tile.rentTiers) && tile.rentTiers.length === 6
-                ? [...tile.rentTiers]
-                : null;
-            const amounts = rentTiers
-                ? [ownerHasFullSet ? rentTiers[0] * 2 : rentTiers[0], ...rentTiers.slice(1)]
-                : [
-                    tile.rent * (ownerHasFullSet ? 2 : 1),
-                    tile.rent * 5,
-                    tile.rent * 15,
-                    tile.rent * 45,
-                    tile.rent * 80,
-                    tile.rent * 125
-                ];
-            const labels = [
-                ownerHasFullSet ? 'No house (set bonus)' : 'No house',
-                '1 house',
-                '2 houses',
-                '3 houses',
-                '4 houses',
-                'Hotel'
-            ];
-            amounts.forEach((amount, idx) => {
-                const row = document.createElement('div');
-                row.className = `pdm-rent-row${prop?.houses === idx ? ' current' : ''}`;
-                row.innerHTML = `<span>with ${labels[idx]}</span><span class="pdm-rent-val">$${amount}</span>`;
-                rentTiersEl.appendChild(row);
-            });
-        } else if (tile.type === 'railroad') {
-            [1, 2, 3, 4].forEach(n => {
-                const row = document.createElement('div');
-                row.className = 'pdm-rent-row';
-                row.innerHTML = `<span>${n} Railroad${n > 1 ? 's' : ''}</span><span class="pdm-rent-val">$${25 * Math.pow(2, n - 1)}</span>`;
-                rentTiersEl.appendChild(row);
-            });
-        } else if (tile.type === 'utility') {
-            [{ n: 1, t: 'Dice × 4' }, { n: 2, t: 'Dice × 10' }].forEach(({ n, t }) => {
-                const row = document.createElement('div');
-                row.className = 'pdm-rent-row';
-                row.innerHTML = `<span>${n} Utility</span><span class="pdm-rent-val">${t}</span>`;
-                rentTiersEl.appendChild(row);
-            });
-        }
-
-        // Action buttons (2x2 grid)
-        const actionsEl = document.getElementById('pd-actions');
-        actionsEl.innerHTML = '';
-        const me = currentGameState.players.find(p => p.id === myPlayerId);
-        const hasFullSet = ownsFullColorGroup(myPlayerId, tile);
-        const groupLocked = colorGroupHasBuildings(tile);
-        const groupMortgaged = colorGroupHasMortgaged(tile);
-        const canManage = canManageAssetsNow();
-
-        if (prop && prop.owner === myPlayerId && tile.type === 'property') {
-            const uCost = Math.floor(tile.price * 0.5);
-            const dRefund = Math.floor(tile.price * 0.25);
-            const upgradeValidation = MonopolyRules.validateUpgrade(currentGameState.properties, myPlayerId, tileIndex);
-            const downgradeValidation = MonopolyRules.validateDowngrade(currentGameState.properties, myPlayerId, tileIndex);
-
-            if (!prop.isMortgaged && prop.houses < 5) {
-                const btn = canManage && upgradeValidation.ok && me.money >= uCost
-                    ? createActionButton('upgrade', `⬆ Upgrade<br><small>$${uCost}</small>`, () => {
-                        socket.emit('upgrade-property', { tileIndex });
-                        hidePropertyDetailsModal();
-                    })
-                    : createDisabledActionButton(
-                        'upgrade',
-                        `⬆ Upgrade<br><small>${!canManage ? 'Your turn only' : me.money < uCost ? 'Not enough cash' : 'Unavailable'}</small>`,
-                        !canManage
-                            ? 'Only the active player can build right now.'
-                            : upgradeValidation.ok
-                                ? `Need $${uCost} to upgrade this property.`
-                                : upgradeValidation.message
-                    );
-                actionsEl.appendChild(btn);
-            }
-            if (prop.houses > 0) {
-                const btn = canManage && downgradeValidation.ok
-                    ? createActionButton('downgrade', `⬇ Downgrade<br><small>+$${dRefund}</small>`, () => {
-                        socket.emit('downgrade-property', { tileIndex });
-                        hidePropertyDetailsModal();
-                    })
-                    : createDisabledActionButton(
-                        'downgrade',
-                        `⬇ Downgrade<br><small>${!canManage ? 'Your turn only' : 'Unavailable'}</small>`,
-                        !canManage ? 'Only the active player can sell buildings right now.' : downgradeValidation.message
-                    );
-                actionsEl.appendChild(btn);
-            }
-            if (!prop.isMortgaged && prop.houses === 0) {
-                const btn = !canManage
-                    ? createDisabledActionButton(
-                        'mortgage',
-                        '🏦 Mortgage<br><small>Your turn only</small>',
-                        'Only the active player can mortgage property right now.'
-                    )
-                    : groupLocked
-                    ? createDisabledActionButton(
-                        'mortgage',
-                        '🏦 Mortgage<br><small>Set has buildings</small>',
-                        'Sell all buildings in this color set before mortgaging.'
-                    )
-                    : createActionButton('mortgage', `🏦 Mortgage<br><small>+$${Math.floor(tile.price / 2)}</small>`, () => {
-                        socket.emit('mortgage-property', { tileIndex });
-                        hidePropertyDetailsModal();
-                    });
-                actionsEl.appendChild(btn);
-            }
-            if (prop.isMortgaged) {
-                const unmortgageCost = Math.floor(tile.price * 0.55);
-                const btn = canManage && me.money >= unmortgageCost
-                    ? createActionButton('mortgage', `🔓 Unmortgage<br><small>$${unmortgageCost}</small>`, () => {
-                        socket.emit('unmortgage-property', { tileIndex });
-                        hidePropertyDetailsModal();
-                    })
-                    : createDisabledActionButton(
-                        'mortgage',
-                        `🔓 Unmortgage<br><small>${!canManage ? 'Your turn only' : 'Not enough cash'}</small>`,
-                        !canManage ? 'Only the active player can unmortgage property right now.' : `Need $${unmortgageCost} to unmortgage this property.`
-                    );
-                actionsEl.appendChild(btn);
-            }
-            const sellBtn = !canManage
-                ? createDisabledActionButton(
-                    'sell',
-                    '💰 Sell<br><small>Your turn only</small>',
-                    'Only the active player can sell property right now.'
-                )
-                : groupLocked
-                ? createDisabledActionButton(
-                    'sell',
-                    '💰 Sell<br><small>Set has buildings</small>',
-                    'Sell all buildings in this color set before selling this property.'
-                )
-                : createActionButton('sell', '💰 Sell<br><small>to Bank</small>', () => {
-                    socket.emit('sell-property', { tileIndex });
-                    hidePropertyDetailsModal();
-                });
-            actionsEl.appendChild(sellBtn);
-
-        } else if (prop && prop.owner === myPlayerId) {
-            if (!prop.isMortgaged) {
-                const btn = canManage
-                    ? createActionButton('mortgage', `🏦 Mortgage<br><small>+$${Math.floor(tile.price / 2)}</small>`, () => {
-                        socket.emit('mortgage-property', { tileIndex });
-                        hidePropertyDetailsModal();
-                    })
-                    : createDisabledActionButton(
-                        'mortgage',
-                        '🏦 Mortgage<br><small>Your turn only</small>',
-                        'Only the active player can mortgage property right now.'
-                    );
-                actionsEl.appendChild(btn);
-            } else {
-                const unmortgageCost = Math.floor(tile.price * 0.55);
-                const btn = canManage && me.money >= unmortgageCost
-                    ? createActionButton('mortgage', `🔓 Unmortgage<br><small>$${unmortgageCost}</small>`, () => {
-                        socket.emit('unmortgage-property', { tileIndex });
-                        hidePropertyDetailsModal();
-                    })
-                    : createDisabledActionButton(
-                        'mortgage',
-                        `🔓 Unmortgage<br><small>${!canManage ? 'Your turn only' : 'Not enough cash'}</small>`,
-                        !canManage ? 'Only the active player can unmortgage property right now.' : `Need $${unmortgageCost} to unmortgage this property.`
-                    );
-                actionsEl.appendChild(btn);
-            }
-            const sellBtn = canManage
-                ? createActionButton('sell', '💰 Sell<br><small>to Bank</small>', () => {
-                    socket.emit('sell-property', { tileIndex });
-                    hidePropertyDetailsModal();
-                })
-                : createDisabledActionButton(
-                    'sell',
-                    '💰 Sell<br><small>Your turn only</small>',
-                    'Only the active player can sell property right now.'
-                );
-            actionsEl.appendChild(sellBtn);
-        }
-
-        // My cash footer
-        const myCashEl = document.getElementById('pdm-my-cash');
-        if (myCashEl && me) myCashEl.textContent = `$${me.money}`;
-
-        // ── RIGHT COLUMN ─────────────────────────────────
-        // Owner info
-        const ownerEl = document.getElementById('pd-owner');
-        const ownerAvatar = document.getElementById('pdm-owner-avatar');
-        if (prop && prop.owner) {
-            const ownerPlayer = currentGameState.players.find(p => p.id === prop.owner);
-            const ownerName = ownerPlayer?.character || 'Unknown';
-            const ownerColor = ownerPlayer?.color || '#6c5ce7';
-            if (ownerEl) {
-                ownerEl.innerHTML = `<span style="color:${ownerColor}">${ownerName}</span>`;
-                if (prop.isMortgaged) ownerEl.innerHTML += ` <span class="pdm-mortgaged-tag">MORTGAGED</span>`;
-            }
-            if (ownerAvatar) {
-                ownerAvatar.style.borderColor = ownerColor;
-                const avatarMap = { 'Bilo': '🟣', 'Os': '🟠', 'Ziko': '🟢', 'Maro': '🟡' };
-                ownerAvatar.textContent = avatarMap[ownerName] || '👤';
-            }
-        } else {
-            if (ownerEl) ownerEl.textContent = 'Unowned';
-            if (ownerAvatar) {
-                if (railroadIconPath) {
-                    ownerAvatar.innerHTML = `<img src="${railroadIconPath}" style="width:70%; height:70%; object-fit:contain;">`;
-                    ownerAvatar.style.borderColor = 'rgba(108, 92, 231, 0.2)';
-                } else {
-                    ownerAvatar.textContent = '🏦';
-                    ownerAvatar.style.borderColor = '';
-                }
-            }
-        }
-
-        // Analytics
-        const landedEl = document.getElementById('pdm-landed-count');
-        const rentEl = document.getElementById('pdm-rent-collected');
-        if (landedEl) landedEl.textContent = prop?.landedCount ?? 0;
-        if (rentEl) rentEl.textContent = `$${prop?.rentCollected ?? 0}`;
-
-        // Timeline
-        const timeline = document.getElementById('pd-timeline');
-        if (timeline) {
-            timeline.innerHTML = '';
-            const history = prop?.history || [];
-            if (history.length === 0) {
-                timeline.innerHTML = `<div class="pdm-timeline-empty">No activity yet</div>`;
-            } else {
-                [...history].reverse().forEach(event => {
-                    const div = document.createElement('div');
-                    div.className = 'pdm-timeline-event';
-                    const typeLabel = event.type === 'buy' ? 'bought property'
-                        : event.type === 'rent' ? 'paid rent'
-                            : event.type === 'trade' ? 'received by trade'
-                                : event.type;
-                    const amountText = event.amount ? `$${event.amount}` : '';
-                    const avatarMap = { 'Bilo': '🟣', 'Os': '🟠', 'Ziko': '🟢', 'Maro': '🟡' };
-                    const ava = avatarMap[event.character] || '👤';
-                    div.innerHTML = `
-                        <div class="pdm-event-avatar" style="background:${event.color}22;border-color:${event.color}66">${ava}</div>
-                        <div class="pdm-event-body">
-                            <div class="pdm-event-text">${typeLabel}</div>
-                            <div class="pdm-event-player" style="color:${event.color}">${event.character}</div>
-                        </div>
-                        ${amountText ? `<div class="pdm-event-amount">${amountText}</div>` : ''}
-                    `;
-                    timeline.appendChild(div);
-                });
-            }
-        }
-
-        modal.classList.remove('hidden');
-        modal.classList.add('show');
-    }
-
-    function hidePropertyDetailsModal() {
-        const modal = document.getElementById('prop-details-modal');
-        modal.classList.remove('show');
-        modal.classList.add('hidden');
-        setFocusedTile(null);
-    }
-
-    function hideSummaryModal() {
-        const modal = document.getElementById('summary-modal');
-        if (!modal) return;
-        modal.classList.remove('show');
-        modal.classList.add('hidden');
-    }
-
-    // Close on overlay click
-    document.getElementById('prop-details-modal')?.addEventListener('click', (e) => {
-        if (e.target.id === 'prop-details-modal') hidePropertyDetailsModal();
-    });
-    document.getElementById('pd-close-btn')?.addEventListener('click', hidePropertyDetailsModal);
-    document.getElementById('summary-modal')?.addEventListener('click', (e) => {
-        if (e.target.id === 'summary-modal') hideSummaryModal();
-    });
-    document.getElementById('summary-close-btn')?.addEventListener('click', hideSummaryModal);
 
     window.notifyGo = Notifications.notifyGo;
     window.notifyDoubles = Notifications.notifyDoubles;

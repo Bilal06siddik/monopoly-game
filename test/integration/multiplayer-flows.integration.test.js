@@ -140,6 +140,34 @@ test('buying and done phases use short default timer windows', async () => {
     assert.ok(Number(doneTimer.remainingSeconds) <= 25 && Number(doneTimer.remainingSeconds) >= 24);
 });
 
+test('spectators receive authoritative buying state when a player is deciding on a property', async () => {
+    const match = await bootstrapMatch();
+    const { actor, actorId, target } = getCurrentTurnPair(match);
+    const expectedTileName = match.hostState.properties[1].name;
+
+    const spectatorDecisionPromise = waitForSocketEventMatching(
+        target.socket,
+        'player-deciding',
+        (payload) => payload?.playerId === actorId
+            && payload?.tileName === expectedTileName
+            && payload?.gameState?.turnPhase === 'buying'
+            && payload?.gameState?.currentPlayerId === actorId,
+        5000
+    );
+
+    actor.socket.emit('dev-command', {
+        type: 'set-position',
+        playerId: actorId,
+        tileIndex: 1
+    });
+
+    const decidingState = await spectatorDecisionPromise;
+    assert.equal(decidingState.playerId, actorId);
+    assert.equal(decidingState.tileName, expectedTileName);
+    assert.equal(decidingState.gameState.turnPhase, 'buying');
+    assert.equal(decidingState.gameState.currentPlayerId, actorId);
+});
+
 test('recovering from debt resumes the turn in done phase and restarts the timer', async () => {
     const match = await bootstrapMatch();
     const { actor, actorId } = getCurrentTurnPair(match);
@@ -329,6 +357,7 @@ test('double roll-dice submissions only execute one roll and reject the duplicat
 
     assert.equal(diceRolledCount, 1);
     assert.equal(diceEvent.gameState.turnPhase, 'moving');
+    assert.equal(diceEvent.gameState.properties[0].name, undefined);
 
     await expectNoSocketEvent(guest.socket, 'game-paused', 250);
 });

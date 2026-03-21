@@ -841,7 +841,9 @@ function snapshotGameState(options = {}) {
     includeCustomAvatarUrl: options.includeCustomAvatarUrl === true,
     includeHistoryEvents: options.includeHistoryEvents === true,
     includePropertyHistory: options.includePropertyHistory === true,
-    includePropertyStatic: options.includePropertyStatic !== false
+    // Runtime events default to dynamic-only property payloads. Clients merge
+    // static board metadata from the last authoritative full snapshot.
+    includePropertyStatic: options.includePropertyStatic === true
   };
   return {
     ...gameState.getState(snapshotOptions),
@@ -2045,6 +2047,7 @@ function executeBankruptcy(player) {
 }
 
 function emitBuyPrompt(player, tile) {
+  const gameStateSnapshot = snapshotGameState();
   const socket = getPlayerSocket(player.id);
   if (socket) {
     socket.emit('buy-prompt', {
@@ -2055,10 +2058,16 @@ function emitBuyPrompt(player, tile) {
       price: tile.price,
       colorGroup: tile.colorGroup,
       canAfford: player.money >= tile.price,
-      gameState: snapshotGameState()
+      gameState: gameStateSnapshot
     });
   }
-  emitToRoom('player-deciding', { character: player.character, tileName: tile.name });
+  emitToRoom('player-deciding', {
+    playerId: player.id,
+    character: player.character,
+    playerName: player.name,
+    tileName: tile.name,
+    gameState: gameStateSnapshot
+  });
   queueBotBuyDecision(player, tile);
 }
 

@@ -1,0 +1,113 @@
+# Page snapshot
+
+```yaml
+- generic:
+  - generic:
+    - button "DEV" [ref=e2] [cursor=pointer]
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: Your Turn
+        - generic [ref=e6]: "Buy Window: 25s"
+        - generic [ref=e7]:
+          - generic [ref=e8]: Room
+          - strong [ref=e9]: YTBNZ8
+      - generic:
+        - button "Hide Views" [expanded] [ref=e10] [cursor=pointer]
+        - generic [ref=e11]:
+          - button "Isometric" [ref=e12] [cursor=pointer]
+          - button "Third Person" [ref=e13] [cursor=pointer]
+          - button "Top Down" [ref=e14] [cursor=pointer]
+          - button "Reset View" [ref=e15] [cursor=pointer]
+      - generic [ref=e16]:
+        - generic [ref=e17]:
+          - generic [ref=e18]:
+            - generic [ref=e19]: Table Standings
+            - heading "Leaderboard" [level=3] [ref=e20]
+          - button "Hide" [expanded] [ref=e21] [cursor=pointer]
+        - generic [ref=e22]:
+          - article [ref=e23]:
+            - generic [ref=e24]: "#1"
+            - generic [ref=e25]:
+              - generic [ref=e26]:
+                - strong [ref=e27]: bilo
+                - generic [ref=e28]: Host
+              - generic [ref=e29]:
+                - generic [ref=e30]: $1500
+                - generic [ref=e31]: 0 properties
+          - article [ref=e32]:
+            - generic [ref=e33]: "#2"
+            - generic [ref=e34]:
+              - strong [ref=e36]: hamza
+              - generic [ref=e37]:
+                - generic [ref=e38]: $1500
+                - generic [ref=e39]: 0 properties
+            - generic [ref=e40]:
+              - button "Trade" [ref=e41] [cursor=pointer]
+              - button "Kick" [ref=e42] [cursor=pointer]
+      - generic [ref=e43]:
+        - button "Choose Buy or Pass" [disabled] [ref=e44]
+        - button "⏭ End Turn" [disabled] [ref=e45]
+        - button "More" [ref=e47] [cursor=pointer]
+      - generic [ref=e48]:
+        - generic [ref=e49]:
+          - generic:
+            - heading [level=3]
+          - generic [ref=e50]:
+            - button "Expand" [ref=e51] [cursor=pointer]
+            - button "Hide" [expanded] [ref=e52] [cursor=pointer]
+        - generic [ref=e53]:
+          - button "History" [ref=e54] [cursor=pointer]
+          - button "Trades (0)" [ref=e55] [cursor=pointer]
+        - generic [ref=e57]:
+          - article [ref=e58]:
+            - generic [ref=e59]: 🎲
+            - generic [ref=e60]:
+              - generic [ref=e61]: Roll
+              - generic [ref=e62]: 🎲 bilo rolled 8 -> Giza
+          - article [ref=e63]:
+            - generic [ref=e64]: 📣
+            - generic [ref=e65]:
+              - generic [ref=e66]: System
+              - generic [ref=e67]: ⏰ bilo ran out of time. Auto-rolling.
+          - article [ref=e68]:
+            - generic [ref=e69]: 📣
+            - generic [ref=e70]:
+              - generic [ref=e71]: System
+              - generic [ref=e72]: 🎮 Game started with 2 players!
+      - button "Hide Host Tools" [expanded] [active] [ref=e73]
+      - generic [ref=e74]:
+        - generic [ref=e75]:
+          - generic [ref=e76]:
+            - generic [ref=e77]: Host Controls
+            - heading "Room & Match" [level=3] [ref=e78]
+          - button "Close" [ref=e79] [cursor=pointer]
+        - generic [ref=e80]:
+          - generic [ref=e81]:
+            - button "Save Game" [ref=e82] [cursor=pointer]
+            - button "Load Game" [disabled] [ref=e83]
+          - generic [ref=e84]:
+            - button "Copy Invite" [ref=e85] [cursor=pointer]
+            - button "End Match" [ref=e86] [cursor=pointer]
+            - button "End Room" [ref=e87] [cursor=pointer]
+          - generic [ref=e88]:
+            - checkbox "Enable automatic turn timer" [checked] [ref=e89]
+            - generic [ref=e90]: Enable automatic turn timer
+          - generic [ref=e91]:
+            - button "Add 15s" [ref=e92] [cursor=pointer]
+            - button "Add 30s" [ref=e93] [cursor=pointer]
+          - paragraph [ref=e94]: "Buy Window: 25s remaining."
+          - generic [ref=e96]:
+            - generic [ref=e97]:
+              - strong [ref=e98]: hamza
+              - generic [ref=e99]:
+                - generic [ref=e100]: Bot
+                - generic [ref=e101]: Online
+            - button "Kick" [ref=e102] [cursor=pointer]
+      - generic [ref=e104]:
+        - generic [ref=e105]: Property
+        - heading "Giza" [level=2] [ref=e106]
+        - paragraph [ref=e107]: Purchase for $100 or send it to auction.
+        - generic [ref=e108]:
+          - button "Buy for $100" [ref=e109] [cursor=pointer]
+          - button "Auction Instead" [ref=e110] [cursor=pointer]
+```

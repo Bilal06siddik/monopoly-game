@@ -16,3 +16,43 @@ Original prompt: we are planning to make a v2 update fot his game so first thing
   - `npm run test:integration` ✅
   - `npm run test:stress` ✅
   - `npm run test:e2e` ✅
+- Investigated a live play report where bot matches could appear stuck after a roll.
+- Root cause found in the buy-phase broadcast path: `emitBuyPrompt()` only sent the authoritative `buying` snapshot to the active player, so spectators could keep rendering the older move state during bot/property decisions.
+- Fixed `player-deciding` to include the live `gameState` snapshot and updated the client to apply that state without reopening the buy modal.
+- Added an integration regression test covering spectator sync during the `buying` phase.
+- Verification for the bot-turn follow-up fix:
+  - `npm run test:integration` ✅
+  - `npx playwright test test/e2e/lobby-match.spec.js --grep "host can create room, add a bot, and start a match"` ✅
+- Tightened live sync efficiency by making `snapshotGameState()` runtime events omit static property metadata by default, while extending client-side state normalization to carry forward board/room metadata from the last authoritative full snapshot.
+- Added unit coverage for partial-state metadata carry-forward and an integration assertion proving hot-path runtime events now omit static property fields.
+- Added `shared/boardPalette.js` as the shared source of truth for tile accents and board surface themes, then retuned the board renderer to use that palette for trims, center felt, tile faces, bands, mortgage cards, and ring accents.
+- Added palette sanity tests for saturation and contrast so board colors stay vivid enough to distinguish while remaining readable on the board surface.
+- Visual/runtime verification for sync + palette work:
+  - `npm run test:unit` ✅
+  - `npm run test:integration` ✅
+  - `npm run test:e2e` ✅
+  - Captured and inspected `artifacts/board-sync-palette-check.png` ✅
+- Updated the Countries board renderer so flag-property tiles now show the flag in the middle of the tile texture and shift building badges/models toward the top edge, while leaving Egypt unchanged.
+- Verification for the Countries board layout tweak:
+  - `node --check public/lib/board.js` ✅
+  - `npm run test:unit` ✅
+- Completed the first cut of the React + Vite gameplay HUD rewrite and wired it into the live app through `window.GameplayUIBridge`.
+- Fixed browser boot blockers that kept the new HUD from ever mounting:
+  - removed classic-script global collisions in `shared/boardData.js`
+  - restored the lobby start-match emit in `public/lib/lobby.js` using the server's `requestStartGame` event
+  - changed `public/main.js` to resolve the gameplay bridge dynamically instead of capturing a no-op fallback before the module script loads
+- Cleaned the Vite gameplay build config so it no longer warns about overlapping `publicDir` output.
+- Tightened compact-layout behavior for the new HUD so host controls collapse cleanly on smaller widths and no longer fight the lower feed rail.
+- Added Playwright coverage for the new gameplay HUD breakpoints and rotate gate in `test/e2e/gameplay-ui.spec.js`.
+- Verification for the gameplay UI rewrite baseline:
+  - `npm run build:ui` ✅
+  - `npm run test:unit` ✅
+  - `npm run test:integration` ✅
+  - `npm run test:e2e -- test/e2e/lobby-match.spec.js --project=chromium` ✅
+  - `npm run test:e2e -- test/e2e/gameplay-ui.spec.js --project=chromium` ✅
+- Gameplay HUD polish follow-up:
+  - rebuilt host controls into a centered popup menu so they no longer collide with leaderboard/feed/action surfaces
+  - tightened the bottom action dock by shortening waiting copy and giving disabled buttons a proper styled state
+  - did a broader consistency pass across top bar, leaderboard, feed, trade cards, buy modal, auction timer row, summary modal, end-stats, and rotate gate so they share one visual language
+  - Verification for these recent HUD-only passes:
+    - `npm run build:ui` ✅
