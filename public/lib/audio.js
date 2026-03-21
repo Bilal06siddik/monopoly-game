@@ -374,6 +374,96 @@ const GameAudio = (() => {
         });
     }
 
+    function playLobbyReadyPulse() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.01;
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: 180,
+                glideTo: 260,
+                type: 'triangle',
+                duration: 0.14,
+                gain: 0.028,
+                release: 0.18
+            });
+            scheduleTone(ctx, {
+                startTime: now + 0.06,
+                frequency: 540,
+                glideTo: 720,
+                type: 'sine',
+                duration: 0.09,
+                gain: 0.016,
+                release: 0.12
+            });
+        });
+    }
+
+    function playCountdownTick(step = 3) {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            const base = Math.max(120, 230 - ((3 - Math.max(1, Math.min(3, step))) * 18));
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: base,
+                glideTo: base * 0.88,
+                type: 'triangle',
+                duration: 0.12,
+                gain: 0.035,
+                release: 0.16
+            });
+            scheduleNoiseBurst(ctx, {
+                startTime: now + 0.01,
+                duration: 0.05,
+                gain: 0.013,
+                fromFrequency: 900,
+                toFrequency: 420,
+                q: 1.1
+            });
+        });
+    }
+
+    function playMatchStartImpact() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            const master = ctx.createGain();
+            master.gain.value = 0.84;
+            master.connect(ctx.destination);
+
+            scheduleNoiseBurst(ctx, {
+                startTime: now,
+                duration: 0.14,
+                gain: 0.03,
+                fromFrequency: 1800,
+                toFrequency: 240,
+                q: 0.9,
+                destination: master
+            });
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: 160,
+                glideTo: 92,
+                type: 'sawtooth',
+                duration: 0.18,
+                gain: 0.03,
+                release: 0.22,
+                destination: master
+            });
+            scheduleTone(ctx, {
+                startTime: now + 0.06,
+                frequency: 720,
+                glideTo: 1080,
+                type: 'triangle',
+                duration: 0.16,
+                gain: 0.022,
+                release: 0.18,
+                destination: master
+            });
+        });
+    }
+
     function init() {
         if (!AudioContextCtor) return;
         attachUnlockListeners();
@@ -390,6 +480,9 @@ const GameAudio = (() => {
         playSkinSwap,
         playSelectConfirm,
         playPopupOpen,
-        playPopupClose
+        playPopupClose,
+        playLobbyReadyPulse,
+        playCountdownTick,
+        playMatchStartImpact
     };
 })();

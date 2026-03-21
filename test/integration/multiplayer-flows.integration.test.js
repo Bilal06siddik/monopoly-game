@@ -14,6 +14,7 @@ const {
     expectNoSocketEvent,
     connectClient,
     selectCharacter,
+    setReadyState,
     disconnectClients
 } = require('../helpers/socketHarness');
 
@@ -32,6 +33,8 @@ async function bootstrapMatch() {
 
     await selectCharacter(host.socket, 'bilo');
     await selectCharacter(guest.socket, 'osss');
+    await setReadyState(host.socket, true);
+    await setReadyState(guest.socket, true);
 
     const hostStartedPromise = waitForSocketEvent(host.socket, 'gameStarted');
     const guestStartedPromise = waitForSocketEvent(guest.socket, 'gameStarted');

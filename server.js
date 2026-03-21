@@ -124,6 +124,27 @@ const CUSTOM_PLAYER_COLORS = [
   '#f4a261',
   '#90be6d'
 ];
+const LOBBY_MODE_OPTIONS = [
+  {
+    id: 'classic',
+    name: 'Classic',
+    description: 'Standard room rules with the full-length match flow.',
+    isAvailable: true
+  },
+  {
+    id: 'fast',
+    name: 'Fast',
+    description: 'Short-form pacing placeholder for a quicker session.',
+    isAvailable: false
+  },
+  {
+    id: 'chaos',
+    name: 'Chaos',
+    description: 'High-variance room modifiers placeholder for future updates.',
+    isAvailable: false
+  }
+];
+const DEFAULT_LOBBY_MODE_ID = LOBBY_MODE_OPTIONS[0].id;
 const ALLOWED_CUSTOM_AVATAR_MIME_TYPES = new Set([
   'image/png',
   'image/jpeg',
@@ -203,6 +224,7 @@ function createRoomState(roomCode, hostSessionToken) {
     code: roomCode,
     hostSessionToken,
     selectedBoardId: DEFAULT_BOARD_ID,
+    selectedModeId: DEFAULT_LOBBY_MODE_ID,
     boardVotes: new Map(),
     turnTimerEnabled: true,
     createdAt: Date.now(),
@@ -240,6 +262,14 @@ function getBoardMapById(boardId = DEFAULT_BOARD_ID) {
 
 function getBoardTiles(boardId = DEFAULT_BOARD_ID) {
   return getBoardMapById(boardId).tiles || BOARD_DATA;
+}
+
+function resolveLobbyModeId(modeId) {
+  return LOBBY_MODE_OPTIONS.some(mode => mode.id === modeId) ? modeId : DEFAULT_LOBBY_MODE_ID;
+}
+
+function getLobbyModeById(modeId = DEFAULT_LOBBY_MODE_ID) {
+  return LOBBY_MODE_OPTIONS.find(mode => mode.id === resolveLobbyModeId(modeId)) || LOBBY_MODE_OPTIONS[0];
 }
 
 function pruneBoardVotes(roomState) {
@@ -384,6 +414,7 @@ function getOrCreateRoomState(roomCode, hostSessionToken = null) {
     roomState.boardVotes = new Map();
   }
   roomState.selectedBoardId = resolveBoardId(roomState.selectedBoardId);
+  roomState.selectedModeId = resolveLobbyModeId(roomState.selectedModeId);
   if (typeof roomState.turnTimerEnabled !== 'boolean') {
     roomState.turnTimerEnabled = true;
   }
@@ -570,23 +601,33 @@ function getDefaultColorForLobbyEntry(entry, customIndex = 0) {
 function getLobbyState() {
   const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
   const selectedBoardId = syncSelectedBoardId(roomState);
+  const selectedMode = getLobbyModeById(roomState?.selectedModeId);
   const boardVoteCounts = getBoardVoteCounts(roomState);
+  const hostEntry = roomState?.hostSessionToken ? lobbyPlayers.get(roomState.hostSessionToken) : null;
   const playerList = [...lobbyPlayers.values()]
     .filter(entry => entry.character)
     .map(entry => ({
       id: entry.playerId,
       name: entry.character === 'custom' ? (entry.customName || 'Custom Player') : entry.name,
       character: entry.character,
+      selectedChampionId: entry.character,
       skinId: entry.skinId || null,
+      selectedSkinId: entry.skinId || null,
       tokenId: entry.tokenId || null,
       customAvatarUrl: entry.customAvatarUrl || null,
-      isBot: Boolean(entry.isBot)
+      customColor: entry.customColor || null,
+      isBot: Boolean(entry.isBot),
+      isReady: Boolean(entry.isBot || entry.isReady)
     }));
 
   return {
     roomCode: currentRoomCode,
     joinUrl: currentRoomCode ? `/?room=${currentRoomCode}` : null,
+    hostName: hostEntry?.customName || hostEntry?.name || hostEntry?.character || 'Host',
+    joinedPlayerCount: lobbyPlayers.size,
     selectedBoardId,
+    selectedModeId: selectedMode.id,
+    selectedModeName: selectedMode.name,
     turnTimerEnabled: isTurnTimerEnabled(roomState),
     hostPlayerId: roomState?.hostSessionToken
       ? (gameState?.getPlayerBySessionToken(roomState.hostSessionToken)?.id
@@ -598,11 +639,15 @@ function getLobbyState() {
       playerId: entry.playerId,
       name: entry.character === 'custom' ? (entry.customName || 'Custom Player') : (entry.name || null),
       character: entry.character || null,
+      selectedChampionId: entry.character || null,
       skinId: entry.skinId || null,
+      selectedSkinId: entry.skinId || null,
       tokenId: entry.tokenId || null,
       customAvatarUrl: entry.customAvatarUrl || null,
+      customColor: entry.customColor || null,
       boardVoteId: roomState?.boardVotes?.get(entry.sessionToken) || null,
       isBot: Boolean(entry.isBot),
+      isReady: Boolean(entry.isBot || entry.isReady),
       isOnline: Boolean(entry.isBot || entry.socketId),
       isHost: Boolean(roomState?.hostSessionToken && entry.sessionToken === roomState.hostSessionToken)
     })),
@@ -630,6 +675,13 @@ function getLobbyState() {
         isSelected: boardId === selectedBoardId
       };
     }),
+    modeOptions: LOBBY_MODE_OPTIONS.map(mode => ({
+      id: mode.id,
+      name: mode.name,
+      description: mode.description,
+      isSelected: mode.id === selectedMode.id,
+      isAvailable: mode.isAvailable
+    })),
     tokens: TOKEN_OPTIONS.map(token => ({
       id: token.id,
       label: token.label
@@ -690,9 +742,11 @@ function addRandomBotToLobby() {
     playerId: createPlayerId(),
     socketId: null,
     character,
+    skinId: null,
     tokenId: resolveLobbyToken(character),
     name: character,
-    isBot: true
+    isBot: true,
+    isReady: true
   };
   lobbyPlayers.set(entry.sessionToken, entry);
   return entry;
@@ -775,10 +829,13 @@ function emitPlayerSession(socket, player) {
     sessionToken: socket.data.sessionToken,
     playerId: player?.id || null,
     character: player?.character || null,
+    selectedChampionId: player?.character || null,
     skinId: player?.skinId || null,
+    selectedSkinId: player?.skinId || null,
     name: player?.name || null,
     customName: player?.customName || null,
     tokenId: player?.tokenId || null,
+    isReady: Boolean(player?.isBot || player?.isReady),
     customColor: player?.customColor || null,
     customAvatarUrl: player?.customAvatarUrl || null
   });
@@ -1193,7 +1250,8 @@ function createLobbyEntry(socket) {
     character: null,
     skinId: null,
     tokenId: null,
-    name: null
+    name: null,
+    isReady: false
   };
   lobbyPlayers.set(entry.sessionToken, entry);
   return entry;
@@ -3013,6 +3071,7 @@ io.on('connection', socket => {
     currentEntry.character = characterName;
     currentEntry.skinId = skinId;
     currentEntry.tokenId = resolveLobbyToken(characterName, currentEntry.tokenId);
+    currentEntry.isReady = Boolean(currentEntry.isBot);
 
     if (characterName === 'custom') {
       currentEntry.customName = customName || 'Custom Player';
@@ -3030,8 +3089,11 @@ io.on('connection', socket => {
     socket.data.playerId = currentEntry.playerId;
     socket.emit('character-confirmed', {
       character: characterName,
+      selectedChampionId: characterName,
       skinId: currentEntry.skinId || null,
+      selectedSkinId: currentEntry.skinId || null,
       tokenId: currentEntry.tokenId,
+      isReady: Boolean(currentEntry.isBot || currentEntry.isReady),
       customColor: currentEntry.customColor || null,
       customName: currentEntry.customName || null,
       customAvatarUrl: currentEntry.customAvatarUrl || null
@@ -3043,6 +3105,7 @@ io.on('connection', socket => {
       name: currentEntry.name,
       customName: currentEntry.customName || null,
       tokenId: currentEntry.tokenId,
+      isReady: Boolean(currentEntry.isBot || currentEntry.isReady),
       customColor: currentEntry.customColor || null,
       customAvatarUrl: currentEntry.customAvatarUrl || null
     });
@@ -3068,7 +3131,11 @@ io.on('connection', socket => {
     }
 
     currentEntry.tokenId = normalizedTokenId;
-    socket.emit('token-confirmed', { tokenId: normalizedTokenId });
+    currentEntry.isReady = Boolean(currentEntry.isBot);
+    socket.emit('token-confirmed', {
+      tokenId: normalizedTokenId,
+      isReady: Boolean(currentEntry.isBot || currentEntry.isReady)
+    });
     emitPlayerSession(socket, {
       id: currentEntry.playerId,
       character: currentEntry.character,
@@ -3076,6 +3143,7 @@ io.on('connection', socket => {
       name: currentEntry.name,
       customName: currentEntry.customName || null,
       tokenId: currentEntry.tokenId,
+      isReady: Boolean(currentEntry.isBot || currentEntry.isReady),
       customColor: currentEntry.customColor || null,
       customAvatarUrl: currentEntry.customAvatarUrl || null
     });
@@ -3094,6 +3162,7 @@ io.on('connection', socket => {
     const customColor = normalizeCustomColor(typeof data === 'object' ? data?.customColor : null);
     if (customColor) entry.customColor = customColor;
     else delete entry.customColor;
+    entry.isReady = Boolean(entry.isBot);
 
     emitPlayerSession(socket, {
       id: entry.playerId,
@@ -3102,6 +3171,7 @@ io.on('connection', socket => {
       name: entry.name,
       customName: entry.customName || null,
       tokenId: entry.tokenId || null,
+      isReady: Boolean(entry.isBot || entry.isReady),
       customColor: entry.customColor || null,
       customAvatarUrl: entry.customAvatarUrl || null
     });
@@ -3118,6 +3188,7 @@ io.on('connection', socket => {
     if (!entry || !entry.character) return;
 
     entry.skinId = normalizeSkinId(typeof data === 'object' ? data?.skinId : null);
+    entry.isReady = Boolean(entry.isBot);
     emitPlayerSession(socket, {
       id: entry.playerId,
       character: entry.character,
@@ -3125,10 +3196,12 @@ io.on('connection', socket => {
       name: entry.name,
       customName: entry.customName || null,
       tokenId: entry.tokenId || null,
+      isReady: Boolean(entry.isBot || entry.isReady),
       customColor: entry.customColor || null,
       customAvatarUrl: entry.customAvatarUrl || null
     });
     emitLobbyUpdate();
+    tryStartLobbyMatch(socket, { silent: true });
   });
 
   bindRoomHandler(socket, roomState, 'deselect-character', () => {
@@ -3138,6 +3211,7 @@ io.on('connection', socket => {
     entry.skinId = null;
     entry.tokenId = null;
     entry.name = null;
+    entry.isReady = false;
     emitPlayerSession(socket, {
       id: entry.playerId,
       character: null,
@@ -3145,6 +3219,118 @@ io.on('connection', socket => {
       name: null,
       customName: entry.customName || null,
       tokenId: null,
+      isReady: false,
+      customColor: entry.customColor || null,
+      customAvatarUrl: entry.customAvatarUrl || null
+    });
+    emitLobbyUpdate();
+  });
+
+  function tryStartLobbyMatch(sourceSocket, { requireHost = false, silent = false } = {}) {
+    if (requireHost && !isRoomHost(sourceSocket, roomState)) {
+      if (!silent) {
+        sourceSocket.emit('game-error', { message: 'Only the room host can start the match.' });
+      }
+      return false;
+    }
+
+    const selectedPlayers = [...lobbyPlayers.values()].filter(entry => entry.character);
+    const readyPlayers = selectedPlayers.filter(entry => entry.isBot || entry.isReady);
+    const everyoneReady = selectedPlayers.length > 0 && selectedPlayers.every(entry => entry.isBot || entry.isReady);
+    if (!everyoneReady) {
+      if (!silent) {
+        sourceSocket.emit('game-error', { message: 'All selected players must be ready before the host can start.' });
+      }
+      return false;
+    }
+    if (readyPlayers.length < 2) {
+      if (!silent) {
+        sourceSocket.emit('game-error', { message: 'Need at least 2 players to start' });
+      }
+      return false;
+    }
+    if (gameState && gameState.isGameStarted) {
+      if (!silent) {
+        sourceSocket.emit('game-error', { message: 'Game is already running' });
+      }
+      return false;
+    }
+
+    const selectedBoardId = syncSelectedBoardId(roomState);
+    gameState = new GameState(getBoardTiles(selectedBoardId));
+    shuffleActionDeck();
+    pendingTrades.clear();
+    eventHistory.length = 0;
+    pausedTurnTimerState = null;
+    clearPendingMoveResolution();
+    clearAllBotTimers();
+    auctionState = null;
+    if (auctionTimer) {
+      clearInterval(auctionTimer);
+      auctionTimer = null;
+    }
+    gameState.players = [];
+    readyPlayers.forEach((p, idx) => {
+      const customIndex = readyPlayers
+        .slice(0, idx)
+        .filter(entry => entry.character === 'custom')
+        .length;
+      const color = getDefaultColorForLobbyEntry(p, customIndex);
+      const player = gameState.addPlayer(p.playerId, p.character, color, p.sessionToken, {
+        isBot: Boolean(p.isBot),
+        name: p.customName || p.character,
+        customAvatarUrl: p.customAvatarUrl,
+        customColor: p.customColor || null,
+        skinId: p.skinId || null,
+        tokenId: resolveLobbyToken(p.character, p.tokenId),
+        isConnected: Boolean(p.isBot || p.socketId)
+      });
+
+      if (p.socketId) {
+        const targetSocket = io.sockets.sockets.get(p.socketId);
+        if (targetSocket) {
+          replaceSocketBinding(targetSocket, player);
+        }
+      }
+    });
+
+    gameState.isGameStarted = true;
+    gameState.matchStartedAt = Date.now();
+    gameState.matchEndedAt = null;
+    gameState.turnCount = 0;
+    gameState.pauseState = null;
+    gameState.eliminationOrder = [];
+
+    setTurnPhase('waiting');
+
+    console.log(`\n  ðŸŽ® Game started with ${readyPlayers.length} players!\n`);
+    logEvent(`ðŸŽ® Game started with ${readyPlayers.length} players!`, 'system');
+    emitToRoom('gameStarted', buildGameStatePayload());
+    queueBotTurnIfNeeded(gameState.getCurrentPlayer());
+    return true;
+  }
+
+  bindRoomHandler(socket, roomState, 'set-player-ready', data => {
+    if (gameState && gameState.isGameStarted) {
+      socket.emit('game-error', { message: 'Ready state is only available in the lobby.' });
+      return;
+    }
+
+    const entry = getLobbyEntryBySocketId(socket.id);
+    if (!entry || !entry.character) {
+      socket.emit('game-error', { message: 'Select a champion before readying up.' });
+      return;
+    }
+
+    entry.isReady = Boolean(typeof data === 'object' ? data?.isReady : data);
+    emitPlayerSession(socket, {
+      id: entry.playerId,
+      character: entry.character,
+      skinId: entry.skinId || null,
+      name: entry.name,
+      customName: entry.customName || null,
+      tokenId: entry.tokenId || null,
+      isReady: Boolean(entry.isBot || entry.isReady),
       customColor: entry.customColor || null,
       customAvatarUrl: entry.customAvatarUrl || null
     });
@@ -3206,12 +3392,50 @@ io.on('connection', socket => {
     emitLobbyUpdate();
   });
 
+  bindRoomHandler(socket, roomState, 'host-set-board-map', data => {
+    if (!isRoomHost(socket, roomState)) {
+      socket.emit('game-error', { message: 'Only the room host can change the map.' });
+      return;
+    }
+    if (gameState && gameState.isGameStarted) {
+      socket.emit('game-error', { message: 'Map selection is only available in the lobby.' });
+      return;
+    }
+
+    const requestedBoardId = resolveBoardId(typeof data === 'string' ? data : data?.boardId);
+    roomState.selectedBoardId = requestedBoardId;
+    roomState.boardVotes = new Map();
+    emitLobbyUpdate();
+  });
+
+  bindRoomHandler(socket, roomState, 'host-set-lobby-mode', data => {
+    if (!isRoomHost(socket, roomState)) {
+      socket.emit('game-error', { message: 'Only the room host can change the mode.' });
+      return;
+    }
+    if (gameState && gameState.isGameStarted) {
+      socket.emit('game-error', { message: 'Mode selection is only available in the lobby.' });
+      return;
+    }
+
+    roomState.selectedModeId = resolveLobbyModeId(typeof data === 'string' ? data : data?.modeId);
+    emitLobbyUpdate();
+  });
+
   bindRoomHandler(socket, roomState, 'requestStartGame', () => {
+    tryStartLobbyMatch(socket, { requireHost: true });
+    return;
     if (!isRoomHost(socket, roomState)) {
       socket.emit('game-error', { message: 'Only the room host can start the match.' });
       return;
     }
-    const readyPlayers = [...lobbyPlayers.values()].filter(entry => entry.character);
+    const selectedPlayers = [...lobbyPlayers.values()].filter(entry => entry.character);
+    const readyPlayers = selectedPlayers.filter(entry => entry.isBot || entry.isReady);
+    const everyoneReady = selectedPlayers.length > 0 && selectedPlayers.every(entry => entry.isBot || entry.isReady);
+    if (!everyoneReady) {
+      socket.emit('game-error', { message: 'All selected players must be ready before the host can start.' });
+      return;
+    }
     if (readyPlayers.length < 2) {
       socket.emit('game-error', { message: 'Need at least 2 players to start' });
       return;

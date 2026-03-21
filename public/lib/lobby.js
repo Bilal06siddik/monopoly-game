@@ -297,7 +297,22 @@ const Lobby = (() => {
     let localCustomName   = '';
     let hostControlsOpen  = true;
     let currentChampionModalState = null;
+    let currentScreen     = 'character-select';
     const viewedSkinByCharacter = new Map();
+    const LOBBY_MODES = [
+        {
+            id: 'classic',
+            name: 'Classic Monopoly',
+            description: 'Current live ruleset with private rooms, host controls, and map voting.',
+            status: 'Live'
+        },
+        {
+            id: 'rush',
+            name: 'Rush Rules',
+            description: 'Shorter match presets are planned for future updates.',
+            status: 'Soon'
+        }
+    ];
 
     function sanitizeCustomName(value) {
         const raw = typeof value === 'string' ? value.trim() : '';
@@ -327,6 +342,48 @@ const Lobby = (() => {
 
     function getSelectedSkinId() {
         return selectedChampion?.skinId || null;
+    }
+
+    function setCurrentScreen(screenId) {
+        currentScreen = screenId === 'party-lobby' ? 'party-lobby' : 'character-select';
+        if (currentScreen !== 'party-lobby') {
+            closeAllLobbyPopups();
+        }
+        document.getElementById('character-select-screen')?.classList.toggle('hidden', currentScreen !== 'character-select');
+        document.getElementById('party-lobby-screen')?.classList.toggle('hidden', currentScreen !== 'party-lobby');
+        document.body.classList.toggle('lobby-popup-open', Boolean(
+            !document.getElementById('mode-popup-overlay')?.classList.contains('hidden')
+            || !document.getElementById('map-popup-overlay')?.classList.contains('hidden')
+        ));
+    }
+
+    function setLobbyPopupOpen(popupName, isOpen) {
+        const normalized = popupName === 'map'
+            ? 'map'
+            : 'mode';
+        const overlay = document.getElementById(`${normalized}-popup-overlay`);
+        if (!overlay) return;
+        overlay.classList.toggle('hidden', !isOpen);
+        overlay.setAttribute('aria-hidden', String(!isOpen));
+        document.body.classList.toggle('lobby-popup-open', Boolean(
+            !document.getElementById('mode-popup-overlay')?.classList.contains('hidden')
+            || !document.getElementById('map-popup-overlay')?.classList.contains('hidden')
+        ));
+    }
+
+    function closeAllLobbyPopups() {
+        setLobbyPopupOpen('mode', false);
+        setLobbyPopupOpen('map', false);
+    }
+
+    function syncCurrentScreen() {
+        if (getSelectedChampionId() && currentScreen !== 'character-select') {
+            setCurrentScreen('party-lobby');
+            return;
+        }
+        if (!getSelectedChampionId()) {
+            setCurrentScreen('character-select');
+        }
     }
 
     function findSkinIndexById(skins, skinId) {
@@ -423,6 +480,8 @@ const Lobby = (() => {
         bindButtons();
         bindCustomColorControls();
         setupErrorDismiss();
+        setCurrentScreen('character-select');
+        renderModeControls();
     }
 
     function bindEvents() {
@@ -438,10 +497,15 @@ const Lobby = (() => {
             useCustomColor = Boolean(normalizeHexColor(data.customColor));
             selectedCustomColor = normalizeHexColor(data.customColor) || selectedCustomColor;
             syncCustomColorControls();
+            if (data.character && !lobbyState) {
+                setCurrentScreen('party-lobby');
+            }
+            syncCurrentScreen();
             if (lobbyState) {
                 renderCharacters(lobbyState);
                 renderTokens(lobbyState);
                 renderBoardVotes(lobbyState);
+                renderPartyLobby(lobbyState);
             }
         });
 
@@ -450,8 +514,10 @@ const Lobby = (() => {
             renderCharacters(state);
             renderTokens(state);
             renderBoardVotes(state);
-            updateStatus(state);
+            renderPartyLobby(state);
+            updatePartyStatus(state);
             renderHostControls(state);
+            syncCurrentScreen();
         });
 
         socket.on('character-confirmed', (data) => {
@@ -473,9 +539,11 @@ const Lobby = (() => {
                 ? `Deck Secured: <strong>${CHARACTER_DISPLAY[data.character] || data.character}</strong> | ${confirmedSkinLabel}`
                 : `Deck Secured: <strong>${CHARACTER_DISPLAY[data.character] || data.character}</strong>`;
             Notifications.show(confirmationText, 'success');
+            setCurrentScreen('party-lobby');
             if (lobbyState) {
                 renderCharacters(lobbyState);
                 renderTokens(lobbyState);
+                renderPartyLobby(lobbyState);
             }
         });
 
@@ -485,6 +553,7 @@ const Lobby = (() => {
             if (lobbyState) {
                 renderCharacters(lobbyState);
                 renderTokens(lobbyState);
+                renderPartyLobby(lobbyState);
             }
         });
 
@@ -537,14 +606,16 @@ const Lobby = (() => {
     }
 
     function persistSelectedCharacterColor() {
-        if (!socket || !getSelectedChampionId()) return;
+        const myMember = getMyLobbyMember();
+        if (!socket || currentScreen !== 'party-lobby' || !myMember?.character || !getSelectedChampionId()) return;
         socket.emit('update-custom-color', {
             customColor: getSelectedLobbyColor()
         });
     }
 
     function persistSelectedCharacterSkin(skinId) {
-        if (!socket || !getSelectedChampionId() || !skinId) return;
+        const myMember = getMyLobbyMember();
+        if (!socket || currentScreen !== 'party-lobby' || !myMember?.character || !getSelectedChampionId() || !skinId) return;
         socket.emit('update-character-skin', {
             skinId
         });
@@ -560,6 +631,59 @@ const Lobby = (() => {
         picker.disabled = !useCustomColor;
         picker.value = normalizeHexColor(selectedCustomColor) || '#ffffff';
         value.textContent = useCustomColor ? picker.value.toUpperCase() : 'Default';
+    }
+
+    function getMyLobbyMember(state = lobbyState) {
+        const members = Array.isArray(state?.members) ? state.members : [];
+        return members.find(member => member.playerId === myPlayerId) || null;
+    }
+
+    function getCharacterDisplayName(characterId) {
+        return CHARACTER_DISPLAY[characterId] || String(characterId || 'Unknown').toUpperCase();
+    }
+
+    function getCharacterSkinTitle(characterId, skinId) {
+        if (!characterId) return 'No skin selected';
+        const profile = CHARACTER_CARD_PROFILE[characterId] || CHARACTER_CARD_PROFILE.custom;
+        const fallbackImage = characterId === 'custom' ? (localCustomAvatar || './characters/custom.svg') : `./characters/${characterId}.webp`;
+        const skin = getChampionSkins(characterId, fallbackImage, profile)
+            .find((item) => item.id === skinId);
+        return skin?.title || profile.role || 'Default Skin';
+    }
+
+    function getChampionSkinMeta(characterId, skinId, fallbackAvatar = null) {
+        if (!characterId) {
+            return {
+                title: 'No skin selected',
+                rarity: 'common',
+                image: fallbackAvatar || './characters/custom.svg'
+            };
+        }
+        const profile = CHARACTER_CARD_PROFILE[characterId] || CHARACTER_CARD_PROFILE.custom;
+        const fallbackImage = fallbackAvatar || (characterId === 'custom'
+            ? (localCustomAvatar || './characters/custom.svg')
+            : `./characters/${characterId}.webp`);
+        const skins = getChampionSkins(characterId, fallbackImage, profile);
+        const skin = skins.find((item) => item.id === skinId) || skins[0];
+        return {
+            title: skin?.title || profile.role || 'Default Skin',
+            rarity: skin?.rarity || 'common',
+            image: skin?.image || fallbackImage
+        };
+    }
+
+    function isLobbyHost(state = lobbyState) {
+        return Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
+    }
+
+    function getLobbyMemberAvatar(member) {
+        if (!member?.character) return './characters/custom.svg';
+        if (member.character === 'custom') {
+            return member.customAvatarUrl || localCustomAvatar || './characters/custom.svg';
+        }
+        const profile = CHARACTER_CARD_PROFILE[member.character] || CHARACTER_CARD_PROFILE.custom;
+        const skins = getChampionSkins(member.character, `./characters/${member.character}.webp`, profile);
+        return skins.find((skin) => skin.id === member.skinId)?.image || `./characters/${member.character}.webp`;
     }
 
     function renderCharacters(state) {
@@ -759,23 +883,20 @@ const Lobby = (() => {
                 playLobbySound('playSelectConfirm');
 
                 if (isMine) {
-                    socket.emit('deselect-character');
                     setSelectedChampion(null);
-                    selectedToken = null;
+                    if (lobbyState) {
+                        renderCharacters(lobbyState);
+                        renderCharacterSelectSummary(lobbyState);
+                    }
                     return;
                 }
 
-                const selectData = {
-                        name: char.name,
-                        skinId: stateRef.currentSkin?.id || null,
-                        customColor: getSelectedLobbyColor()
-                };
-
-                if (char.name === 'custom') {
-                    buildCustomCharacterPayload(selectData);
+                setSelectedChampion(char.name, stateRef.currentSkin?.id || null);
+                viewedSkinByCharacter.set(char.name, stateRef.currentSkin?.id || null);
+                if (lobbyState) {
+                    renderCharacters(lobbyState);
+                    renderCharacterSelectSummary(lobbyState);
                 }
-
-                socket.emit('select-character', selectData);
             }
             
             // Champion Profile Modal
@@ -942,59 +1063,441 @@ const Lobby = (() => {
     }
 
     function renderBoardVotes(state) {
-        const grid = document.getElementById('map-vote-grid');
+        const previewGrid = document.getElementById('map-vote-grid');
+        const hostGrid = document.getElementById('host-map-grid');
         const hint = document.getElementById('map-vote-hint');
-        if (!grid || !hint) return;
-
         const options = Array.isArray(state?.boardOptions) ? state.boardOptions : [];
-        const members = Array.isArray(state?.members) ? state.members : [];
-        const myVoteId = members.find(member => member.playerId === myPlayerId)?.boardVoteId || null;
         const selectedBoardId = state?.selectedBoardId || options.find(option => option.isSelected)?.id || 'egypt';
+        const isHost = isLobbyHost(state);
 
-        hint.textContent = `Every human player gets one vote. Winning map: ${(options.find(option => option.id === selectedBoardId)?.name || 'Egypt').toUpperCase()}.`;
-        grid.innerHTML = '';
+        if (hint) {
+            const selectedLabel = options.find(option => option.id === selectedBoardId)?.name || 'Egypt';
+            hint.textContent = isHost
+                ? `You control the board choice for this room. Current map: ${selectedLabel.toUpperCase()}.`
+                : `The host controls the board choice. Current map: ${selectedLabel.toUpperCase()}.`;
+        }
 
-        options.forEach(option => {
-            const card = document.createElement('button');
-            card.type = 'button';
-            card.className = 'map-vote-card'
-                + (option.id === myVoteId ? ' selected' : '')
-                + (option.id === selectedBoardId ? ' leading' : '');
+        [previewGrid, hostGrid].forEach((grid, index) => {
+            if (!grid) return;
+            const isCompact = index === 1;
+            grid.innerHTML = '';
+
+            options.forEach(option => {
+                const card = document.createElement('button');
+                card.type = 'button';
+                card.className = 'map-vote-card'
+                    + (option.id === selectedBoardId ? ' leading selected' : '')
+                    + (isHost ? ' is-clickable' : ' is-disabled');
+                card.disabled = !isHost;
+                card.innerHTML = `
+                    <div class="map-vote-title-row">
+                        <h3 class="map-vote-name">${option.name}</h3>
+                        <span class="map-vote-badge">${option.id === selectedBoardId ? 'Selected' : isHost ? 'Set Map' : 'Host Pick'}</span>
+                    </div>
+                    <p class="map-vote-description">${option.description || 'Choose this map for the next match.'}</p>
+                    <div class="map-vote-meta">
+                        <span class="map-vote-count">${option.id === selectedBoardId ? 'Current board' : `${option.votes} vote${option.votes === 1 ? '' : 's'}`}</span>
+                        <span class="map-vote-visual">${(MAP_VISUALS[option.id] || []).map(src => `<img src="${src}" alt="" />`).join('')}</span>
+                    </div>
+                `;
+                card.addEventListener('click', () => {
+                    if (!isHost || option.id === selectedBoardId) return;
+                    socket.emit('host-set-board-map', { boardId: option.id });
+                    setLobbyPopupOpen('map', false);
+                });
+                grid.appendChild(card);
+            });
+        });
+    }
+
+    function renderModeControls(state) {
+        const previewGrid = document.getElementById('mode-grid');
+        const hostGrid = document.getElementById('host-mode-grid');
+        const isHost = isLobbyHost(state);
+        const modes = Array.isArray(state?.modeOptions) && state.modeOptions.length ? state.modeOptions : LOBBY_MODES;
+
+        [previewGrid, hostGrid].forEach((grid) => {
+            if (!grid) return;
+            grid.innerHTML = '';
+
+            modes.forEach((mode) => {
+                const isSelected = Boolean(mode.isSelected);
+                const isAvailable = mode.isAvailable !== false;
+                const card = document.createElement('button');
+                card.type = 'button';
+                card.className = `mode-card${isSelected ? ' is-active' : ''}${isHost && isAvailable ? ' is-clickable' : ' is-disabled'}`;
+                card.disabled = !isHost || !isAvailable;
+                card.innerHTML = `
+                    <div>
+                        <div class="mode-name">${escapeHtmlAttr(mode.name)}</div>
+                        <div class="mode-desc">${escapeHtmlAttr(mode.description || '')}</div>
+                    </div>
+                    <div class="mode-badge">${isSelected ? 'Selected' : isAvailable ? 'Host Pick' : 'Soon'}</div>
+                `;
+                card.addEventListener('click', () => {
+                    if (!isHost || !isAvailable || isSelected) return;
+                    socket.emit('host-set-lobby-mode', { modeId: mode.id });
+                    setLobbyPopupOpen('mode', false);
+                });
+                grid.appendChild(card);
+            });
+        });
+    }
+
+    function renderMatchInfo(state) {
+        const grid = document.getElementById('match-info-grid');
+        if (!grid) return;
+        const selectedBoardName = state?.boardOptions?.find(option => option.id === state?.selectedBoardId)?.name || 'Egypt';
+        const items = [
+            { label: 'Room Code', value: state?.roomCode || '------' },
+            { label: 'Players', value: `${state?.joinedPlayerCount || 0} joined` },
+            { label: 'Host', value: state?.hostName || 'Host' },
+            { label: 'Map', value: selectedBoardName }
+        ];
+        grid.innerHTML = items.map(item => `
+            <div class="match-info-item">
+                <div class="match-info-label">${escapeHtmlAttr(item.label)}</div>
+                <div class="match-info-value">${escapeHtmlAttr(item.value)}</div>
+            </div>
+        `).join('');
+    }
+
+    function renderHostControlsPanel(state) {
+        const panel = document.getElementById('host-controls-panel');
+        const copy = document.getElementById('host-controls-copy');
+        const botSummary = document.getElementById('host-bot-summary');
+        if (!panel || !copy || !botSummary) return;
+
+        const isHost = isLobbyHost(state);
+        const botCount = state?.players?.filter(player => player.isBot).length || 0;
+        panel.classList.toggle('host-controls-readonly', !isHost);
+        copy.textContent = isHost
+            ? 'You are the host. Choose the map, manage bots, and launch the room.'
+            : 'Only the host can edit the map, bots, and launch the match.';
+        botSummary.textContent = botCount > 0
+            ? `${botCount} bot${botCount === 1 ? '' : 's'} currently in the lobby.`
+            : 'No bots in lobby.';
+    }
+
+    function renderControlDock(state) {
+        const selectedBoard = state?.boardOptions?.find(option => option.id === state?.selectedBoardId)
+            || state?.boardOptions?.find(option => option.isSelected)
+            || null;
+        const selectedMode = state?.modeOptions?.find(option => option.isSelected)
+            || null;
+        const modeName = document.getElementById('mode-current-name');
+        const modeCopy = document.getElementById('mode-current-copy');
+        const mapName = document.getElementById('map-current-name');
+        const mapCopy = document.getElementById('map-current-copy');
+        const modeBtn = document.getElementById('open-mode-popup-btn');
+        const mapBtn = document.getElementById('open-map-popup-btn');
+        const isHost = isLobbyHost(state);
+
+        if (modeName) modeName.textContent = selectedMode?.name || state?.selectedModeName || 'Classic';
+        if (modeCopy) modeCopy.textContent = selectedMode?.description || 'Current room mode.';
+        if (mapName) mapName.textContent = selectedBoard?.name || 'Egypt';
+        if (mapCopy) mapCopy.textContent = selectedBoard?.description || 'Current board selection.';
+
+        if (modeBtn) {
+            modeBtn.disabled = false;
+            modeBtn.classList.toggle('readonly', !isHost);
+            modeBtn.textContent = isHost ? 'CHANGE MODE' : 'VIEW MODE';
+        }
+        if (mapBtn) {
+            mapBtn.disabled = false;
+            mapBtn.classList.toggle('readonly', !isHost);
+            mapBtn.textContent = isHost ? 'CHANGE MAP' : 'VIEW MAP';
+        }
+    }
+
+    function renderPartyReadyList(state) {
+        const list = document.getElementById('party-ready-list');
+        if (!list) return;
+
+        const members = (Array.isArray(state?.members) ? state.members : [])
+            .filter(member => member.character)
+            .slice(0, 4);
+
+        list.innerHTML = members.map(member => `
+            <div class="party-ready-row ${member.isReady ? 'is-ready' : 'is-waiting'}">
+                <span class="party-ready-name">${escapeHtmlAttr(member.name || member.character || 'Player')}</span>
+                <span class="party-ready-state">${member.isReady ? 'Ready' : 'Not Ready'}</span>
+            </div>
+        `).join('');
+    }
+
+    function renderPartyLobby(state) {
+        renderCharacterSelectSummary(state);
+        renderPartySlotsPanel(state);
+        renderMatchInfo(state);
+        renderBoardVotes(state);
+        renderModeControls(state);
+        renderHostControlsPanel(state);
+        renderControlDock(state);
+        renderPartyReadyList(state);
+    }
+
+    function renderCharacterSelectSummary(state) {
+        const title = document.getElementById('character-select-selection-title');
+        const copy = document.getElementById('character-select-selection-copy');
+        const confirmBtn = document.getElementById('confirm-character-btn');
+        if (!title || !copy || !confirmBtn) return;
+
+        const draftChampionId = getSelectedChampionId();
+        const draftSkinId = getSelectedSkinId();
+        const confirmedMember = getMyLobbyMember(state);
+        const selectedColorLabel = getSelectedLobbyColor()?.toUpperCase() || 'Default';
+
+        if (!draftChampionId) {
+            title.textContent = 'No Champion Locked';
+            copy.textContent = 'Choose a champion first, tweak the token color if you want, then confirm to enter the party lobby.';
+            confirmBtn.disabled = true;
+            confirmBtn.classList.add('disabled');
+            confirmBtn.textContent = 'CONFIRM SELECTION';
+            return;
+        }
+
+        const alreadyConfirmed = confirmedMember?.character === draftChampionId
+            && (confirmedMember?.skinId || null) === (draftSkinId || null);
+
+        title.textContent = getCharacterDisplayName(draftChampionId);
+        copy.textContent = `${getCharacterSkinTitle(draftChampionId, draftSkinId)} • Token color: ${selectedColorLabel}. ${alreadyConfirmed ? 'Selection confirmed. Enter the party lobby when you are ready.' : 'Confirm to lock this loadout and move into the party lobby.'}`;
+        confirmBtn.disabled = false;
+        confirmBtn.classList.remove('disabled');
+        confirmBtn.textContent = alreadyConfirmed ? 'ENTER PARTY LOBBY' : 'CONFIRM SELECTION';
+    }
+
+    function renderPartySlots(state) {
+        const slotsEl = document.getElementById('party-lobby-slots');
+        const hintEl = document.getElementById('party-slot-hint');
+        const stageStatusEl = document.getElementById('party-stage-status');
+        if (!slotsEl || !hintEl) return;
+
+        const members = Array.isArray(state?.members) ? state.members : [];
+        const filledSlots = members.slice(0, 4);
+        const readyCount = filledSlots.filter(member => member.character && member.isReady).length;
+        const selectedCount = filledSlots.filter(member => member.character).length;
+
+        hintEl.textContent = selectedCount
+            ? `${readyCount}/${selectedCount} players ready. The host can launch once at least two selected players are ready.`
+            : 'Invite players to the room, then everyone can lock in and ready up here.';
+        if (stageStatusEl) {
+            stageStatusEl.textContent = selectedCount
+                ? `${selectedCount} confirmed loadout${selectedCount === 1 ? '' : 's'} on stage. Ready players glow brighter when they are locked in.`
+                : 'Confirmed champions appear here while everyone readies up for the match.';
+        }
+
+        slotsEl.innerHTML = '';
+
+        filledSlots.forEach((member, index) => {
+            const card = document.createElement('article');
+            const hasCharacter = Boolean(member.character);
+            const skinMeta = getChampionSkinMeta(member.character, member.skinId, getLobbyMemberAvatar(member));
+            card.className = hasCharacter
+                ? `party-slot-card${member.isReady ? ' is-ready' : ''} rarity-${skinMeta.rarity || 'common'}`
+                : 'party-slot-card is-empty';
+
+            if (!hasCharacter) {
+                card.innerHTML = `
+                    <div class="party-slot-badge">Slot ${index + 1}</div>
+                    <div>Waiting for player</div>
+                `;
+                slotsEl.appendChild(card);
+                return;
+            }
+
+            const displayName = member.name || getCharacterDisplayName(member.character);
+            const roleLabel = `${getCharacterDisplayName(member.character)} • ${getCharacterSkinTitle(member.character, member.skinId)}`;
+            const tags = [member.isHost ? 'Host' : 'Member', member.isBot ? 'Bot' : (member.isOnline ? 'Online' : 'Offline')].join(' • ');
             card.innerHTML = `
-                <div class="map-vote-title-row">
-                    <h3 class="map-vote-name">${option.name}</h3>
-                    <span class="map-vote-badge">${option.id === myVoteId ? 'Your Vote' : 'Vote'}</span>
+                <div class="party-slot-top">
+                    <div class="party-slot-badge">Slot ${index + 1}</div>
+                    <div class="party-slot-state ${member.isReady ? 'is-ready' : 'is-waiting'}">${member.isReady ? 'Ready' : 'Not Ready'}</div>
                 </div>
-                <p class="map-vote-description">${option.description || 'Choose this map for the next match.'}</p>
-                <div class="map-vote-meta">
-                    <span class="map-vote-count">${option.votes} vote${option.votes === 1 ? '' : 's'}</span>
-                    <span class="map-vote-visual">${(MAP_VISUALS[option.id] || []).map(src => `<img src="${src}" alt="" />`).join('')}</span>
+                <div class="party-slot-player">
+                    <img class="party-slot-avatar" src="${getLobbyMemberAvatar(member)}" alt="${escapeHtmlAttr(displayName)}" />
+                    <div>
+                        <div class="party-slot-name">${escapeHtmlAttr(displayName)}</div>
+                        <div class="party-slot-role">${escapeHtmlAttr(roleLabel)}</div>
+                    </div>
+                </div>
+                <div class="party-slot-meta">
+                    <div class="party-slot-copy">${escapeHtmlAttr(tags)}</div>
+                    <div class="party-slot-token">${escapeHtmlAttr(getTokenLabel(member.tokenId))}</div>
+                </div>
+                <div class="party-slot-footer">
+                    <div class="party-slot-copy">${member.boardVoteId ? `Map Vote • ${member.boardVoteId.toUpperCase()}` : 'No map vote yet'}</div>
                 </div>
             `;
-
-            card.addEventListener('click', () => {
-                if (option.id === myVoteId) return;
-                socket.emit('vote-board-map', { boardId: option.id });
-            });
-
-            grid.appendChild(card);
+            slotsEl.appendChild(card);
         });
+
+        for (let index = filledSlots.length; index < 4; index += 1) {
+            const card = document.createElement('article');
+            card.className = 'party-slot-card is-empty';
+            card.innerHTML = `
+                <div class="party-slot-badge">Slot ${index + 1}</div>
+                <div>Open lobby slot</div>
+            `;
+            slotsEl.appendChild(card);
+        }
+    }
+
+    function renderPartySlotsPanel(state) {
+        const slotsEl = document.getElementById('party-lobby-slots');
+        const hintEl = document.getElementById('party-slot-hint');
+        const stageStatusEl = document.getElementById('party-stage-status');
+        if (!slotsEl || !hintEl) return;
+
+        const members = Array.isArray(state?.members) ? state.members : [];
+        const filledSlots = members.slice(0, 6);
+        const readyCount = filledSlots.filter(member => member.character && member.isReady).length;
+        const selectedCount = filledSlots.filter(member => member.character).length;
+
+        hintEl.textContent = selectedCount
+            ? `${readyCount}/${selectedCount} players ready. The host can launch once at least two selected players are ready.`
+            : 'Invite players to the room, then everyone can lock in and ready up here.';
+        if (stageStatusEl) {
+            stageStatusEl.textContent = selectedCount
+                ? `${selectedCount} confirmed loadout${selectedCount === 1 ? '' : 's'} on stage. Ready players glow brighter when they are locked in.`
+                : 'Confirmed champions appear here while everyone readies up for the match.';
+        }
+
+        slotsEl.innerHTML = '';
+
+        filledSlots.forEach((member, index) => {
+            const card = document.createElement('article');
+            if (!member.character) {
+                card.className = 'party-slot-card is-empty';
+                card.innerHTML = `
+                    <div class="party-slot-empty-plus">+</div>
+                    <div class="party-slot-badge">Slot ${index + 1}</div>
+                    <div class="party-slot-empty-title">Waiting for player</div>
+                    <div class="party-slot-empty-copy">Invite link holders can join this room and appear here.</div>
+                `;
+                slotsEl.appendChild(card);
+                return;
+            }
+
+            const skinMeta = getChampionSkinMeta(member.character, member.skinId, getLobbyMemberAvatar(member));
+            const displayName = member.name || getCharacterDisplayName(member.character);
+            const roleLabel = `${getCharacterDisplayName(member.character)} • ${skinMeta.title}`;
+            const tags = [
+                member.isBot ? 'Bot' : (member.isOnline ? 'Online' : 'Offline'),
+                `Rarity ${String(skinMeta.rarity || 'common').toUpperCase()}`
+            ].join(' • ');
+            const isLocalPlayer = member.playerId === myPlayerId;
+            const rarityClass = `rarity-${skinMeta.rarity || 'common'}`;
+
+            card.className = `party-slot-card ${rarityClass}${member.isReady ? ' is-ready' : ' is-waiting'}${member.isHost ? ' is-host-player' : ''}${isLocalPlayer ? ' is-local-player' : ''}`;
+            card.innerHTML = `
+                <div class="party-slot-spotlight"></div>
+                <div class="party-slot-fog"></div>
+                <div class="party-slot-light-streak"></div>
+                <div class="party-slot-aura"></div>
+                <div class="party-slot-underlight"></div>
+                <div class="party-slot-frame"></div>
+                <div class="party-slot-top">
+                    <div class="party-slot-badge-row">
+                        <div class="party-slot-badge">${`Slot ${index + 1}`}</div>
+                        ${member.isHost ? '<div class="party-slot-host-badge">Crown Host</div>' : ''}
+                        ${isLocalPlayer ? '<div class="party-slot-you-badge">You</div>' : ''}
+                    </div>
+                    <div class="party-slot-state ${member.isReady ? 'is-ready' : 'is-waiting'}">${member.isReady ? 'READY' : 'NOT READY'}</div>
+                </div>
+                <div class="party-slot-stage">
+                    <div class="party-slot-portrait-shell">
+                        <div class="party-slot-pedestal-shadow"></div>
+                        <div class="party-slot-pedestal-glow"></div>
+                        <div class="party-slot-pedestal-ring"></div>
+                        <div class="party-slot-pedestal"></div>
+                        <div class="party-slot-portrait-glow"></div>
+                        <div class="party-slot-character-wrap">
+                            <img class="party-slot-avatar" src="${skinMeta.image}" alt="${escapeHtmlAttr(displayName)}" />
+                        </div>
+                    </div>
+                    <div class="party-slot-player">
+                        <div class="party-slot-name">${escapeHtmlAttr(displayName)}</div>
+                        <div class="party-slot-role">${escapeHtmlAttr(roleLabel)}</div>
+                        <div class="party-slot-copy">${escapeHtmlAttr(tags)}</div>
+                    </div>
+                </div>
+                <div class="party-slot-meta">
+                    <div class="party-slot-meta-chip">
+                        <span class="party-slot-meta-label">Token</span>
+                        <span class="party-slot-token">${escapeHtmlAttr(getTokenLabel(member.tokenId))}</span>
+                    </div>
+                    <div class="party-slot-meta-chip">
+                        <span class="party-slot-meta-label">Skin Tier</span>
+                        <span class="party-slot-token">${escapeHtmlAttr(String(skinMeta.rarity || 'common').toUpperCase())}</span>
+                    </div>
+                </div>
+                <div class="party-slot-footer">
+                    <div class="party-slot-copy">${member.isHost ? 'Room leader' : 'Party member'}</div>
+                    <div class="party-slot-copy">${member.isReady ? 'Loadout locked in' : 'Awaiting ready signal'}</div>
+                </div>
+            `;
+            slotsEl.appendChild(card);
+        });
+
+        for (let index = filledSlots.length; index < 6; index += 1) {
+            const card = document.createElement('article');
+            card.className = 'party-slot-card is-empty';
+            card.innerHTML = `
+                <div class="party-slot-empty-plus">+</div>
+                <div class="party-slot-badge">Slot ${index + 1}</div>
+                <div class="party-slot-empty-title">Open lobby slot</div>
+                <div class="party-slot-empty-copy">Waiting for another challenger to join the room.</div>
+            `;
+            slotsEl.appendChild(card);
+        }
     }
 
     function updateStatus(state) {
         const statusEl     = document.getElementById('lobby-status');
-        const readyPlayers = state.players.filter(p => p.character);
+        const readySummaryEl = document.getElementById('party-ready-summary');
+        const readyPlayers = state.players.filter(p => p.character && p.isReady);
+        const selectedPlayers = state.players.filter(p => p.character);
         const count        = readyPlayers.length;
+        const selectedCount = selectedPlayers.length;
         const botCount     = readyPlayers.filter(p => p.isBot).length;
+        const totalBotCount = state.players.filter(p => p.isBot).length;
         const humanCount   = count - botCount;
+        const everyoneReady = selectedCount > 0 && selectedPlayers.every(player => player.isReady);
         const isHost       = Boolean(state?.hostPlayerId && myPlayerId && state.hostPlayerId === myPlayerId);
+        const myMember     = getMyLobbyMember(state);
+        const amReady      = Boolean(myMember?.isReady);
         const selectedBoardName = state?.boardOptions?.find(option => option.id === state?.selectedBoardId)?.name || 'Egypt';
+        const selectedModeName = state?.selectedModeName || 'Classic';
 
-        if (count === 0) {
-            statusEl.textContent = 'AWAITING PLAYERS...';
+        if (selectedCount === 0) {
+            statusEl.textContent = 'Awaiting party';
+            readySummaryEl.textContent = 'No one has locked in a champion yet.';
         } else {
             const botText = botCount > 0 ? ` • ${botCount} BOTS` : '';
             statusEl.textContent = `${count} READY (${humanCount} HUMANS)${botText} • MAP ${selectedBoardName.toUpperCase()}`;
+        }
+
+        if (selectedCount > 0) {
+            const botSummary = botCount > 0 ? ` • ${botCount} bots ready` : '';
+            statusEl.textContent = `${count}/${selectedCount} ready`;
+            readySummaryEl.textContent = `${humanCount} humans ready${botSummary} • map ${selectedBoardName}`;
+        }
+
+        if (selectedCount > 0 && readySummaryEl) {
+            readySummaryEl.textContent = `${humanReadyCount} humans ready${totalBotCount > 0 ? ` • ${totalBotCount} bots in lobby` : ''} • map ${selectedBoardName}`;
+        }
+
+        const readyToggleBtn = document.getElementById('ready-toggle-btn');
+        if (readyToggleBtn) {
+            const canReady = Boolean(myMember?.character);
+            readyToggleBtn.disabled = !canReady;
+            readyToggleBtn.classList.toggle('disabled', !canReady);
+            readyToggleBtn.textContent = !canReady
+                ? 'LOCK IN A CHAMPION'
+                : amReady
+                    ? 'UNREADY'
+                    : 'READY UP';
         }
 
         const startBtn = document.getElementById('start-game-btn');
@@ -1004,11 +1507,11 @@ const Lobby = (() => {
             startBtn.classList.toggle('disabled', disabled);
 
             if (!isHost) {
-                startBtn.textContent = count >= 2 ? `HOST STARTS ${selectedBoardName.toUpperCase()}` : 'WAITING FOR HOST';
+                startBtn.textContent = count >= 2 ? `HOST STARTS ${selectedBoardName.toUpperCase()}` : 'WAITING FOR READY PLAYERS';
             } else if (count >= 2) {
                 startBtn.textContent = `START ${selectedBoardName.toUpperCase()}`;
             } else {
-                startBtn.textContent = 'NEED 2+ PLAYERS';
+                startBtn.textContent = 'NEED 2 READY PLAYERS';
             }
         }
 
@@ -1023,6 +1526,116 @@ const Lobby = (() => {
             const disabled = !isHost || botCount === 0;
             clearBotsBtn.disabled = disabled;
             clearBotsBtn.classList.toggle('disabled', disabled);
+        }
+
+        const selectedChampionTitle = document.getElementById('party-selected-champion');
+        const selectedSkinTitle = document.getElementById('party-selected-skin');
+        if (selectedChampionTitle && selectedSkinTitle) {
+            if (myMember?.character) {
+                selectedChampionTitle.textContent = getCharacterDisplayName(myMember.character);
+                selectedSkinTitle.textContent = `${getCharacterSkinTitle(myMember.character, myMember.skinId)} • ${amReady ? 'Ready' : 'Not Ready'}`;
+            } else {
+                selectedChampionTitle.textContent = 'No champion selected';
+                selectedSkinTitle.textContent = 'Return to character select to lock in your champion and skin.';
+            }
+        }
+    }
+
+    function updatePartyStatus(state) {
+        const statusEl = document.getElementById('lobby-status');
+        const readySummaryEl = document.getElementById('party-ready-summary');
+        const startHintEl = document.getElementById('start-match-hint');
+        const readyPlayers = state.players.filter(player => player.character && player.isReady);
+        const selectedPlayers = state.players.filter(player => player.character);
+        const count = readyPlayers.length;
+        const selectedCount = selectedPlayers.length;
+        const totalBotCount = state.players.filter(player => player.isBot).length;
+        const humanReadyCount = readyPlayers.filter(player => !player.isBot).length;
+        const everyoneReady = selectedCount > 0 && selectedPlayers.every(player => player.isReady);
+        const isHost = isLobbyHost(state);
+        const myMember = getMyLobbyMember(state);
+        const amReady = Boolean(myMember?.isReady);
+        const selectedBoardName = state?.boardOptions?.find(option => option.id === state?.selectedBoardId)?.name || 'Egypt';
+        const selectedModeName = state?.selectedModeName || 'Classic';
+
+        if (selectedCount === 0) {
+            if (statusEl) statusEl.textContent = 'Awaiting party';
+            if (readySummaryEl) readySummaryEl.textContent = 'No one has locked in a champion yet.';
+        } else {
+            if (statusEl) statusEl.textContent = `${count} / ${selectedCount} READY`;
+            if (readySummaryEl) {
+                readySummaryEl.textContent = `${humanReadyCount} humans ready${totalBotCount > 0 ? ` • ${totalBotCount} bots in lobby` : ''} • map ${selectedBoardName} • mode ${selectedModeName}`;
+            }
+        }
+
+        const readyToggleBtn = document.getElementById('ready-toggle-btn');
+        if (readyToggleBtn) {
+            const canReady = Boolean(myMember?.character);
+            readyToggleBtn.disabled = !canReady;
+            readyToggleBtn.classList.toggle('disabled', !canReady);
+            readyToggleBtn.classList.toggle('is-ready', canReady && amReady);
+            readyToggleBtn.textContent = !canReady
+                ? 'LOCK IN A CHAMPION'
+                : amReady
+                    ? 'NOT READY'
+                    : 'READY';
+        }
+
+        const startBtn = document.getElementById('start-game-btn');
+        if (startBtn) {
+            const canStart = isHost && selectedCount >= 2 && everyoneReady;
+            startBtn.disabled = !canStart;
+            startBtn.classList.toggle('disabled', !canStart);
+            startBtn.classList.toggle('is-ready-to-launch', canStart);
+            if (!isHost) {
+                startBtn.textContent = everyoneReady && selectedCount >= 2
+                    ? `HOST STARTS ${selectedBoardName.toUpperCase()}`
+                    : 'WAITING FOR HOST';
+            } else if (canStart) {
+                startBtn.textContent = `START ${selectedBoardName.toUpperCase()}`;
+            } else if (selectedCount < 2) {
+                startBtn.textContent = 'NEED 2 PLAYERS';
+            } else {
+                startBtn.textContent = 'WAIT FOR PARTY READY';
+            }
+        }
+
+        if (startHintEl) {
+            startHintEl.textContent = isHost
+                ? (selectedCount < 2
+                    ? 'Invite at least one more player before launching.'
+                    : everyoneReady
+                        ? 'Your party is fully ready. Launch the match when you want.'
+                        : 'Every selected player must ready up before the match can begin.')
+                : (myMember?.character
+                    ? (amReady ? 'You are ready. Waiting on the rest of the party and the host.' : 'Ready up to signal that your loadout is locked in.')
+                    : 'Lock in a champion before you can ready up.');
+        }
+
+        const addBotBtn = document.getElementById('add-bot-btn');
+        if (addBotBtn) {
+            addBotBtn.disabled = !isHost;
+            addBotBtn.classList.toggle('disabled', !isHost);
+        }
+
+        const clearBotsBtn = document.getElementById('clear-bots-btn');
+        if (clearBotsBtn) {
+            const disabled = !isHost || totalBotCount === 0;
+            clearBotsBtn.disabled = disabled;
+            clearBotsBtn.classList.toggle('disabled', disabled);
+        }
+
+        const selectedChampionTitle = document.getElementById('party-selected-champion');
+        const selectedSkinTitle = document.getElementById('party-selected-skin');
+        if (selectedChampionTitle && selectedSkinTitle) {
+            if (myMember?.character) {
+                const skinMeta = getChampionSkinMeta(myMember.character, myMember.skinId, getLobbyMemberAvatar(myMember));
+                selectedChampionTitle.textContent = getCharacterDisplayName(myMember.character);
+                selectedSkinTitle.textContent = `${skinMeta.title} • ${String(skinMeta.rarity || 'common').toUpperCase()} • ${amReady ? 'Ready' : 'Not Ready'}`;
+            } else {
+                selectedChampionTitle.textContent = 'No champion selected';
+                selectedSkinTitle.textContent = 'Return to character select to lock in your champion and skin.';
+            }
         }
     }
 
@@ -1078,6 +1691,83 @@ const Lobby = (() => {
     }
 
     function bindButtons() {
+        const confirmCharacterBtn = document.getElementById('confirm-character-btn');
+        confirmCharacterBtn?.addEventListener('click', () => {
+            const selectedChampionId = getSelectedChampionId();
+            if (!selectedChampionId) return;
+
+            const selectedSkinId = getSelectedSkinId();
+            const myMember = getMyLobbyMember();
+            const desiredColor = getSelectedLobbyColor();
+            const alreadyConfirmed = myMember?.character === selectedChampionId
+                && (myMember?.skinId || null) === (selectedSkinId || null)
+                && (normalizeHexColor(myMember?.customColor) || null) === desiredColor;
+
+            if (alreadyConfirmed) {
+                setCurrentScreen('party-lobby');
+                return;
+            }
+
+            const selectData = {
+                name: selectedChampionId,
+                skinId: selectedSkinId,
+                customColor: desiredColor
+            };
+
+            if (selectedChampionId === 'custom') {
+                buildCustomCharacterPayload(selectData);
+            }
+
+            socket.emit('select-character', selectData);
+        });
+
+        const changeChampionBtn = document.getElementById('change-champion-btn');
+        changeChampionBtn?.addEventListener('click', () => {
+            const myMember = getMyLobbyMember();
+            if (myMember?.isReady) {
+                socket.emit('set-player-ready', { isReady: false });
+            }
+            if (myMember?.character) {
+                socket.emit('deselect-character');
+            }
+            setSelectedChampion(null);
+            setCurrentScreen('character-select');
+            if (lobbyState) {
+                renderCharacters(lobbyState);
+                renderCharacterSelectSummary(lobbyState);
+            }
+        });
+
+        document.getElementById('open-map-popup-btn')?.addEventListener('click', () => {
+            setLobbyPopupOpen('map', true);
+        });
+
+        document.getElementById('close-mode-popup-btn')?.addEventListener('click', () => setLobbyPopupOpen('mode', false));
+        document.getElementById('close-map-popup-btn')?.addEventListener('click', () => setLobbyPopupOpen('map', false));
+        document.querySelectorAll('[data-popup-close]').forEach((el) => {
+            el.addEventListener('click', () => setLobbyPopupOpen(el.getAttribute('data-popup-close'), false));
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                closeAllLobbyPopups();
+            }
+        });
+
+        const readyToggleBtn = document.getElementById('ready-toggle-btn');
+        readyToggleBtn?.addEventListener('click', () => {
+            const myMember = getMyLobbyMember();
+            if (!myMember?.character) return;
+            socket.emit('set-player-ready', { isReady: !myMember.isReady });
+        });
+
+        const startBtn = document.getElementById('start-game-btn');
+        startBtn?.addEventListener('click', () => {
+            if (startBtn.disabled) return;
+            window.dispatchEvent(new CustomEvent('lobby-start-requested'));
+            socket.emit('requestStartGame');
+        });
+
         const addBotBtn = document.getElementById('add-bot-btn');
         if (addBotBtn) addBotBtn.addEventListener('click', () => socket.emit('add-random-bot'));
 
@@ -1107,12 +1797,14 @@ const Lobby = (() => {
         toggle.addEventListener('change', () => {
             useCustomColor = toggle.checked;
             syncCustomColorControls();
+            if (lobbyState) renderCharacterSelectSummary(lobbyState);
             persistSelectedCharacterColor();
         });
 
         picker.addEventListener('input', () => {
             selectedCustomColor = normalizeHexColor(picker.value) || '#ffffff';
             syncCustomColorControls();
+            if (lobbyState) renderCharacterSelectSummary(lobbyState);
             persistSelectedCharacterColor();
         });
 
@@ -1327,9 +2019,10 @@ const Lobby = (() => {
 
     function showLobby() {
         document.getElementById('lobby-screen').classList.remove('hidden');
+        syncCurrentScreen();
     }
 
     function getSelectedCharacter() { return getSelectedChampionId(); }
 
-    return { init, hideLobby, showLobby, getSelectedCharacter };
+    return { init, hideLobby, showLobby, getSelectedCharacter, getChampionSkinMeta };
 })();

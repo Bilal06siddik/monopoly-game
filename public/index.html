@@ -545,13 +545,7 @@
     </div>
 
     <div class="tcg-room">
-      <div class="lobby-stage">
-        <div class="tcg-header">
-          <p class="tcg-kicker">Private Match Lobby</p>
-          <h1 class="tcg-title">Select Your Champion</h1>
-          <p class="tcg-subtitle">Lock in your deed, claim your token, and launch the match.</p>
-        </div>
-
+      <div class="lobby-stage pre-match-flow">
         <div id="room-banner" class="room-banner hidden">
           <div class="room-banner-copy">
             <div class="room-banner-label">Room Code</div>
@@ -563,68 +557,136 @@
           </div>
         </div>
 
-        <!-- Dynamically generated TCG cards will go here in a 3x2 grid -->
-        <div id="character-grid" class="tcg-cards-grid"></div>
+        <section id="character-select-screen" class="pre-match-screen">
+          <div class="tcg-header screen-header">
+            <p class="tcg-kicker">Character Select</p>
+            <h1 class="tcg-title">Choose Your Champion</h1>
+            <p class="tcg-subtitle">Browse champions, preview skins, check info, and lock in before joining the party lobby.</p>
+          </div>
 
-        <div class="color-selection-panel">
-          <div class="color-selection-copy">
-            <div class="color-selection-title">Token Color</div>
-            <div class="color-selection-subtitle">Stay with the default champion color or switch to a custom one.</div>
-          </div>
-          <label class="color-toggle" for="custom-color-toggle">
-            <input type="checkbox" id="custom-color-toggle" />
-            <span class="color-toggle-track" aria-hidden="true"></span>
-            <span class="color-toggle-labels">
-              <span>Default</span>
-              <span>Custom</span>
-            </span>
-          </label>
-          <div class="color-picker-stack">
-            <label for="custom-color-picker" class="color-picker-label">Custom value</label>
-            <div class="color-picker-row">
-              <input type="color" id="custom-color-picker" value="#ffffff" disabled />
-              <span id="custom-color-value" class="color-picker-value">Default</span>
+          <div class="screen-shell">
+            <div class="screen-main">
+              <div id="character-grid" class="tcg-cards-grid"></div>
             </div>
-          </div>
-        </div>
 
-        <section class="token-selection-panel">
-          <div class="token-selection-header">
-            <div>
-              <p class="token-selection-kicker">Token Select</p>
-              <h2 class="token-selection-title">Choose your board piece</h2>
-            </div>
-            <p id="token-selection-hint" class="token-selection-hint">Pick a character first to unlock token choices.</p>
+            <aside class="screen-sidebar character-select-sidebar">
+              <div class="party-side-card confirm-card">
+                <div class="party-side-kicker">Selection Status</div>
+                <h2 id="character-select-selection-title" class="party-side-title">No Champion Locked</h2>
+                <p id="character-select-selection-copy" class="party-side-copy">Pick a champion and skin, then confirm to move into the party lobby.</p>
+                <button id="confirm-character-btn" class="start-game-btn disabled" type="button" disabled>CONFIRM SELECTION</button>
+              </div>
+
+              <div class="color-selection-panel">
+                <div class="color-selection-copy">
+                  <div class="color-selection-title">Token Color</div>
+                  <div class="color-selection-subtitle">Stay with the default champion color or switch to a custom one.</div>
+                </div>
+                <label class="color-toggle" for="custom-color-toggle">
+                  <input type="checkbox" id="custom-color-toggle" />
+                  <span class="color-toggle-track" aria-hidden="true"></span>
+                  <span class="color-toggle-labels">
+                    <span>Default</span>
+                    <span>Custom</span>
+                  </span>
+                </label>
+                <div class="color-picker-stack">
+                  <label for="custom-color-picker" class="color-picker-label">Custom value</label>
+                  <div class="color-picker-row">
+                    <input type="color" id="custom-color-picker" value="#ffffff" disabled />
+                    <span id="custom-color-value" class="color-picker-value">Default</span>
+                  </div>
+                </div>
+              </div>
+            </aside>
           </div>
-          <div id="token-grid" class="token-grid"></div>
         </section>
 
-        <section class="map-vote-panel">
-          <div class="map-vote-header">
-            <div>
-              <p class="token-selection-kicker">Map Vote</p>
-              <h2 class="token-selection-title">Vote for the board</h2>
-            </div>
-            <p id="map-vote-hint" class="token-selection-hint">Every human player gets one vote. Ties keep the current winner.</p>
+        <section id="party-lobby-screen" class="pre-match-screen hidden">
+          <div class="tcg-header screen-header party-header">
+            <p class="tcg-kicker">Party Lobby</p>
+            <h1 class="tcg-title">Squad Up Before Match Start</h1>
+            <p class="tcg-subtitle">Review the party, ready up, tune the room setup, and let the host launch the board.</p>
           </div>
-          <div id="map-vote-grid" class="map-vote-grid"></div>
-        </section>
 
-        <div class="lobby-footer">
-          <div id="lobby-status">Loading...</div>
-          
-          <div class="lobby-actions">
-            <button id="start-game-btn" class="start-game-btn disabled">WAITING FOR PLAYERS</button>
-            <div class="lobby-secondary-actions">
-              <button id="add-bot-btn" class="secondary-lobby-btn">
-                  + RANDOM BOT
-              </button>
-              <button id="clear-bots-btn" class="secondary-lobby-btn subtle disabled" disabled>
-                  CLEAR BOTS
-              </button>
-            </div>
+          <div class="party-center-flow">
+            <section class="party-top-summary-panel">
+              <div class="party-stage-backdrop"></div>
+              <div class="party-top-summary-head">
+                <div>
+                  <p class="token-selection-kicker">Live Party Stage</p>
+                  <h2 class="token-selection-title">Your squad is on deck</h2>
+                </div>
+                <p id="party-stage-status" class="token-selection-hint">Confirmed champions appear here while everyone readies up for the match.</p>
+              </div>
+              <div id="match-info-grid" class="match-info-grid party-top-summary-grid"></div>
+            </section>
+
+            <section class="party-slots-panel">
+              <div class="party-panel-head centered-head">
+                <div>
+                  <p class="token-selection-kicker">Player Area</p>
+                  <h2 class="token-selection-title">Lobby Slots</h2>
+                </div>
+                <p id="party-slot-hint" class="token-selection-hint">Waiting for everyone to lock in and ready up.</p>
+              </div>
+              <div id="party-lobby-slots" class="party-lobby-slots"></div>
+            </section>
+
+            <section class="party-side-card party-lobby-toolbar">
+              <div class="party-command-label">Your Loadout</div>
+              <div class="party-toolbar-main">
+                <div>
+                  <div id="party-selected-champion" class="party-inline-loadout-title">No champion selected</div>
+                  <div id="party-selected-skin" class="party-inline-loadout-copy">Return to character select to lock in your champion and skin.</div>
+                </div>
+                <div class="party-toolbar-actions">
+                  <button id="change-champion-btn" class="secondary-lobby-btn subtle" type="button">CHANGE CHAMPION</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="party-side-card party-inline-controls">
+              <div class="party-panel-head centered-head">
+                <div>
+                  <p class="token-selection-kicker">Match Setup</p>
+                  <h2 class="token-selection-title">Party Actions</h2>
+                </div>
+                <p class="token-selection-hint">Change the map, ready up, and launch once everyone is set.</p>
+              </div>
+
+              <section id="host-controls-panel" class="party-actions-inline-grid">
+                <div class="party-inline-control-card">
+                  <div class="party-floating-label">Map</div>
+                  <div id="map-current-name" class="party-inline-map-title">Egypt</div>
+                  <p id="map-current-copy" class="party-inline-copy">Current board selection.</p>
+                  <button id="open-map-popup-btn" class="secondary-lobby-btn floating-map-btn" type="button">CHANGE MAP</button>
+                </div>
+
+                <div class="party-inline-control-card">
+                  <div id="lobby-status" class="party-inline-ready-count">0 / 4 READY</div>
+                  <p id="party-ready-summary" class="party-inline-copy">Ready status will appear here.</p>
+                  <div id="party-ready-list" class="party-ready-list"></div>
+                </div>
+
+                <div class="party-inline-control-card action-card">
+                  <button id="ready-toggle-btn" class="ready-launch-btn" type="button">READY</button>
+                  <button id="start-game-btn" class="start-game-btn disabled secondary-start-btn" type="button">WAITING FOR PLAYERS</button>
+                  <p id="start-match-hint" class="party-inline-copy">All selected players must be ready before the host can launch the match.</p>
+                </div>
+
+                <div class="party-inline-control-card host-tools-card">
+                  <p id="host-controls-copy" class="party-inline-copy">Only the host can edit the map, bots, and launch the match.</p>
+                  <div id="host-bot-summary" class="party-inline-copy">No bots in lobby.</div>
+                  <div class="lobby-secondary-actions floating-bot-actions">
+                    <button id="add-bot-btn" class="secondary-lobby-btn" type="button">+ RANDOM BOT</button>
+                    <button id="clear-bots-btn" class="secondary-lobby-btn subtle disabled" type="button" disabled>CLEAR BOTS</button>
+                  </div>
+                </div>
+              </section>
+            </section>
           </div>
-        </div>
+        </section>
       </div>
     </div>
   </div>
@@ -652,6 +714,50 @@
       <span class="error-icon">⛔</span>
       <p id="error-message">Error</p>
       <button id="error-dismiss" class="btn-dismiss">OK</button>
+    </div>
+  </div>
+
+  <div id="mode-popup-overlay" class="lobby-popup-overlay hidden" aria-hidden="true">
+    <div class="lobby-popup-backdrop" data-popup-close="mode"></div>
+    <div class="lobby-popup-panel">
+      <div class="lobby-popup-head">
+        <div>
+          <p class="party-side-kicker">Game Mode</p>
+          <h2 class="party-side-title">Choose Match Mode</h2>
+        </div>
+        <button id="close-mode-popup-btn" class="lobby-popup-close" type="button" aria-label="Close mode popup">✕</button>
+      </div>
+      <p class="party-side-copy compact-copy">Pick the ruleset for the next match. Hosts can change this instantly.</p>
+      <div id="mode-grid" class="mode-grid lobby-popup-grid"></div>
+    </div>
+  </div>
+
+  <div id="map-popup-overlay" class="lobby-popup-overlay hidden" aria-hidden="true">
+    <div class="lobby-popup-backdrop" data-popup-close="map"></div>
+    <div class="lobby-popup-panel">
+      <div class="lobby-popup-head">
+        <div>
+          <p class="party-side-kicker">Map</p>
+          <h2 class="party-side-title">Choose Board Map</h2>
+        </div>
+        <button id="close-map-popup-btn" class="lobby-popup-close" type="button" aria-label="Close map popup">✕</button>
+      </div>
+      <p id="map-vote-hint" class="party-side-copy compact-copy">Choose the board for the next match.</p>
+      <div id="map-vote-grid" class="map-vote-grid lobby-popup-grid"></div>
+    </div>
+  </div>
+
+  <div id="game-start-overlay" class="game-start-overlay hidden" aria-hidden="true">
+    <div class="game-start-backdrop"></div>
+    <div class="game-start-energy"></div>
+    <div class="game-start-content">
+      <div id="game-start-player-sequence" class="game-start-player-sequence"></div>
+      <div class="game-start-title-wrap">
+        <div id="game-start-title" class="game-start-title">MATCH STARTING</div>
+        <div id="game-start-subtitle" class="game-start-subtitle">Lock in. Power up. Enter the board.</div>
+      </div>
+      <div id="game-start-countdown" class="game-start-countdown hidden">3</div>
+      <button id="game-start-skip" class="game-start-skip hidden" type="button">SKIP</button>
     </div>
   </div>
 

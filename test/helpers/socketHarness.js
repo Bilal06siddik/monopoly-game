@@ -122,6 +122,12 @@ function selectCharacter(socket, character, timeoutMs = DEFAULT_TIMEOUT_MS) {
     return lobbyUpdatePromise;
 }
 
+function setReadyState(socket, isReady = true, timeoutMs = DEFAULT_TIMEOUT_MS) {
+    const lobbyUpdatePromise = waitForSocketEvent(socket, 'lobby-update', timeoutMs);
+    socket.emit('set-player-ready', { isReady });
+    return lobbyUpdatePromise;
+}
+
 function disconnectClients(...clients) {
     clients.flat().forEach((client) => {
         const socket = client?.socket || client;
@@ -140,5 +146,6 @@ module.exports = {
     expectNoSocketEvent,
     connectClient,
     selectCharacter,
+    setReadyState,
     disconnectClients
 };
