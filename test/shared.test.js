@@ -84,23 +84,31 @@ test('building is blocked when any sibling in the set is mortgaged', () => {
     assert.equal(validation.code, 'group-mortgaged');
 });
 
-test('building and selling validations allow uneven actions', () => {
+test('building and selling validations enforce even actions', () => {
     const { game, p1 } = createGame();
     [6, 8, 9].forEach(index => {
         game.properties[index].owner = p1.id;
     });
 
     game.properties[6].houses = 1;
-    let validation = Rules.validateUpgrade(game.properties, p1.id, 6);
+    let validation = Rules.validateUpgrade(game.properties, p1.id, 6, game.rulesConfig);
+    assert.equal(validation.ok, false);
+    assert.equal(validation.code, 'uneven-building');
+
+    validation = Rules.validateUpgrade(game.properties, p1.id, 8, game.rulesConfig);
     assert.equal(validation.ok, true);
 
     game.properties[8].houses = 1;
     game.properties[9].houses = 1;
-    validation = Rules.validateUpgrade(game.properties, p1.id, 6);
+    validation = Rules.validateUpgrade(game.properties, p1.id, 6, game.rulesConfig);
     assert.equal(validation.ok, true);
 
     game.properties[6].houses = 2;
-    validation = Rules.validateDowngrade(game.properties, p1.id, 8);
+    validation = Rules.validateDowngrade(game.properties, p1.id, 8, game.rulesConfig);
+    assert.equal(validation.ok, false);
+    assert.equal(validation.code, 'uneven-selling');
+
+    validation = Rules.validateDowngrade(game.properties, p1.id, 6, game.rulesConfig);
     assert.equal(validation.ok, true);
 });
 
@@ -353,10 +361,43 @@ test('board catalog exposes both Egypt and Countries maps', () => {
     assert.ok(BOARD_DATA.BOARD_MAPS.countries);
     assert.equal(BOARD_DATA.BOARD_MAPS.egypt.name, 'Egypt');
     assert.equal(BOARD_DATA.BOARD_MAPS.countries.name, 'Countries');
+    assert.equal(BOARD_DATA.BOARD_MAPS.egypt.templateId, 'capitalista_reference_40');
+    assert.equal(BOARD_DATA.BOARD_MAPS.countries.templateId, 'capitalista_reference_40');
+    assert.equal(BOARD_DATA.BOARD_MAPS.egypt.rulesPreset, 'capitalista_v2');
     assert.equal(BOARD_DATA.BOARD_MAPS.egypt.tiles.length, 40);
     assert.equal(BOARD_DATA.BOARD_MAPS.countries.tiles.length, 40);
     assert.equal(BOARD_DATA.BOARD_MAPS.countries.tiles[1].name, 'Delhi');
     assert.equal(BOARD_DATA.BOARD_MAPS.countries.tiles[5].name, 'India Railroad');
+});
+
+test('board maps are themed overlays on the same canonical template', () => {
+    const egyptTiles = BOARD_DATA.BOARD_MAPS.egypt.tiles;
+    const countriesTiles = BOARD_DATA.BOARD_MAPS.countries.tiles;
+
+    egyptTiles.forEach((tile, index) => {
+        const countriesTile = countriesTiles[index];
+        assert.equal(tile.templateSlotId, countriesTile.templateSlotId);
+        assert.equal(tile.type, countriesTile.type);
+        assert.equal(tile.price, countriesTile.price);
+        assert.equal(tile.rent, countriesTile.rent);
+        assert.deepEqual(tile.rentTiers, countriesTile.rentTiers);
+        assert.equal(tile.colorGroup, countriesTile.colorGroup);
+    });
+
+    assert.equal(BOARD_DATA.BOARD_TEMPLATES.capitalista_reference_40.tiles[5].templateSlotId, 'transport-1');
+    assert.notEqual(egyptTiles[1].name, countriesTiles[1].name);
+    assert.equal(egyptTiles[1].name, 'Boulaq');
+    assert.equal(countriesTiles[1].name, 'Delhi');
+});
+
+test('serialized game state includes Capitalista rule preset metadata', () => {
+    const { game } = createGame();
+    const state = game.getState();
+
+    assert.equal(state.rulePreset, 'capitalista_v2');
+    assert.equal(state.rulesConfig.requireEvenBuilding, true);
+    assert.equal(state.rulesConfig.loansEnabled, false);
+    assert.equal(state.rulesConfig.ownedPropertyOvertakeEnabled, false);
 });
 
 test('serialized state keeps current player id and index aligned', () => {

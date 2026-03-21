@@ -44,8 +44,8 @@ test('random movement sequences keep positions bounded and GO payouts consistent
             const landedOnGoForward = normalized === 0 && steps > 0;
             const expectedPassedGo = passedGoByWrap || landedOnGoForward;
 
-            const passBonus = passedGoByWrap && normalized !== 0 ? 200 : 0;
-            const landBonus = landedOnGoForward ? 200 : 0;
+            const passBonus = passedGoByWrap && normalized !== 0 ? game.rulesConfig.goPassCash : 0;
+            const landBonus = landedOnGoForward ? game.rulesConfig.goLandCash : 0;
             const expectedBonus = passBonus + landBonus;
 
             assert.equal(result.newPosition, normalized);

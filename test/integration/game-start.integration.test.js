@@ -59,6 +59,11 @@ test('host can start a match when two players are ready', async () => {
     assert.equal(guestState.isGameStarted, true);
     assert.equal(hostState.players.length, 2);
     assert.equal(guestState.players.length, 2);
+    assert.equal(hostState.rulePreset, 'capitalista_v2');
+    assert.equal(hostState.rulesConfig.requireEvenBuilding, true);
+    assert.equal(hostState.rulesConfig.loansEnabled, false);
+    assert.equal(hostState.boardTemplateId, 'capitalista_reference_40');
+    assert.equal(hostState.boardTheme, 'egypt');
 
     const hostPlayer = hostState.players.find((player) => player.character === 'bilo');
     assert.ok(hostPlayer, 'host character should exist in game state payload');
@@ -113,6 +118,8 @@ test('lobby map votes decide which board starts', async () => {
     const votedLobby = await votedLobbyPromise;
 
     assert.equal(votedLobby.selectedBoardId, 'countries');
+    assert.equal(votedLobby.rulePreset, 'capitalista_v2');
+    assert.equal(votedLobby.boardOptions.find((option) => option.id === 'countries')?.templateId, 'capitalista_reference_40');
 
     const startedPromise = waitForSocketEvent(host.socket, 'gameStarted');
     host.socket.emit('requestStartGame');
@@ -120,8 +127,62 @@ test('lobby map votes decide which board starts', async () => {
 
     assert.equal(startedState.boardId, 'countries');
     assert.equal(startedState.boardName, 'Countries');
+    assert.equal(startedState.boardTheme, 'countries');
     assert.equal(startedState.properties[1].name, 'Delhi');
     assert.equal(startedState.properties[5].name, 'India Railroad');
+});
+
+test('developer rule-config toggles propagate through game-state sync', async () => {
+    const roomCode = randomRoomCode('CFG');
+    const host = track(await connectClient({ port, roomCode }));
+    const guest = track(await connectClient({ port, roomCode }));
+
+    await selectCharacter(host.socket, 'bilo');
+    await selectCharacter(guest.socket, 'osss');
+
+    const startedPromise = waitForSocketEvent(host.socket, 'gameStarted');
+    host.socket.emit('requestStartGame');
+    await startedPromise;
+
+    const enabledSyncPromise = waitForSocketEventMatching(
+        host.socket,
+        'game-state-sync',
+        (payload) => payload?.rulesConfig?.loansEnabled === true
+            && payload?.rulesConfig?.ownedPropertyOvertakeEnabled === true,
+        5000
+    );
+
+    host.socket.emit('dev-command', {
+        type: 'set-rules-config',
+        rulesConfig: {
+            loansEnabled: true,
+            ownedPropertyOvertakeEnabled: true
+        }
+    });
+
+    const enabledSync = await enabledSyncPromise;
+    assert.equal(enabledSync.rulesConfig.loansEnabled, true);
+    assert.equal(enabledSync.rulesConfig.ownedPropertyOvertakeEnabled, true);
+
+    const disabledSyncPromise = waitForSocketEventMatching(
+        host.socket,
+        'game-state-sync',
+        (payload) => payload?.rulesConfig?.loansEnabled === false
+            && payload?.rulesConfig?.ownedPropertyOvertakeEnabled === false,
+        5000
+    );
+
+    host.socket.emit('dev-command', {
+        type: 'set-rules-config',
+        rulesConfig: {
+            loansEnabled: false,
+            ownedPropertyOvertakeEnabled: false
+        }
+    });
+
+    const disabledSync = await disabledSyncPromise;
+    assert.equal(disabledSync.rulesConfig.loansEnabled, false);
+    assert.equal(disabledSync.rulesConfig.ownedPropertyOvertakeEnabled, false);
 });
 
 test('host cannot start a match with fewer than two players', async () => {

@@ -4,11 +4,22 @@
 // ═══════════════════════════════════════════════════════════
 
 const GameBoard = (() => {
-    const TILE_W = 1.5;
-    const TILE_D = 1.92;
-    const TILE_H = 0.22;
-    const CORNER_SIZE = 2.1;
-    const GAP = 0.06;
+    const BOARD_LAYOUT = window.MonopolyBoardLayout || {};
+    const BOARD_GEOMETRY = BOARD_LAYOUT.CAPITALISTA_BOARD_GEOMETRY || {
+        normalTileWidth: 1.5,
+        normalTileDepth: 3,
+        normalTileHeight: 0.22,
+        cornerTileSize: 3,
+        sideTileCount: 9
+    };
+    const TILE_W = BOARD_GEOMETRY.normalTileWidth;
+    const TILE_D = BOARD_GEOMETRY.normalTileDepth;
+    const TILE_H = BOARD_GEOMETRY.normalTileHeight;
+    const CORNER_SIZE = BOARD_GEOMETRY.cornerTileSize;
+    const SIDE_TILE_COUNT = BOARD_GEOMETRY.sideTileCount || 9;
+    const GAP = 0;
+    const TILE_TEXTURE_WIDTH = 150;
+    const TILE_TEXTURE_HEIGHT = Math.round(TILE_TEXTURE_WIDTH * (TILE_D / TILE_W));
 
     const tilePositions = {};
     const tileMeshes = {};
@@ -167,7 +178,9 @@ const GameBoard = (() => {
         boardGroup.position.y = 0.05;
         maxTextureAnisotropy = rendererStateRef?.capabilities?.getMaxAnisotropy?.() || 1;
 
-        edgeLen = CORNER_SIZE + 9 * (TILE_W + GAP) + CORNER_SIZE;
+        edgeLen = (typeof BOARD_LAYOUT.getBoardEdgeLength === 'function')
+            ? BOARD_LAYOUT.getBoardEdgeLength(BOARD_GEOMETRY)
+            : (CORNER_SIZE * 2) + (SIDE_TILE_COUNT * TILE_W);
         half = edgeLen / 2;
         startOffset = CORNER_SIZE + GAP;
 
@@ -236,7 +249,7 @@ const GameBoard = (() => {
             applyTileInteractionState(index);
         });
 
-        const innerSize = edgeLen - (2 * TILE_D) - 0.35;
+        const innerSize = edgeLen - (2 * TILE_D);
         const centerBase = new THREE.Mesh(
             new THREE.BoxGeometry(innerSize, 0.14, innerSize),
             new THREE.MeshStandardMaterial({
@@ -776,7 +789,7 @@ const GameBoard = (() => {
     }
 
     function createTileMaterials(tile, tileIndex, ownerColor = null, propertyState = null) {
-        const topTexture = createTileTexture(tile, tileIndex, 150, 192, ownerColor, propertyState);
+        const topTexture = createTileTexture(tile, tileIndex, TILE_TEXTURE_WIDTH, TILE_TEXTURE_HEIGHT, ownerColor, propertyState);
         const topMaterial = new THREE.MeshStandardMaterial({
             map: topTexture,
             roughness: 0.92,
@@ -1488,8 +1501,15 @@ const GameBoard = (() => {
     }
 
     function calculateTilePosition(index) {
-        const position = new THREE.Vector3(0, 0, 0);
+        const centeredPosition = typeof BOARD_LAYOUT.calculateCenteredTilePosition === 'function'
+            ? BOARD_LAYOUT.calculateCenteredTilePosition(index, BOARD_GEOMETRY)
+            : null;
 
+        if (centeredPosition) {
+            return new THREE.Vector3(centeredPosition.x, centeredPosition.y || 0, centeredPosition.z);
+        }
+
+        const position = new THREE.Vector3(0, 0, 0);
         if (index === 0) {
             position.set(half - (CORNER_SIZE / 2), 0, half - (CORNER_SIZE / 2));
         } else if (index <= 9) {
@@ -1514,7 +1534,6 @@ const GameBoard = (() => {
             const z = -half + startOffset + (localIndex * (TILE_W + GAP)) + (TILE_W / 2);
             position.set(half - (CORNER_SIZE / 2), 0, z);
         }
-
         return position;
     }
 

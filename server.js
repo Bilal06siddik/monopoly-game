@@ -9,6 +9,7 @@ const BOARD_DATA = require('./shared/boardData');
 const ACTION_CARDS = require('./shared/actionCards');
 const { GameState } = require('./shared/gameState');
 const Rules = require('./shared/rules');
+const RulePresets = require('./shared/rulePresets');
 const TradeUtils = require('./shared/tradeUtils');
 const SummaryUtils = require('./shared/summary');
 const CardUtils = require('./shared/cardUtils');
@@ -18,6 +19,7 @@ const {
   getDefaultTokenForCharacter
 } = require('./shared/tokenCatalog');
 const DEFAULT_BOARD_ID = BOARD_DATA.DEFAULT_BOARD_ID || 'egypt';
+const DEFAULT_RULE_PRESET = RulePresets.DEFAULT_RULE_PRESET || 'capitalista_v2';
 const BOARD_IDS = BOARD_DATA.BOARD_IDS || [DEFAULT_BOARD_ID];
 const BOARD_MAPS = BOARD_DATA.BOARD_MAPS || {
   [DEFAULT_BOARD_ID]: {
@@ -29,6 +31,8 @@ const BOARD_MAPS = BOARD_DATA.BOARD_MAPS || {
 const getBoardDataById = typeof BOARD_DATA.getBoardData === 'function'
   ? BOARD_DATA.getBoardData.bind(BOARD_DATA)
   : (boardId => BOARD_MAPS[boardId]?.tiles || BOARD_DATA);
+const cloneRulesConfig = RulePresets.cloneRuleConfig || ((rulesConfig = {}) => ({ ...rulesConfig }));
+const normalizeRulesConfig = RulePresets.normalizeRulesConfig || ((rulesConfig = {}) => ({ ...rulesConfig }));
 
 const app = express();
 const server = http.createServer(app);
@@ -199,10 +203,13 @@ function getPlayerRoom(playerId) {
 }
 
 function createRoomState(roomCode, hostSessionToken) {
+  const defaultRulePreset = BOARD_MAPS[DEFAULT_BOARD_ID]?.rulesPreset || DEFAULT_RULE_PRESET;
   return {
     code: roomCode,
     hostSessionToken,
     selectedBoardId: DEFAULT_BOARD_ID,
+    rulePreset: defaultRulePreset,
+    rulesConfig: normalizeRulesConfig({}, defaultRulePreset),
     boardVotes: new Map(),
     turnTimerEnabled: true,
     createdAt: Date.now(),
@@ -242,8 +249,41 @@ function getBoardTiles(boardId = DEFAULT_BOARD_ID) {
   return getBoardMapById(boardId).tiles || BOARD_DATA;
 }
 
+function getBoardRulePreset(boardId = DEFAULT_BOARD_ID) {
+  return getBoardMapById(boardId).rulesPreset || DEFAULT_RULE_PRESET;
+}
+
+function syncRoomRules(roomState) {
+  if (!roomState) {
+    return {
+      rulePreset: DEFAULT_RULE_PRESET,
+      rulesConfig: normalizeRulesConfig({}, DEFAULT_RULE_PRESET)
+    };
+  }
+
+  const resolvedPreset = roomState.rulePreset || getBoardRulePreset(roomState.selectedBoardId);
+  roomState.rulePreset = resolvedPreset;
+  roomState.rulesConfig = normalizeRulesConfig(roomState.rulesConfig, resolvedPreset);
+
+  return {
+    rulePreset: roomState.rulePreset,
+    rulesConfig: roomState.rulesConfig
+  };
+}
+
+function getActiveRulePreset(roomState = null) {
+  if (gameState?.rulePreset) return gameState.rulePreset;
+  return syncRoomRules(roomState || (currentRoomCode ? rooms.get(currentRoomCode) : null)).rulePreset;
+}
+
+function getActiveRulesConfig(roomState = null) {
+  if (gameState?.rulesConfig) return gameState.rulesConfig;
+  return syncRoomRules(roomState || (currentRoomCode ? rooms.get(currentRoomCode) : null)).rulesConfig;
+}
+
 function pruneBoardVotes(roomState) {
   if (!roomState) return;
+  syncRoomRules(roomState);
   if (!(roomState.boardVotes instanceof Map)) {
     roomState.boardVotes = new Map();
   }
@@ -384,6 +424,7 @@ function getOrCreateRoomState(roomCode, hostSessionToken = null) {
     roomState.boardVotes = new Map();
   }
   roomState.selectedBoardId = resolveBoardId(roomState.selectedBoardId);
+  syncRoomRules(roomState);
   if (typeof roomState.turnTimerEnabled !== 'boolean') {
     roomState.turnTimerEnabled = true;
   }
@@ -565,6 +606,7 @@ function getDefaultColorForLobbyEntry(entry, customIndex = 0) {
 function getLobbyState() {
   const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
   const selectedBoardId = syncSelectedBoardId(roomState);
+  const { rulePreset, rulesConfig } = syncRoomRules(roomState);
   const boardVoteCounts = getBoardVoteCounts(roomState);
   const playerList = [...lobbyPlayers.values()]
     .filter(entry => entry.character)
@@ -581,6 +623,8 @@ function getLobbyState() {
     roomCode: currentRoomCode,
     joinUrl: currentRoomCode ? `/?room=${currentRoomCode}` : null,
     selectedBoardId,
+    rulePreset,
+    rulesConfig: cloneRulesConfig(rulesConfig),
     turnTimerEnabled: isTurnTimerEnabled(roomState),
     hostPlayerId: roomState?.hostSessionToken
       ? (gameState?.getPlayerBySessionToken(roomState.hostSessionToken)?.id
@@ -619,6 +663,9 @@ function getLobbyState() {
         id: board.id,
         name: board.name,
         description: board.description || '',
+        templateId: board.templateId || null,
+        theme: board.theme || board.id,
+        rulesPreset: board.rulesPreset || rulePreset,
         votes: boardVoteCounts[boardId] || 0,
         isSelected: boardId === selectedBoardId
       };
@@ -806,7 +853,10 @@ function buildGameStatePayload(viewerPlayerId = null, options = {}) {
   const roomState = currentRoomCode ? rooms.get(currentRoomCode) : null;
   const selectedBoardId = syncSelectedBoardId(roomState);
   const board = getBoardMapById(selectedBoardId);
+  const { rulePreset, rulesConfig } = syncRoomRules(roomState);
   const payload = gameState ? snapshotGameState(options) : {
+    rulePreset,
+    rulesConfig: cloneRulesConfig(rulesConfig),
     players: [],
     properties: [],
     currentPlayerIndex: 0,
@@ -833,6 +883,10 @@ function buildGameStatePayload(viewerPlayerId = null, options = {}) {
   payload.joinUrl = currentRoomCode ? `/?room=${currentRoomCode}` : null;
   payload.boardId = board.id;
   payload.boardName = board.name;
+  payload.boardTemplateId = board.templateId || null;
+  payload.boardTheme = board.theme || board.id;
+  payload.rulePreset = payload.rulePreset || rulePreset;
+  payload.rulesConfig = cloneRulesConfig(payload.rulesConfig || rulesConfig);
   payload.turnTimerEnabled = isTurnTimerEnabled(roomState);
   payload.hostPlayerId = roomState?.hostSessionToken
     ? (gameState?.getPlayerBySessionToken(roomState.hostSessionToken)?.id
@@ -850,12 +904,16 @@ function buildSavePayload() {
     savedAt: Date.now(),
     roomCode: currentRoomCode,
     boardId: resolveBoardId(rooms.get(currentRoomCode)?.selectedBoardId),
+    rulePreset: gameState.rulePreset || getActiveRulePreset(),
+    rulesConfig: cloneRulesConfig(gameState.rulesConfig || getActiveRulesConfig()),
     turnTimerEnabled: isTurnTimerEnabled(),
     actionDeck: Array.isArray(actionDeck) ? [...actionDeck] : [],
     eventHistory: Array.isArray(eventHistory) ? [...eventHistory] : [],
     lastDiceTotal: Number.isFinite(lastDiceTotal) ? lastDiceTotal : 0,
     turnTimerState: turnTimerState ? { ...turnTimerState } : null,
     gameState: {
+      rulePreset: gameState.rulePreset,
+      rulesConfig: cloneRulesConfig(gameState.rulesConfig),
       currentPlayerIndex: gameState.currentPlayerIndex,
       isGameStarted: gameState.isGameStarted,
       doublesCount: gameState.doublesCount,
@@ -905,12 +963,17 @@ function restoreGameStateFromSave(saveState) {
     : saveState;
   const restoredBoardId = resolveBoardId(saveState?.boardId || payload?.boardId);
   const restoredBoardData = getBoardTiles(restoredBoardId);
+  const restoredRulePreset = saveState?.rulePreset || payload?.rulePreset || getBoardRulePreset(restoredBoardId);
+  const restoredRulesConfig = normalizeRulesConfig(saveState?.rulesConfig || payload?.rulesConfig, restoredRulePreset);
 
   if (!payload || !Array.isArray(payload.players) || !Array.isArray(payload.properties)) {
     throw new Error('Invalid save file format.');
   }
 
-  const restored = new GameState(restoredBoardData);
+  const restored = new GameState(restoredBoardData, {
+    rulePreset: restoredRulePreset,
+    rulesConfig: restoredRulesConfig
+  });
   restored.players = [];
 
   payload.players.forEach((playerData, index) => {
@@ -980,6 +1043,8 @@ function restoreGameStateFromSave(saveState) {
 
   return {
     restoredBoardId,
+    restoredRulePreset,
+    restoredRulesConfig,
     restoredGameState: restored,
     restoredActionDeck: Array.isArray(saveState?.actionDeck) ? [...saveState.actionDeck] : [...ACTION_CARDS],
     restoredEventHistory: Array.isArray(saveState?.eventHistory) ? [...saveState.eventHistory] : [],
@@ -1013,6 +1078,8 @@ function clearRoomGameRuntime({ preserveLobby = true } = {}) {
     roomState?.boardVotes?.clear();
     if (roomState) {
       roomState.selectedBoardId = DEFAULT_BOARD_ID;
+      roomState.rulePreset = getBoardRulePreset(DEFAULT_BOARD_ID);
+      roomState.rulesConfig = normalizeRulesConfig({}, roomState.rulePreset);
     }
   }
 }
@@ -1995,6 +2062,21 @@ function emitBuyPrompt(player, tile) {
   queueBotBuyDecision(player, tile);
 }
 
+function renderActionCardForCurrentBoard(card) {
+  if (!card || !gameState) return card;
+  if (card.type !== 'moveAbsolute' || card.sendToJail || card.targetIndex === 0) {
+    return card;
+  }
+
+  const targetTile = gameState.properties[card.targetIndex];
+  if (!targetTile?.name) return card;
+
+  return {
+    ...card,
+    text: `Advance to ${targetTile.name}.`
+  };
+}
+
 function resolveActionCardAndMaybeMove(player) {
   // #27: Lucky Wheel removes 'roll again' doubles bonus
   if (lastDiceTotal && lastDiceTotal.isDoubles) {
@@ -2002,8 +2084,9 @@ function resolveActionCardAndMaybeMove(player) {
       gameState.doublesCount = 0;
   }
   const card = drawActionCard();
+  const renderedCard = renderActionCardForCurrentBoard(card);
   player.stats.cardsDrawn++;
-  logEvent(`🃏 ${player.name}: "${card.text}"`, 'card');
+  logEvent(`🃏 ${player.name}: "${renderedCard.text}"`, 'card');
 
   // Card text already describes the effect; avoid a second card-line for the same action.
   const result = CardUtils.resolveActionCard(gameState, player, card);
@@ -2020,7 +2103,7 @@ function resolveActionCardAndMaybeMove(player) {
     playerId: player.id,
     character: player.character,
     playerName: player.name,
-    card,
+    card: renderedCard,
     result,
     gameState: snapshotGameState()
   });
@@ -2058,7 +2141,7 @@ function resolveActionCardAndMaybeMove(player) {
 function evaluateTile(player, diceTotal, rentContext = {}) {
   const tile = gameState.properties[player.position];
 
-  if (player.position === 20) {
+  if (player.position === 20 && gameState.rulesConfig?.bailoutCollectsTaxPool !== false) {
     const collected = gameState.taxPool;
     if (collected > 0) {
       gameState.taxPool = 0;
@@ -2218,7 +2301,31 @@ function handleRollDice(playerId) {
       currentPlayer.jailTurns = 0;
       gameState.doublesCount = 0;
       logEvent(`🔓 ${currentPlayer.name} rolled doubles and escaped jail!`, 'roll');
-      // #7: Escaping jail by rolling doubles ends the turn (no move this turn)
+      if (gameState.rulesConfig?.jailExitOnDoublesEndsTurn !== false) {
+        emitToRoom('dice-rolled', {
+          playerId,
+          character: currentPlayer.character,
+          playerName: currentPlayer.name,
+          die1: diceResult.die1,
+          die2: diceResult.die2,
+          total: diceResult.total,
+          isDoubles: true,
+          moveResult: {
+            oldPosition: currentPlayer.position,
+            newPosition: currentPlayer.position,
+            steps: 0,
+            passedGo: false
+          },
+          gameState: snapshotGameState(),
+          jailRoll: true
+        });
+        scheduleMoveResolution(playerId, 0, 0, { action: 'finish-turn' });
+        return true;
+      }
+
+      const moveResult = gameState.movePlayer(playerId, diceResult.total);
+      recordMoveStats(currentPlayer, moveResult);
+      setTurnPhase('moving');
       emitToRoom('dice-rolled', {
         playerId,
         character: currentPlayer.character,
@@ -2228,21 +2335,19 @@ function handleRollDice(playerId) {
         total: diceResult.total,
         isDoubles: true,
         moveResult: {
-          oldPosition: currentPlayer.position,
-          newPosition: currentPlayer.position,
-          steps: 0,
-          passedGo: false
+          oldPosition: moveResult.oldPosition,
+          newPosition: moveResult.newPosition,
+          steps: moveResult.steps,
+          passedGo: moveResult.passedGo
         },
         gameState: snapshotGameState(),
         jailRoll: true
       });
-      // End turn after escaping jail — next turn they roll normally
-      scheduleMoveResolution(playerId, 0, 0, { action: 'finish-turn' });
+      scheduleMoveResolution(playerId, moveResult.steps, 0, { action: 'evaluate', diceTotal: lastDiceTotal, rentContext: {} });
       return true;
     } else {
       currentPlayer.jailTurns++;
-      if (currentPlayer.jailTurns >= 3) {
-        // After 3 failed rolls, the player is released for free.
+      if (currentPlayer.jailTurns >= 3 && gameState.rulesConfig?.jailReleaseAfterThreeFailedRolls !== false) {
         currentPlayer.inJail = false;
         currentPlayer.jailTurns = 0;
         logEvent(`🔓 ${currentPlayer.name} was released from jail after 3 failed rolls.`, 'roll');
@@ -2500,7 +2605,7 @@ function performBotDebtRecoveryStep(player) {
     .sort((left, right) => (right.houses || 0) - (left.houses || 0));
 
   for (const tile of downgradeCandidates) {
-    const validation = Rules.validateDowngrade(gameState.properties, player.id, tile.index);
+    const validation = Rules.validateDowngrade(gameState.properties, player.id, tile.index, gameState.rulesConfig);
     if (!validation.ok) continue;
 
     const refund = Math.floor(tile.price * 0.25);
@@ -3237,7 +3342,11 @@ io.on('connection', socket => {
     }
 
     const selectedBoardId = syncSelectedBoardId(roomState);
-    gameState = new GameState(getBoardTiles(selectedBoardId));
+    const { rulePreset, rulesConfig } = syncRoomRules(roomState);
+    gameState = new GameState(getBoardTiles(selectedBoardId), {
+      rulePreset,
+      rulesConfig
+    });
     shuffleActionDeck();
     pendingTrades.clear();
     eventHistory.length = 0;
@@ -3761,6 +3870,28 @@ io.on('connection', socket => {
         break;
       }
 
+      case 'set-rules-config': {
+        const nextRulePreset = typeof data.rulePreset === 'string' && data.rulePreset.trim()
+          ? data.rulePreset.trim()
+          : (roomState.rulePreset || gameState.rulePreset || DEFAULT_RULE_PRESET);
+        const nextRulesConfig = normalizeRulesConfig(
+          data.reset === true
+            ? (data.rulesConfig || {})
+            : {
+                ...(roomState.rulesConfig || gameState.rulesConfig || {}),
+                ...(data.rulesConfig || {})
+              },
+          nextRulePreset
+        );
+
+        roomState.rulePreset = nextRulePreset;
+        roomState.rulesConfig = nextRulesConfig;
+        gameState.setRulesConfig(nextRulesConfig, nextRulePreset);
+        restartTurnTimer = gameState.getCurrentPlayer()?.isActive && TURN_TIMER_PHASES.has(gameState.turnPhase);
+        logEvent(`🛠️ DEV updated rules preset to ${nextRulePreset}.`, 'system');
+        break;
+      }
+
       default:
         socket.emit('game-error', { message: 'Unknown developer command.' });
         return;
@@ -3951,7 +4082,7 @@ io.on('connection', socket => {
       return;
     }
 
-    const validation = Rules.validateUpgrade(gameState.properties, playerRecord.id, data.tileIndex);
+    const validation = Rules.validateUpgrade(gameState.properties, playerRecord.id, data.tileIndex, gameState.rulesConfig);
     if (!validation.ok) {
       socket.emit('game-error', { message: validation.message });
       return;
@@ -3993,7 +4124,7 @@ io.on('connection', socket => {
       return;
     }
 
-    const validation = Rules.validateDowngrade(gameState.properties, playerRecord.id, data.tileIndex);
+    const validation = Rules.validateDowngrade(gameState.properties, playerRecord.id, data.tileIndex, gameState.rulesConfig);
     if (!validation.ok) {
       socket.emit('game-error', { message: validation.message });
       return;
@@ -4172,6 +4303,8 @@ io.on('connection', socket => {
 
       gameState = restored.restoredGameState;
       roomState.selectedBoardId = restored.restoredBoardId;
+      roomState.rulePreset = restored.restoredRulePreset;
+      roomState.rulesConfig = cloneRulesConfig(restored.restoredRulesConfig);
       roomState.turnTimerEnabled = restored.restoredTurnTimerEnabled;
       actionDeck = restored.restoredActionDeck;
       eventHistory.length = 0;

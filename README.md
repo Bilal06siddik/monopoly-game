@@ -6,6 +6,7 @@ A real-time multiplayer Monopoly-style web game built with `Express`, `Socket.IO
 
 - Real-time lobby and turn-based multiplayer flow
 - Browser-rendered 3D board with shared server/client game-state models
+- Canonical Capitalista-style 40-slot board template with themed Egypt/Countries overlays
 - Property buying, rent, taxes, jail, bankruptcy, auctions, and win detection
 - Reconnect support for in-progress matches on the currently running server
 - End-game stats and a match summary modal
@@ -33,6 +34,7 @@ A real-time multiplayer Monopoly-style web game built with `Express`, `Socket.IO
   - nearest utility movement
   - collect-from-each-player effects
   - pardon card draws
+- Board/rules metadata in live snapshots, including `rulePreset` and `rulesConfig`
 - Auction bidding UI with live timer updates
 - Match history log, leaderboard, bankruptcy handling, and final placements
 
@@ -44,6 +46,7 @@ A real-time multiplayer Monopoly-style web game built with `Express`, `Socket.IO
 - Buildings must be bought evenly across a color set
 - Buildings must be sold evenly across a color set
 - A color set cannot be upgraded if any property in that set is mortgaged
+- Egypt and Countries maps share the same slot structure, prices, groups, and special-tile behavior
 - Asset management actions are limited to the active player during the correct turn phases
 - Trades can still be offered and answered outside the active turn
 - Group transfer locks prevent trading, mortgaging, selling, or auctioning properties from sets that still contain buildings
@@ -117,7 +120,7 @@ npm start
 
 ```text
 public/   Client HTML, styles, and browser-side game systems
-shared/   Board data and shared game-state classes
+shared/   Board template/layout data, rule presets, and shared game-state classes
 server.js Express and Socket.IO game server
 ```
 

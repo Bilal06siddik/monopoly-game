@@ -2,6 +2,21 @@
 //  GAME STATE — Shared multiplayer state models
 // ═══════════════════════════════════════════════════════════
 
+const {
+    DEFAULT_RULE_PRESET = 'capitalista_v2',
+    normalizeRulesConfig = (rulesConfig = {}) => ({ ...rulesConfig })
+} = typeof module !== 'undefined' && module.exports
+    ? require('./rulePresets')
+    : (typeof window !== 'undefined' ? (window.MonopolyRulePresets || {}) : {});
+
+function cloneRulesConfig(rulesConfig = {}) {
+    const cloned = { ...rulesConfig };
+    if (Array.isArray(rulesConfig.loanOfferAmounts)) {
+        cloned.loanOfferAmounts = [...rulesConfig.loanOfferAmounts];
+    }
+    return cloned;
+}
+
 function createDefaultPlayerStats() {
     return {
         cardsDrawn: 0,
@@ -121,7 +136,9 @@ class Property {
 }
 
 class GameState {
-    constructor(boardData) {
+    constructor(boardData, options = {}) {
+        this.rulePreset = options.rulePreset || DEFAULT_RULE_PRESET;
+        this.rulesConfig = normalizeRulesConfig(options.rulesConfig, this.rulePreset);
         this.players = [];
         this.properties = boardData.map(tileData => new Property(tileData));
         this.currentPlayerIndex = 0;
@@ -135,6 +152,12 @@ class GameState {
         this.turnCount = 0;
         this.pauseState = null;
         this.eliminationOrder = [];
+    }
+
+    setRulesConfig(rulesConfig = {}, rulePreset = this.rulePreset || DEFAULT_RULE_PRESET) {
+        this.rulePreset = rulePreset || DEFAULT_RULE_PRESET;
+        this.rulesConfig = normalizeRulesConfig(rulesConfig, this.rulePreset);
+        return this.rulesConfig;
     }
 
     addPlayer(id, character, color, sessionToken = null, options = {}) {
@@ -196,10 +219,10 @@ class GameState {
         player.position = newPosition;
 
         if (passedGo && newPosition !== 0) {
-            player.money += 200;
+            player.money += this.rulesConfig.goPassCash;
         }
         if (newPosition === 0 && steps > 0) {
-            player.money += 400;
+            player.money += this.rulesConfig.goLandCash;
         }
 
         return {
@@ -228,10 +251,10 @@ class GameState {
         player.position = normalizedTarget;
 
         if (collectGoOnPass && passedGo && normalizedTarget !== 0) {
-            player.money += 200;
+            player.money += this.rulesConfig.goPassCash;
         }
         if (collectGoOnLand && normalizedTarget === 0 && oldPosition !== 0) {
-            player.money += 400;
+            player.money += this.rulesConfig.goLandCash;
         }
 
         return {
@@ -269,6 +292,8 @@ class GameState {
 
     getState(options = {}) {
         return {
+            rulePreset: this.rulePreset,
+            rulesConfig: cloneRulesConfig(this.rulesConfig),
             players: this.players.map(player => player.toJSON(options)),
             properties: this.properties.map(property => property.toJSON({
                 includeHistory: options.includePropertyHistory === true,

@@ -4,12 +4,17 @@
 
 (function (root, factory) {
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = factory();
+        module.exports = factory(require('./rulePresets'));
     } else {
-        root.MonopolyRules = factory();
+        root.MonopolyRules = factory(root.MonopolyRulePresets || {});
     }
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (rulePresets) {
     const HOUSE_MULTIPLIERS = [1, 5, 15, 45, 80, 125];
+    const normalizeRulesConfig = rulePresets?.normalizeRulesConfig || ((rulesConfig = {}) => ({ ...rulesConfig }));
+
+    function resolveRulesConfig(rulesConfig = null) {
+        return normalizeRulesConfig(rulesConfig || {}, rulePresets?.DEFAULT_RULE_PRESET || 'capitalista_v2');
+    }
 
     function getStreetGroupProperties(properties, colorGroup) {
         return (properties || []).filter(property => property.type === 'property' && property.colorGroup === colorGroup);
@@ -62,7 +67,8 @@
         return gameState.currentPlayerId === playerId;
     }
 
-    function validateUpgrade(properties, playerId, tileIndex) {
+    function validateUpgrade(properties, playerId, tileIndex, rulesConfig = null) {
+        const resolvedRules = resolveRulesConfig(rulesConfig);
         const tile = properties?.[tileIndex];
         if (!tile || tile.type !== 'property') {
             return { ok: false, code: 'invalid-property', message: 'Choose a street property to upgrade.' };
@@ -73,11 +79,17 @@
         if (tile.isMortgaged) {
             return { ok: false, code: 'mortgaged-property', message: 'Unmortgage this property before building on it.' };
         }
-        if (!playerOwnsFullColorGroup(properties, playerId, tile.colorGroup)) {
+        if (resolvedRules.requireFullSetForBuilding && !playerOwnsFullColorGroup(properties, playerId, tile.colorGroup)) {
             return { ok: false, code: 'missing-color-set', message: 'Own the full color group before upgrading.' };
         }
         if (colorGroupHasMortgaged(properties, tile.colorGroup)) {
             return { ok: false, code: 'group-mortgaged', message: 'Unmortgage every property in this color group before building.' };
+        }
+        if (resolvedRules.requireEvenBuilding) {
+            const { min } = getGroupHouseExtremes(properties, tile.colorGroup);
+            if ((tile.houses || 0) > min) {
+                return { ok: false, code: 'uneven-building', message: 'Build evenly across the color group.' };
+            }
         }
         if ((tile.houses || 0) >= 5) {
             return { ok: false, code: 'max-buildings', message: 'That property already has a hotel.' };
@@ -86,7 +98,8 @@
         return { ok: true, tile };
     }
 
-    function validateDowngrade(properties, playerId, tileIndex) {
+    function validateDowngrade(properties, playerId, tileIndex, rulesConfig = null) {
+        const resolvedRules = resolveRulesConfig(rulesConfig);
         const tile = properties?.[tileIndex];
         if (!tile || tile.type !== 'property') {
             return { ok: false, code: 'invalid-property', message: 'Choose a street property to downgrade.' };
@@ -96,6 +109,12 @@
         }
         if ((tile.houses || 0) <= 0) {
             return { ok: false, code: 'no-buildings', message: 'That property has no buildings to sell.' };
+        }
+        if (resolvedRules.requireEvenBuilding) {
+            const { max } = getGroupHouseExtremes(properties, tile.colorGroup);
+            if ((tile.houses || 0) < max) {
+                return { ok: false, code: 'uneven-selling', message: 'Sell buildings evenly across the color group.' };
+            }
         }
 
         return { ok: true, tile };
