@@ -14,7 +14,7 @@ test('partial serialized state carries forward board metadata and static propert
         boardTemplateId: 'capitalista_reference_40',
         boardTheme: 'countries',
         rulePreset: 'capitalista_v2',
-        rulesConfig: { requireEvenBuilding: true, loansEnabled: false },
+        rulesConfig: { requireEvenBuilding: false, requireEvenSelling: true, loansEnabled: false },
         turnTimerEnabled: true,
         hostPlayerId: 'p1',
         players: [

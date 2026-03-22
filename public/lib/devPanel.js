@@ -47,6 +47,7 @@ const DevPanel = (() => {
         refs.setMoneyBtn = document.getElementById('dev-set-money-btn');
         refs.setTurnBtn = document.getElementById('dev-set-turn-btn');
         refs.toggleJailBtn = document.getElementById('dev-toggle-jail-btn');
+        refs.bankruptBotBtn = document.getElementById('dev-bankrupt-bot-btn');
         refs.teleportBtn = document.getElementById('dev-teleport-btn');
         refs.giveTileBtn = document.getElementById('dev-give-tile-btn');
         refs.clearTileBtn = document.getElementById('dev-clear-tile-btn');
@@ -104,6 +105,19 @@ const DevPanel = (() => {
                 return;
             }
             runCommand('toggle-jail', { playerId: player.id }, `Jail state toggle sent for ${player.character}.`);
+        });
+
+        refs.bankruptBotBtn.addEventListener('click', () => {
+            const player = getSelectedPlayer();
+            if (!player?.isBot) {
+                setStatus('Choose a bot player first.', true);
+                return;
+            }
+            if (!player.isActive) {
+                setStatus('That bot is already out of the match.', true);
+                return;
+            }
+            runCommand('force-bankrupt-bot', { playerId: player.id }, `${player.character} is being forced into bankruptcy.`);
         });
 
         refs.teleportBtn.addEventListener('click', () => {
@@ -298,6 +312,7 @@ const DevPanel = (() => {
             `Cash: $${player.money}`,
             `Tile: ${player.position}`,
             player.inJail ? `In jail (${player.jailTurns}/3)` : 'Free',
+            player.isBot ? 'Bot' : 'Human',
             player.isActive ? 'Active' : 'Out'
         ].join(' | ');
     }
@@ -341,6 +356,7 @@ const DevPanel = (() => {
         refs.setMoneyBtn.disabled = !hasGame || !player;
         refs.setTurnBtn.disabled = !hasGame || !player || !player.isActive;
         refs.toggleJailBtn.disabled = !hasGame || !player || !player.isActive;
+        refs.bankruptBotBtn.disabled = !hasGame || !player || !player.isBot || !player.isActive;
         refs.teleportBtn.disabled = !hasGame || !player || !tile;
         refs.giveTileBtn.disabled = !hasGame || !player || !purchasableTile;
         refs.clearTileBtn.disabled = !hasGame || !purchasableTile;

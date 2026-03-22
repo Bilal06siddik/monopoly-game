@@ -77,6 +77,8 @@
                     player.position = 10;
                     player.inJail = true;
                     player.jailTurns = 0;
+                    player.jailBuyoutAvailable = false;
+                    player.jailedOnTurn = gameState.turnCount;
                     result.sentToJail = true;
                     result.shouldEvaluateTile = false;
                     result.detailText = `Moved from ${oldPosition} to Jail.`;

@@ -60,7 +60,8 @@ test('host can start a match when two players are ready', async () => {
     assert.equal(hostState.players.length, 2);
     assert.equal(guestState.players.length, 2);
     assert.equal(hostState.rulePreset, 'capitalista_v2');
-    assert.equal(hostState.rulesConfig.requireEvenBuilding, true);
+    assert.equal(hostState.rulesConfig.requireEvenBuilding, false);
+    assert.equal(hostState.rulesConfig.requireEvenSelling, true);
     assert.equal(hostState.rulesConfig.loansEnabled, false);
     assert.equal(hostState.boardTemplateId, 'capitalista_reference_40');
     assert.equal(hostState.boardTheme, 'egypt');

@@ -48,6 +48,8 @@ class Player {
         this.properties = [];     // array of tile indices owned
         this.inJail = false;
         this.jailTurns = 0;
+        this.jailBuyoutAvailable = false;
+        this.jailedOnTurn = null;
         this.pardons = 0;
         this.isActive = true;
         this.isBot = Boolean(options.isBot);
@@ -73,6 +75,8 @@ class Player {
             properties: [...this.properties],
             inJail: this.inJail,
             jailTurns: this.jailTurns,
+            jailBuyoutAvailable: this.jailBuyoutAvailable,
+            jailedOnTurn: this.jailedOnTurn,
             pardons: this.pardons,
             isActive: this.isActive,
             isConnected: this.isConnected,

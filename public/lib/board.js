@@ -166,7 +166,7 @@ const GameBoard = (() => {
             north: 180,
             east: 0,
             corners: {
-                0: 0,
+                0: 180,
                 10: 180,
                 20: 180,
                 30: 180
@@ -178,7 +178,7 @@ const GameBoard = (() => {
             north: 0,
             east: 0,
             corners: {
-                0: 0,
+                0: 180,
                 10: 180,
                 20: 180,
                 30: 0
@@ -190,7 +190,7 @@ const GameBoard = (() => {
             north: 180,
             east: 0,
             corners: {
-                0: 0,
+                0: 180,
                 10: 180,
                 20: 180,
                 30: 0

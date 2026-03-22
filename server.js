@@ -940,6 +940,8 @@ function buildSavePayload() {
         properties: [...player.properties],
         inJail: Boolean(player.inJail),
         jailTurns: player.jailTurns,
+        jailBuyoutAvailable: Boolean(player.jailBuyoutAvailable),
+        jailedOnTurn: Number.isInteger(player.jailedOnTurn) ? player.jailedOnTurn : null,
         pardons: player.pardons,
         isActive: Boolean(player.isActive),
         isBot: Boolean(player.isBot),
@@ -1004,6 +1006,8 @@ function restoreGameStateFromSave(saveState) {
     restoredPlayer.properties = Array.isArray(playerData.properties) ? [...playerData.properties] : [];
     restoredPlayer.inJail = Boolean(playerData.inJail);
     restoredPlayer.jailTurns = clampInt(playerData.jailTurns, 0, 3) ?? 0;
+    restoredPlayer.jailBuyoutAvailable = Boolean(playerData.jailBuyoutAvailable);
+    restoredPlayer.jailedOnTurn = Number.isInteger(playerData.jailedOnTurn) ? playerData.jailedOnTurn : null;
     restoredPlayer.pardons = Math.max(0, Number.parseInt(playerData.pardons, 10) || 0);
     restoredPlayer.isActive = playerData.isActive !== false;
     restoredPlayer.connectedAt = lobbyEntry?.socketId ? Date.now() : restoredPlayer.connectedAt;
@@ -1161,6 +1165,8 @@ function kickPlayerFromRoom(roomState, targetPlayerId, removedByCharacter = 'The
       player.money = 0;
       player.inJail = false;
       player.jailTurns = 0;
+      player.jailBuyoutAvailable = false;
+      player.jailedOnTurn = null;
       player.socketId = null;
       player.sessionToken = null;
       if (!gameState.eliminationOrder.includes(player.id)) {
@@ -1792,6 +1798,11 @@ function advanceTurnGlobal() {
   gameState.turnCount++;
   const nextPlayer = gameState.nextTurn();
   if (!nextPlayer) return;
+  nextPlayer.jailBuyoutAvailable = Boolean(
+    nextPlayer.inJail
+    && Number.isInteger(nextPlayer.jailedOnTurn)
+    && gameState.turnCount > nextPlayer.jailedOnTurn
+  );
 
   console.log(`✦ Turn passes to ${nextPlayer.name}`);
   setTurnPhase('waiting');
@@ -2172,6 +2183,8 @@ function evaluateTile(player, diceTotal, rentContext = {}) {
     player.position = 10;
     player.inJail = true;
     player.jailTurns = 0;
+    player.jailBuyoutAvailable = false;
+    player.jailedOnTurn = gameState.turnCount;
     gameState.doublesCount = 0;
     player.stats.jailVisits++;
     logEvent(`🚔 ${player.name} was sent to Jail!`, 'tax');
@@ -2308,6 +2321,8 @@ function handleRollDice(playerId) {
     if (diceResult.isDoubles) {
       currentPlayer.inJail = false;
       currentPlayer.jailTurns = 0;
+      currentPlayer.jailBuyoutAvailable = false;
+      currentPlayer.jailedOnTurn = null;
       gameState.doublesCount = 0;
       logEvent(`🔓 ${currentPlayer.name} rolled doubles and escaped jail!`, 'roll');
       if (gameState.rulesConfig?.jailExitOnDoublesEndsTurn !== false) {
@@ -2359,6 +2374,8 @@ function handleRollDice(playerId) {
       if (currentPlayer.jailTurns >= 3 && gameState.rulesConfig?.jailReleaseAfterThreeFailedRolls !== false) {
         currentPlayer.inJail = false;
         currentPlayer.jailTurns = 0;
+        currentPlayer.jailBuyoutAvailable = false;
+        currentPlayer.jailedOnTurn = null;
         logEvent(`🔓 ${currentPlayer.name} was released from jail after 3 failed rolls.`, 'roll');
         emitToRoom('dice-rolled', {
           playerId,
@@ -2569,6 +2586,8 @@ function performBotJailAction(player) {
     player.pardons--;
     player.inJail = false;
     player.jailTurns = 0;
+    player.jailBuyoutAvailable = false;
+    player.jailedOnTurn = null;
     logEvent(`🃏 ${player.character} used a Pardon Card to leave jail!`, 'card');
 
     emitToRoom('jail-state-changed', {
@@ -2582,11 +2601,13 @@ function performBotJailAction(player) {
     return true;
   }
 
-  if (player.money >= 50 && (player.jailTurns >= 2 || Math.random() < 0.35)) {
+  if (player.jailBuyoutAvailable && player.money >= 50 && (player.jailTurns >= 2 || Math.random() < 0.35)) {
     player.money -= 50;
     gameState.taxPool += 50;
     player.inJail = false;
     player.jailTurns = 0;
+    player.jailBuyoutAvailable = false;
+    player.jailedOnTurn = null;
     gameState.doublesCount = 0;
     logEvent(`🔓 ${player.character} paid $50 to leave jail and must end the turn.`, 'tax');
     invalidateStaleTrades();
@@ -2702,7 +2723,7 @@ function performBotUpgradeStep(player) {
   const upgradeOptions = gameState.properties
     .filter(tile => tile.owner === player.id && tile.type === 'property')
     .map(tile => {
-      const validation = Rules.validateUpgrade(gameState.properties, player.id, tile.index);
+      const validation = Rules.validateUpgrade(gameState.properties, player.id, tile.index, gameState.rulesConfig);
       if (!validation.ok) return null;
 
       const cost = Math.floor(tile.price * 0.5);
@@ -3637,11 +3658,17 @@ io.on('connection', socket => {
       socket.emit('game-error', { message: 'You can only buy out of jail on your turn.' });
       return;
     }
+    if (!playerRecord.jailBuyoutAvailable) {
+      socket.emit('game-error', { message: 'You can pay $50 to leave jail starting on your next turn.' });
+      return;
+    }
 
     playerRecord.money -= 50;
     gameState.taxPool += 50;
     playerRecord.inJail = false;
     playerRecord.jailTurns = 0;
+    playerRecord.jailBuyoutAvailable = false;
+    playerRecord.jailedOnTurn = null;
     gameState.doublesCount = 0;
     logEvent(`🔓 ${playerRecord.character} paid $50 to leave jail and must end the turn.`, 'tax');
     invalidateStaleTrades();
@@ -3671,6 +3698,8 @@ io.on('connection', socket => {
     playerRecord.pardons--;
     playerRecord.inJail = false;
     playerRecord.jailTurns = 0;
+    playerRecord.jailBuyoutAvailable = false;
+    playerRecord.jailedOnTurn = null;
     logEvent(`🃏 ${playerRecord.character} used a Pardon Card to leave jail!`, 'card');
 
     emitToRoom('jail-state-changed', {
@@ -3748,6 +3777,8 @@ io.on('connection', socket => {
         if (playerRecord.inJail && tileIndex !== 10) {
           playerRecord.inJail = false;
           playerRecord.jailTurns = 0;
+          playerRecord.jailBuyoutAvailable = false;
+          playerRecord.jailedOnTurn = null;
         }
 
         if (gameState.getCurrentPlayer()?.id === playerRecord.id) {
@@ -3868,6 +3899,8 @@ io.on('connection', socket => {
 
         playerRecord.inJail = !playerRecord.inJail;
         playerRecord.jailTurns = 0;
+        playerRecord.jailBuyoutAvailable = false;
+        playerRecord.jailedOnTurn = playerRecord.inJail ? gameState.turnCount : null;
         if (playerRecord.inJail) playerRecord.position = 10;
 
         if (gameState.getCurrentPlayer()?.id === playerRecord.id) {
@@ -3876,6 +3909,23 @@ io.on('connection', socket => {
         }
 
         logEvent(`🛠️ DEV ${playerRecord.inJail ? 'sent' : 'released'} ${playerRecord.character} ${playerRecord.inJail ? 'to' : 'from'} jail.`, 'system');
+        break;
+      }
+
+      case 'force-bankrupt-bot': {
+        const playerRecord = gameState.getPlayerById(data.playerId);
+        if (!playerRecord || !playerRecord.isBot) {
+          socket.emit('game-error', { message: 'Choose a bot player to bankrupt.' });
+          return;
+        }
+        if (!playerRecord.isActive) {
+          socket.emit('game-error', { message: 'That bot is already out of the match.' });
+          return;
+        }
+
+        executeBankruptcy(playerRecord);
+        logEvent(`🛠️ DEV forced ${playerRecord.character} into bankruptcy.`, 'system');
+        restartTurnTimer = Boolean(gameState?.getCurrentPlayer()?.isActive && TURN_TIMER_PHASES.has(gameState.turnPhase));
         break;
       }
 

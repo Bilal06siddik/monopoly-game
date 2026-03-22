@@ -44,6 +44,17 @@ function money(value) {
   return `$${Number.isFinite(value) ? value : 0}`;
 }
 
+function formatDuration(durationMs) {
+  const totalSeconds = Math.max(0, Math.round((durationMs || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  if (minutes < 60) return `${minutes}m ${seconds}s`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return `${hours}h ${remainingMinutes}m`;
+}
+
 const RAILROAD_RENT_TIERS = [25, 50, 100, 400];
 
 function getRailroadRent(count) {
@@ -165,8 +176,8 @@ function propertyActions(state, tile, myPlayerId) {
   if (tile.type === 'property') {
     const upgradeCost = Math.floor(tile.price * 0.5);
     const downgradeRefund = Math.floor(tile.price * 0.25);
-    const upgradeValidation = rules.validateUpgrade ? rules.validateUpgrade(state.properties, myPlayerId, tile.index) : { ok: false, message: 'Unavailable' };
-    const downgradeValidation = rules.validateDowngrade ? rules.validateDowngrade(state.properties, myPlayerId, tile.index) : { ok: false, message: 'Unavailable' };
+    const upgradeValidation = rules.validateUpgrade ? rules.validateUpgrade(state.properties, myPlayerId, tile.index, state.rulesConfig) : { ok: false, message: 'Unavailable' };
+    const downgradeValidation = rules.validateDowngrade ? rules.validateDowngrade(state.properties, myPlayerId, tile.index, state.rulesConfig) : { ok: false, message: 'Unavailable' };
 
     if (!tile.isMortgaged && tile.houses < 5) {
       push('upgrade', 'Upgrade', money(upgradeCost), !canManage || mortgagedGroup || !upgradeValidation.ok || me.money < upgradeCost, !canManage ? 'Only the active player can build right now.' : mortgagedGroup ? 'Unmortgage the full color set before building.' : !upgradeValidation.ok ? upgradeValidation.message : `Need ${money(upgradeCost)} to upgrade.`);
@@ -270,6 +281,10 @@ function ActionDock({ snapshot, actions }) {
   const canDeclareBankruptcy = Boolean(me?.isActive && (me?.bankruptcyDeadline || (typeof me?.money === 'number' && me.money < 0)));
   const hasAuctionableProperty = (state?.properties || []).some((property) => property.owner === snapshot.myPlayerId && !(property.type === 'property' && property.colorGroup && state.properties.some((entry) => entry.type === 'property' && entry.colorGroup === property.colorGroup && entry.houses > 0)));
   const showJail = Boolean(me?.inJail && state?.currentPlayerId === snapshot.myPlayerId && !state?.pauseState);
+  const showJailBuyout = Boolean(
+    me?.jailBuyoutAvailable
+    || (me?.inJail && Number.isInteger(me?.jailedOnTurn) && Number.isInteger(state?.turnCount) && state.turnCount > me.jailedOnTurn)
+  );
 
   return (
     <div className="gpu-action-zone">
@@ -286,7 +301,7 @@ function ActionDock({ snapshot, actions }) {
       </div>
       <div id="jail-actions" className={`gpu-jail-card${showJail ? '' : ' is-hidden'}`}>
         <button id="jail-roll-btn" type="button" disabled={state?.turnPhase !== 'waiting'} onClick={actions.jailRoll}>🎲 Roll for Doubles</button>
-        <button id="jail-buyout-btn" type="button" disabled={(me?.money || 0) < 50} onClick={actions.buyOutJail}>💸 Pay $50 and End Turn</button>
+        <button id="jail-buyout-btn" type="button" className={showJailBuyout ? '' : ' is-hidden'} disabled={!showJailBuyout || (me?.money || 0) < 50} onClick={actions.buyOutJail}>💸 Pay $50 and End Turn</button>
         <button id="jail-pardon-btn" type="button" disabled={!me?.pardons} onClick={actions.usePardon}>🃏 Use Pardon {me?.pardons ? `(${me.pardons})` : ''}</button>
       </div>
     </div>
@@ -303,13 +318,12 @@ function Leaderboard({ snapshot, actions }) {
       {!collapsed ? (
         <div id="leaderboard-panel" className="gpu-stack">
           {players.map((player, index) => {
-            const propertyCount = (state?.properties || []).filter((item) => item.owner === player.id).length;
             return (
               <article key={player.id} className={`gpu-player-card${player.id === snapshot.myPlayerId ? ' is-me' : ''}${!player.isActive ? ' is-out' : ''}`}>
                 <div className="gpu-rank">#{index + 1}</div>
                 <div className="gpu-grow">
                   <div className="gpu-inline gpu-player-head"><strong style={{ color: player.color }}>{nameOf(player)}</strong>{player.id === state?.hostPlayerId ? <span className="gpu-tag">Host</span> : null}{!player.isConnected ? <span className="gpu-tag is-warn">Offline</span> : null}{player.inJail ? <span className="gpu-tag is-neutral">Jail</span> : null}{!player.isActive ? <span className="gpu-tag is-danger">Bankrupt</span> : null}</div>
-                  <div className="gpu-inline is-dim gpu-player-meta"><span>{money(player.money)}</span><span>{propertyCount} properties</span></div>
+                  <div className="gpu-inline is-dim gpu-player-meta"><span className="gpu-player-money">{money(player.money)}</span></div>
                 </div>
                 <div className="gpu-inline gpu-player-actions">
                   {player.id !== snapshot.myPlayerId && player.isActive ? <button type="button" onClick={() => actions.openTradeComposer(player.id)}>Trade</button> : null}
@@ -395,16 +409,16 @@ function HostControls({ snapshot, actions }) {
 
 function Feed({ snapshot, actions }) {
   const activeTab = snapshot.ui?.lowerTab || 'history';
-  const expanded = snapshot.ui?.lowerExpanded;
   const collapsed = snapshot.ui?.lowerCollapsed;
   const historyEvents = snapshot.ui?.historyEvents || snapshot.gameState?.historyEvents || [];
   const trades = snapshot.ui?.pendingTrades || snapshot.gameState?.pendingTrades || [];
   const state = snapshot.gameState;
   return (
-    <Panel title="" className={`gpu-feed-panel${expanded ? ' is-expanded' : ''}${collapsed ? ' is-collapsed' : ''}`} action={<div className="gpu-inline"><button id="history-expand-btn" className="gpu-icon-btn" type="button" aria-expanded={expanded} onClick={actions.toggleFeedExpanded}>{expanded ? 'Collapse' : 'Expand'}</button><button id="history-collapse-btn" className="gpu-icon-btn" type="button" aria-expanded={!collapsed} onClick={actions.toggleFeedCollapsed}>{collapsed ? 'Open' : 'Hide'}</button></div>}>
+    <Panel title="" className={`gpu-feed-panel is-expanded${collapsed ? ' is-collapsed' : ''}`}>
       <div className="gpu-inline gpu-feed-tabs">
         <button id="tab-history" className={activeTab === 'history' ? 'is-active' : ''} type="button" onClick={() => actions.setLowerTab('history')}>History</button>
         <button id="tab-trades" className={activeTab === 'trades' ? 'is-active' : ''} type="button" onClick={() => actions.setLowerTab('trades')}>Trades (<span id="trades-count">{trades.length}</span>)</button>
+        <button id="history-collapse-btn" className="gpu-icon-btn" type="button" aria-expanded={!collapsed} onClick={actions.toggleFeedCollapsed}>{collapsed ? 'Open' : 'Hide'}</button>
       </div>
       {!collapsed ? (
         <>
@@ -787,13 +801,39 @@ function SummaryModal({ snapshot, actions }) {
 function EndStats({ snapshot, actions }) {
   const endStats = snapshot.ui?.endStats;
   if (!endStats?.visible || !endStats.summary) return null;
+  const placements = endStats.summary.placements || [];
+  const topVisited = endStats.summary.topVisitedProperties?.[0] || null;
+  const topRent = endStats.summary.topRentProperties?.[0] || null;
+  const myPlacement = placements.find((player) => player.playerId === snapshot.myPlayerId) || null;
   return (
     <div id="end-stats-screen" className="gpu-end-stats">
       <div className="gpu-end-card">
-        <div className="gpu-modal-kicker">Match Complete</div>
-        <h1 id="es-winner-title">{endStats.winner?.id === snapshot.myPlayerId ? 'You Win!' : `${endStats.winner?.name || endStats.winner?.character || 'Winner'} Wins!`}</h1>
-        <div className="gpu-end-subtitle">Final standings, cash power, and property control.</div>
-        <div id="es-player-grid" className="gpu-end-grid">{(endStats.summary.placements || []).map((player) => <article key={player.playerId} className={`gpu-end-player${player.isWinner ? ' is-winner' : ''}`}><strong>{player.name || player.character}</strong><span>#{player.placement}</span><span>{money(player.netWorth)} net worth</span><span>{player.propertiesOwned} properties</span></article>)}</div>
+        <section className="gpu-end-hero">
+          <div className="gpu-modal-kicker">Match Complete</div>
+          <h1 id="es-winner-title">{endStats.winner?.id === snapshot.myPlayerId ? 'You Win!' : `${endStats.winner?.name || endStats.winner?.character || 'Winner'} Wins!`}</h1>
+          <div className="gpu-end-subtitle">{myPlacement ? `You finished #${myPlacement.placement}.` : 'Final standings, cash power, and property control.'}</div>
+          <div className="gpu-end-summary-grid">
+            <article className="gpu-end-summary-tile">
+              <span>Match Length</span>
+              <strong>{formatDuration(endStats.summary.durationMs)}</strong>
+            </article>
+            <article className="gpu-end-summary-tile">
+              <span>Total Turns</span>
+              <strong>{endStats.summary.turnCount || 0}</strong>
+            </article>
+            <article className="gpu-end-summary-tile">
+              <span>Hot Tile</span>
+              <strong>{topVisited ? topVisited.name : '—'}</strong>
+              <em>{topVisited ? `${topVisited.landedCount} landings` : 'No visits logged'}</em>
+            </article>
+            <article className="gpu-end-summary-tile">
+              <span>Cash Cow</span>
+              <strong>{topRent ? topRent.name : '—'}</strong>
+              <em>{topRent ? money(topRent.rentCollected) : 'No rent earned'}</em>
+            </article>
+          </div>
+        </section>
+        <div id="es-player-grid" className="gpu-end-grid">{placements.map((player) => <article key={player.playerId} className={`gpu-end-player${player.isWinner ? ' is-winner' : ''}${player.playerId === snapshot.myPlayerId ? ' is-me' : ''}`}><div className="gpu-end-player-head"><div><span className="gpu-end-rank">#{player.placement}</span><strong style={{ color: player.color }}>{player.name || player.character}</strong></div><span className={`gpu-tag${player.isWinner ? '' : player.isActive ? ' is-neutral' : ' is-danger'}`}>{player.isWinner ? 'Winner' : player.isActive ? 'Active' : 'Eliminated'}</span></div><div className="gpu-end-player-score"><span>Net Worth</span><strong>{money(player.netWorth)}</strong></div><div className="gpu-end-player-stats"><div className="gpu-end-mini-stat"><span>Cash</span><strong>{money(player.money)}</strong></div><div className="gpu-end-mini-stat"><span>Owned</span><strong>{player.propertiesOwned}</strong></div><div className="gpu-end-mini-stat"><span>Rent In</span><strong>{money(player.stats?.rentReceived || 0)}</strong></div><div className="gpu-end-mini-stat"><span>Rent Out</span><strong>{money(player.stats?.rentPaid || 0)}</strong></div></div><div className="gpu-end-flags"><span className="gpu-end-flag">Cards {player.stats?.cardsDrawn || 0}</span><span className="gpu-end-flag">GO {player.stats?.goPasses || 0}</span><span className="gpu-end-flag">Jail {player.stats?.jailVisits || 0}</span><span className="gpu-end-flag">Buys {player.stats?.propertiesBought || 0}</span><span className="gpu-end-flag">Builds {player.stats?.housesBuilt || 0}</span><span className="gpu-end-flag">Trades {player.stats?.tradesCompleted || 0}</span><span className="gpu-end-flag">Auctions {player.stats?.auctionsWon || 0}</span></div></article>)}</div>
         <div className="gpu-inline gpu-end-actions"><button id="es-return-btn" type="button" className="gpu-hero-btn" onClick={actions.closeEndStats}>Return to Lobby</button></div>
       </div>
     </div>
@@ -815,7 +855,6 @@ function RotateGate({ snapshot }) {
 
 export function GameplayUI({ snapshot, actions }) {
   if (!snapshot?.visible || !snapshot.gameState) return null;
-  const dice = snapshot.ui?.diceResult;
   return (
     <div className={`gpu-shell view-${snapshot.viewMode || 'isometric'}`}>
       <RotateGate snapshot={snapshot} />
@@ -826,7 +865,6 @@ export function GameplayUI({ snapshot, actions }) {
       </div>
       <div className="gpu-bottom-left"><ActionDock snapshot={snapshot} actions={actions} /></div>
       <div className="gpu-bottom-right">
-        {dice ? <div id="dice-result" className="gpu-dice-result"><span>{dice.playerName || dice.character}</span><span className="gpu-inline"><span>{['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'][dice.die1] || '🎲'}</span><span>{['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅'][dice.die2] || '🎲'}</span></span><strong>= {dice.die1 + dice.die2}{dice.isDoubles ? ' • Doubles' : ''}</strong></div> : null}
         <Feed snapshot={snapshot} actions={actions} />
       </div>
       <HostControls snapshot={snapshot} actions={actions} />

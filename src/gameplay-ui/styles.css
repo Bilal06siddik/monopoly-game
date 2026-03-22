@@ -154,8 +154,21 @@
 
 .gpu-left-rail { grid-column: 1; grid-row: 2; align-self: start; }
 .gpu-right-rail { grid-column: 3; grid-row: 2; align-self: start; }
-.gpu-bottom-left { grid-column: 1 / 3; grid-row: 3; align-self: end; justify-self: start; }
-.gpu-bottom-right { grid-column: 3; grid-row: 3; align-self: end; }
+.gpu-bottom-left {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 8;
+  max-width: min(520px, calc(100vw - 412px));
+}
+
+.gpu-bottom-right {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 8;
+  width: min(360px, calc(100vw - 32px));
+}
 
 .gpu-top-bar,
 .gpu-left-rail > *,
@@ -244,6 +257,11 @@
   border-radius: inherit;
   border: 1px solid rgba(255, 255, 255, 0.03);
   pointer-events: none;
+}
+
+.gpu-action-dock::after,
+.gpu-view-dock::after {
+  display: none;
 }
 
 .gpu-panel-header,
@@ -436,6 +454,13 @@ input:focus-visible {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 24px rgba(19, 73, 67, 0.24);
 }
 
+.gpu-secondary-btn {
+  border-color: rgba(124, 166, 255, 0.22) !important;
+  background: linear-gradient(180deg, rgba(43, 55, 77, 0.96), rgba(19, 26, 39, 0.96)) !important;
+  color: #eef4fb !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 20px rgba(7, 11, 18, 0.24);
+}
+
 .gpu-action-dock button:hover:not(:disabled),
 .gpu-action-dock button:active:not(:disabled) {
   transform: none;
@@ -445,6 +470,36 @@ input:focus-visible {
   border-color: rgba(194, 209, 226, 0.12);
   background: linear-gradient(180deg, rgba(39, 47, 60, 0.82), rgba(20, 26, 34, 0.9));
   color: rgba(238, 244, 251, 0.78);
+}
+
+.gpu-action-dock #roll-dice-btn:not(:disabled),
+.gpu-action-dock #end-turn-btn:not(:disabled) {
+  animation: gpu-turn-pulse 1.8s ease-in-out infinite;
+}
+
+.gpu-action-dock #roll-dice-btn:not(:disabled) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(79, 220, 197, 0.16),
+    0 0 26px rgba(79, 220, 197, 0.28),
+    0 14px 28px rgba(19, 73, 67, 0.26);
+}
+
+.gpu-action-dock #end-turn-btn:not(:disabled) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 0 0 1px rgba(142, 176, 255, 0.12),
+    0 0 22px rgba(114, 144, 224, 0.18),
+    0 12px 24px rgba(8, 12, 19, 0.24);
+}
+
+@keyframes gpu-turn-pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
 }
 
 .gpu-jail-card {
@@ -567,14 +622,31 @@ input:focus-visible {
   min-width: 280px;
   max-height: 236px;
   overflow: hidden;
+  padding: 10px 10px 8px;
+}
+
+.gpu-feed-panel .gpu-panel-header {
+  margin-bottom: 8px;
+}
+
+.gpu-feed-panel .gpu-icon-btn,
+.gpu-feed-panel #tab-history,
+.gpu-feed-panel #tab-trades {
+  padding: 8px 12px;
+  border-radius: 16px;
 }
 
 .gpu-feed-tabs {
-  gap: 10px;
+  gap: 8px;
 }
 
 .gpu-feed-scroll {
   padding-right: 4px;
+}
+
+.gpu-feed-panel .gpu-history-item,
+.gpu-feed-panel .gpu-trade-card {
+  padding: 10px 12px;
 }
 
 .gpu-feed-panel.is-expanded {
@@ -1167,14 +1239,75 @@ input:focus-visible {
 
 .gpu-end-card {
   display: grid;
-  gap: 18px;
+  gap: 22px;
   text-align: center;
+  width: min(1240px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+}
+
+.gpu-end-hero {
+  position: relative;
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  border-radius: 28px;
+  border: 1px solid rgba(242, 204, 128, 0.18);
+  background:
+    radial-gradient(circle at top center, rgba(242, 204, 128, 0.14), transparent 36%),
+    radial-gradient(circle at left center, rgba(79, 220, 197, 0.12), transparent 38%),
+    linear-gradient(180deg, rgba(30, 39, 53, 0.96), rgba(13, 18, 26, 0.98));
+  box-shadow: var(--gpu-inset-line), 0 20px 40px rgba(0, 0, 0, 0.28);
+}
+
+.gpu-end-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 14% 18%, rgba(255, 255, 255, 0.12), transparent 10%),
+    radial-gradient(circle at 82% 26%, rgba(255, 255, 255, 0.08), transparent 9%),
+    radial-gradient(circle at 64% 74%, rgba(255, 255, 255, 0.06), transparent 8%);
+  pointer-events: none;
 }
 
 .gpu-end-subtitle {
   color: var(--gpu-text-dim);
   max-width: 40ch;
   margin: -6px auto 0;
+}
+
+.gpu-end-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  text-align: left;
+}
+
+.gpu-end-summary-tile {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(194, 209, 226, 0.1);
+  background: linear-gradient(180deg, rgba(36, 47, 64, 0.72), rgba(17, 24, 34, 0.82));
+  box-shadow: var(--gpu-inset-line);
+}
+
+.gpu-end-summary-tile span,
+.gpu-end-mini-stat span {
+  color: var(--gpu-text-muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.gpu-end-summary-tile strong {
+  font-size: 1.2rem;
+}
+
+.gpu-end-summary-tile em {
+  color: var(--gpu-text-dim);
+  font-style: normal;
 }
 
 .gpu-end-actions {
@@ -1200,6 +1333,81 @@ input:focus-visible {
 .gpu-end-player.is-winner {
   border-color: rgba(242, 204, 128, 0.38);
   background: rgba(242, 204, 128, 0.08);
+}
+
+.gpu-end-player.is-me {
+  border-color: rgba(79, 220, 197, 0.32);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 0 1px rgba(79, 220, 197, 0.08);
+}
+
+.gpu-end-player {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  text-align: left;
+}
+
+.gpu-end-player-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gpu-end-player-head strong {
+  display: block;
+  font-size: 1.1rem;
+}
+
+.gpu-end-rank {
+  display: inline-block;
+  margin-bottom: 6px;
+  color: var(--gpu-text-dim);
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.gpu-end-player-score {
+  display: grid;
+  gap: 4px;
+}
+
+.gpu-end-player-score strong {
+  font-size: 1.55rem;
+}
+
+.gpu-end-player-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gpu-end-mini-stat {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(194, 209, 226, 0.1);
+  background: linear-gradient(180deg, rgba(33, 44, 60, 0.64), rgba(15, 21, 31, 0.8));
+  box-shadow: var(--gpu-inset-line);
+}
+
+.gpu-end-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gpu-end-flag {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(194, 209, 226, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--gpu-text-dim);
+  font-size: 0.82rem;
 }
 
 .gpu-validation {
@@ -1254,28 +1462,114 @@ input:focus-visible {
 
 @media (max-width: 1199px) {
   .gpu-shell {
-    grid-template-columns: minmax(164px, 220px) minmax(0, 1fr) minmax(280px, 332px);
-    grid-template-rows: auto 1fr auto auto;
+    grid-template-columns: minmax(148px, 184px) minmax(0, 1fr) minmax(248px, 292px);
+    grid-template-rows: auto 1fr auto;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .gpu-top-bar {
+    grid-column: 2 / 4;
+    justify-content: center;
+    gap: 10px;
+  }
+
+  .gpu-pill {
+    padding: 10px 14px;
+  }
+
+  .gpu-left-rail,
+  .gpu-right-rail,
+  .gpu-bottom-left,
+  .gpu-bottom-right {
+    gap: 12px;
+  }
+
+  .gpu-left-rail {
+    max-width: 184px;
+  }
+
+  .gpu-view-dock button,
+  .gpu-utility-toggle,
+  .gpu-host-toggle {
+    padding: 9px 12px;
   }
 
   .gpu-right-rail {
-    max-height: calc(100vh - 220px);
+    max-height: calc(100vh - 188px);
     min-height: 0;
     overflow: auto;
     padding-right: 4px;
   }
 
+  .gpu-right-rail .gpu-panel {
+    padding: 10px;
+  }
+
+  .gpu-right-rail .gpu-panel-header {
+    margin-bottom: 10px;
+  }
+
+  .gpu-right-rail .gpu-player-card {
+    padding: 9px 10px;
+    gap: 8px;
+  }
+
+  .gpu-right-rail .gpu-rank {
+    min-width: 28px;
+    font-size: 0.92rem;
+  }
+
+  .gpu-right-rail .gpu-player-head strong {
+    font-size: 0.95rem;
+  }
+
+  .gpu-right-rail .gpu-player-meta {
+    font-size: 0.9rem;
+  }
+
+  .gpu-right-rail .gpu-player-properties {
+    display: none;
+  }
+
+  .gpu-right-rail .gpu-player-actions button {
+    padding: 8px 10px;
+    min-width: 68px;
+  }
+
+  .gpu-player-card {
+    padding: 10px;
+  }
+
   .gpu-bottom-right {
-    grid-column: 1 / -1;
-    grid-row: 4;
+    right: 12px;
+    bottom: 12px;
     min-height: 0;
-    align-items: flex-end;
+    align-items: stretch;
+    width: min(292px, calc(100vw - 24px));
+  }
+
+  .gpu-bottom-left {
+    left: 12px;
+    bottom: 12px;
+    padding-bottom: 0;
+    z-index: 8;
+    max-width: min(380px, calc(100vw - 328px));
   }
 
   .gpu-feed-panel {
-    width: min(100%, 420px);
-    max-height: 220px;
+    width: 100%;
+    max-width: 292px;
+    max-height: 196px;
     overflow: hidden;
+  }
+
+  .gpu-feed-panel.is-expanded {
+    max-height: 252px;
+  }
+
+  .gpu-action-dock {
+    grid-template-columns: minmax(124px, 156px) minmax(108px, 132px) auto;
   }
 
   .gpu-player-actions {
@@ -1284,6 +1578,10 @@ input:focus-visible {
 
   .gpu-host-popup-grid {
     grid-template-columns: 1fr;
+  }
+
+  .gpu-end-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -1312,6 +1610,14 @@ input:focus-visible {
     top: 12px;
   }
 
+  .gpu-bottom-left {
+    max-width: min(340px, calc(100vw - 276px));
+  }
+
+  .gpu-bottom-right {
+    width: min(252px, calc(100vw - 24px));
+  }
+
   .gpu-action-dock,
   .gpu-jail-card,
   .gpu-two-col,
@@ -1332,6 +1638,11 @@ input:focus-visible {
   .gpu-mini-player {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .gpu-end-summary-grid,
+  .gpu-end-player-stats {
+    grid-template-columns: 1fr;
   }
 
   .gpu-host-action-grid {

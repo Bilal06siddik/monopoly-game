@@ -116,7 +116,7 @@
         if ((tile.houses || 0) <= 0) {
             return { ok: false, code: 'no-buildings', message: 'That property has no buildings to sell.' };
         }
-        if (resolvedRules.requireEvenBuilding) {
+        if (resolvedRules.requireEvenSelling) {
             const { max } = getGroupHouseExtremes(properties, tile.colorGroup);
             if ((tile.houses || 0) < max) {
                 return { ok: false, code: 'uneven-selling', message: 'Sell buildings evenly across the color group.' };

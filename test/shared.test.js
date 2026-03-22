@@ -84,7 +84,7 @@ test('building is blocked when any sibling in the set is mortgaged', () => {
     assert.equal(validation.code, 'group-mortgaged');
 });
 
-test('building and selling validations enforce even actions', () => {
+test('building can be uneven while selling still enforces parity', () => {
     const { game, p1 } = createGame();
     [6, 8, 9].forEach(index => {
         game.properties[index].owner = p1.id;
@@ -92,8 +92,7 @@ test('building and selling validations enforce even actions', () => {
 
     game.properties[6].houses = 1;
     let validation = Rules.validateUpgrade(game.properties, p1.id, 6, game.rulesConfig);
-    assert.equal(validation.ok, false);
-    assert.equal(validation.code, 'uneven-building');
+    assert.equal(validation.ok, true);
 
     validation = Rules.validateUpgrade(game.properties, p1.id, 8, game.rulesConfig);
     assert.equal(validation.ok, true);
@@ -395,7 +394,8 @@ test('serialized game state includes Capitalista rule preset metadata', () => {
     const state = game.getState();
 
     assert.equal(state.rulePreset, 'capitalista_v2');
-    assert.equal(state.rulesConfig.requireEvenBuilding, true);
+    assert.equal(state.rulesConfig.requireEvenBuilding, false);
+    assert.equal(state.rulesConfig.requireEvenSelling, true);
     assert.equal(state.rulesConfig.loansEnabled, false);
     assert.equal(state.rulesConfig.ownedPropertyOvertakeEnabled, false);
 });

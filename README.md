@@ -43,7 +43,7 @@ A real-time multiplayer Monopoly-style web game built with `Express`, `Socket.IO
 - Undeveloped monopolies charge double base rent on a fully owned color set
 - Double-rent does not apply once buildings are present
 - Mortgaged properties collect no rent
-- Buildings must be bought evenly across a color set
+- Buildings can be bought unevenly across a color set
 - Buildings must be sold evenly across a color set
 - A color set cannot be upgraded if any property in that set is mortgaged
 - Egypt and Countries maps share the same slot structure, prices, groups, and special-tile behavior

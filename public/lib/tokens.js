@@ -11,6 +11,7 @@ const GameTokens = (() => {
     let sportsCarLoadFailed = false;
 
     const TOKEN_BASE_Y = 0.16;
+    const TOKEN_GROUP_SCALE = 0.82;
     const TOKEN_MODEL_DEPTH = 0.18;
     const SPORTS_CAR_MODEL_URL = './models/hatchbackSports.glb';
     const TOKEN_STEP_DURATION_MS = 160;
@@ -601,6 +602,7 @@ const GameTokens = (() => {
         const group = new THREE.Group();
         const startPos = getTilePos(0);
         group.position.set(startPos.x, TOKEN_BASE_Y, startPos.z);
+        group.scale.setScalar(TOKEN_GROUP_SCALE);
 
         const ringMaterial = new THREE.MeshStandardMaterial({
             color: 0xf6f7fb,
@@ -848,13 +850,14 @@ const GameTokens = (() => {
         if (!token || !token.group) return;
 
         const startY = token.group.position.y;
+        const startScale = token.group.scale.x;
         const duration = 700;
         const startTime = performance.now();
 
         function animateSink() {
             const t = Math.min((performance.now() - startTime) / duration, 1);
             token.group.position.y = startY - (t * 1.7);
-            token.group.scale.setScalar(1 - (t * 0.8));
+            token.group.scale.setScalar(startScale * (1 - (t * 0.8)));
             token.group.rotation.y += 0.09;
 
             if (t < 1) {

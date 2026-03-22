@@ -36,6 +36,11 @@ Original prompt: we are planning to make a v2 update fot his game so first thing
 - Verification for the Countries board layout tweak:
   - `node --check public/lib/board.js` ✅
   - `npm run test:unit` ✅
+- Added a dev-panel shortcut to force the selected bot into bankruptcy, wired through the existing `dev-command` server path so bots are eliminated using the normal loss flow.
+- Verification for the bot-bankruptcy dev tool:
+  - `node --check public/lib/devPanel.js` ✅
+  - `node --check server.js` ✅
+  - `node --test test/integration/multiplayer-flows.integration.test.js --test-name-pattern "dev tools can force a bot into bankruptcy"` ✅
 - Completed the first cut of the React + Vite gameplay HUD rewrite and wired it into the live app through `window.GameplayUIBridge`.
 - Fixed browser boot blockers that kept the new HUD from ever mounting:
   - removed classic-script global collisions in `shared/boardData.js`
@@ -54,5 +59,9 @@ Original prompt: we are planning to make a v2 update fot his game so first thing
   - rebuilt host controls into a centered popup menu so they no longer collide with leaderboard/feed/action surfaces
   - tightened the bottom action dock by shortening waiting copy and giving disabled buttons a proper styled state
   - did a broader consistency pass across top bar, leaderboard, feed, trade cards, buy modal, auction timer row, summary modal, end-stats, and rotate gate so they share one visual language
+  - rebuilt the end-of-match screen into a full results scene with a hero summary, match highlights, and richer all-player stat cards driven by the existing summary payload
+  - tightened responsive HUD handling for smaller landscape sizes, including anchored bottom controls and a compact leaderboard mode
   - Verification for these recent HUD-only passes:
     - `npm run build:ui` ✅
+    - `npm run test:unit` ✅
+    - `npm run test:integration` ✅

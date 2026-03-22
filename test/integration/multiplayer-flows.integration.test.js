@@ -245,6 +245,61 @@ test('recovering from debt resumes the turn in done phase and restarts the timer
     await nextTurnPromise;
 });
 
+test('dev tools can force a bot into bankruptcy', async () => {
+    const roomCode = randomRoomCode('BOTDEV');
+    const host = track(await connectClient({ port, roomCode }));
+    const guest = track(await connectClient({ port, roomCode }));
+
+    await selectCharacter(host.socket, 'bilo');
+    await selectCharacter(guest.socket, 'osss');
+
+    const lobbyBotPromise = waitForSocketEventMatching(
+        host.socket,
+        'lobby-update',
+        (payload) => Array.isArray(payload?.players) && payload.players.some((player) => player.isBot),
+        5000
+    );
+    host.socket.emit('add-random-bot');
+    const lobbyState = await lobbyBotPromise;
+    const lobbyBot = lobbyState.players.find((player) => player.isBot);
+    assert.ok(lobbyBot, 'bot should exist in the lobby before the match starts');
+
+    const gameStartedPromise = waitForSocketEvent(host.socket, 'gameStarted');
+    const guestStartedPromise = waitForSocketEvent(guest.socket, 'gameStarted');
+    host.socket.emit('requestStartGame');
+    const startedState = await gameStartedPromise;
+    await guestStartedPromise;
+    const startedBot = startedState.players.find((player) => player.id === lobbyBot.id);
+    assert.ok(startedBot, 'bot should exist in the live match state');
+
+    const bankruptPromise = waitForSocketEventMatching(
+        host.socket,
+        'player-bankrupt',
+        (payload) => payload?.playerId === startedBot.id,
+        5000
+    );
+    const syncPromise = waitForSocketEventMatching(
+        host.socket,
+        'game-state-sync',
+        (payload) => Array.isArray(payload?.players)
+            && payload.players.some((player) => player.id === startedBot.id && player.isActive === false),
+        5000
+    );
+
+    host.socket.emit('dev-command', {
+        type: 'force-bankrupt-bot',
+        playerId: startedBot.id
+    });
+
+    const bankruptEvent = await bankruptPromise;
+    const syncedState = await syncPromise;
+    const eliminatedBot = syncedState.players.find((player) => player.id === startedBot.id);
+
+    assert.equal(bankruptEvent.playerId, startedBot.id);
+    assert.equal(eliminatedBot?.isActive, false);
+    assert.equal(eliminatedBot?.money, 0);
+});
+
 test('host can disable and re-enable turn timer during a live match', async () => {
     const { host, guest } = await bootstrapMatch();
 

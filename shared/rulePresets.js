@@ -14,7 +14,8 @@
             description: 'Capitalista-aligned board flow with map-specific theming overlays.',
             config: Object.freeze({
                 requireFullSetForBuilding: true,
-                requireEvenBuilding: true,
+                requireEvenBuilding: false,
+                requireEvenSelling: true,
                 mortgageLocksColorGroupBuildings: true,
                 bailoutCollectsTaxPool: true,
                 goPassCash: 200,
@@ -47,7 +48,8 @@
         };
 
         merged.requireFullSetForBuilding = merged.requireFullSetForBuilding !== false;
-        merged.requireEvenBuilding = merged.requireEvenBuilding !== false;
+        merged.requireEvenBuilding = merged.requireEvenBuilding === true;
+        merged.requireEvenSelling = merged.requireEvenSelling !== false;
         merged.mortgageLocksColorGroupBuildings = merged.mortgageLocksColorGroupBuildings !== false;
         merged.bailoutCollectsTaxPool = merged.bailoutCollectsTaxPool !== false;
         merged.jailExitOnDoublesEndsTurn = merged.jailExitOnDoublesEndsTurn !== false;

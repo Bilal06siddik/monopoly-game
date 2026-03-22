@@ -1465,7 +1465,7 @@ body[data-view-mode="top-down"] .jail-actions {
 .dev-panel-toggle {
   position: absolute;
   top: 16px;
-  left: 16px;
+  left: 170px;
   z-index: 6000;
   padding: 10px 14px;
   font-family: var(--font);
@@ -1491,7 +1491,7 @@ body[data-view-mode="top-down"] .jail-actions {
 .dev-panel {
   position: absolute;
   top: 62px;
-  left: 16px;
+  left: 170px;
   z-index: 6000;
   width: min(340px, calc(100vw - 32px));
   max-height: calc(100vh - 90px);
