@@ -72,10 +72,34 @@
     };
     const gameHud = document.getElementById('game-hud');
     const gameplayUiRoot = document.getElementById('gameplay-ui-root');
+    let isGameStartTransitionRunning = false;
+    let isGameStartPreLocked = false;
+    let allowGameStartSkip = false;
+    let gameStartWasSkipped = false;
+    let resolveGameStartSkip = null;
+    let gameStartPreLockTimeoutId = null;
+    let gameStartSkipRevealTimeoutId = null;
+    const cameraViewBtn = document.getElementById('camera-view-btn');
+    const cameraTopdownBtn = document.getElementById('camera-topdown-btn');
+    const cameraIsoBtn = document.getElementById('camera-iso-btn');
+    const cameraResetBtn = document.getElementById('camera-reset-btn');
+    const viewDockToggle = document.getElementById('view-dock-toggle');
+    const viewDock = document.getElementById('view-dock');
     const roomGate = document.getElementById('room-gate');
     const roomGateStatus = document.getElementById('room-gate-status');
     const roomCodeInput = document.getElementById('room-code-input');
     const loadGameInput = document.getElementById('load-game-input');
+    const hostControlsShell = document.getElementById('host-controls-shell');
+    const hostTurnTimerEnabledInput = document.getElementById('host-turn-timer-enabled');
+    const hostExtendTimer15Btn = document.getElementById('host-extend-timer-15-btn');
+    const hostExtendTimer30Btn = document.getElementById('host-extend-timer-30-btn');
+    const hostTurnTimerStatus = document.getElementById('host-turn-timer-status');
+    const gameStartOverlay = document.getElementById('game-start-overlay');
+    const gameStartPlayerSequence = document.getElementById('game-start-player-sequence');
+    const gameStartTitle = document.getElementById('game-start-title');
+    const gameStartSubtitle = document.getElementById('game-start-subtitle');
+    const gameStartCountdown = document.getElementById('game-start-countdown');
+    const gameStartSkipBtn = document.getElementById('game-start-skip');
     let topBarResizeObserver = null;
     let lobbyState = null;
     let gameplayUiMounted = false;
@@ -104,6 +128,210 @@
         lowerCollapsed: false,
         viewDockOpen: false
     };
+
+    function wait(ms) {
+        return new Promise(resolve => window.setTimeout(resolve, ms));
+    }
+
+    function getStartTransitionPlayers(state) {
+        return (state?.players || []).map((player) => ({
+            name: player.name || player.character || 'Player',
+            character: player.character || 'custom',
+            skinId: player.skinId || null,
+            image: player.customAvatarUrl
+                || (player.character ? `./characters/${player.character}.webp` : './characters/custom.svg')
+        }));
+    }
+
+    function getTransitionSkinMeta(player) {
+        const lobbyApi = window.Lobby;
+        if (lobbyApi?.getChampionSkinMeta) {
+            return lobbyApi.getChampionSkinMeta(player.character, player.skinId, player.image);
+        }
+        return {
+            title: player.character || 'Champion',
+            rarity: 'common',
+            image: player.image
+        };
+    }
+
+    function clearGameStartPreLockTimeout() {
+        if (gameStartPreLockTimeoutId) {
+            window.clearTimeout(gameStartPreLockTimeoutId);
+            gameStartPreLockTimeoutId = null;
+        }
+    }
+
+    function clearGameStartSkipRevealTimeout() {
+        if (gameStartSkipRevealTimeoutId) {
+            window.clearTimeout(gameStartSkipRevealTimeoutId);
+            gameStartSkipRevealTimeoutId = null;
+        }
+    }
+
+    function lockGameStartUI({ withFailSafe = false } = {}) {
+        isGameStartPreLocked = true;
+        document.body.classList.add('game-start-transitioning');
+        if (withFailSafe) {
+            clearGameStartPreLockTimeout();
+            gameStartPreLockTimeoutId = window.setTimeout(() => {
+                if (!isGameStartTransitionRunning) {
+                    cancelGameStartTransition();
+                }
+            }, 5000);
+        }
+    }
+
+    function unlockGameStartUI() {
+        clearGameStartPreLockTimeout();
+        isGameStartPreLocked = false;
+        document.body.classList.remove('game-start-transitioning');
+    }
+
+    function resetGameStartOverlay() {
+        clearGameStartSkipRevealTimeout();
+        gameStartOverlay?.classList.add('hidden');
+        gameStartOverlay?.classList.remove('is-zooming', 'is-flashing');
+        if (gameStartOverlay) {
+            gameStartOverlay.dataset.phase = 'idle';
+        }
+        gameStartOverlay?.setAttribute('aria-hidden', 'true');
+        if (gameStartPlayerSequence) gameStartPlayerSequence.innerHTML = '';
+        gameStartCountdown?.classList.add('hidden');
+        gameStartCountdown?.classList.remove('show');
+        if (gameStartCountdown) gameStartCountdown.textContent = '3';
+        if (gameStartTitle) gameStartTitle.textContent = 'MATCH STARTING';
+        if (gameStartSubtitle) gameStartSubtitle.textContent = 'Lock in. Power up. Enter the board.';
+        gameStartSkipBtn?.classList.add('hidden');
+    }
+
+    function setGameStartPhase(phase) {
+        if (gameStartOverlay) {
+            gameStartOverlay.dataset.phase = phase;
+        }
+    }
+
+    function cancelGameStartTransition() {
+        allowGameStartSkip = false;
+        gameStartWasSkipped = false;
+        resolveGameStartSkip = null;
+        resetGameStartOverlay();
+        unlockGameStartUI();
+        isGameStartTransitionRunning = false;
+    }
+
+    function waitForTransitionStep(ms, { allowSkip = false } = {}) {
+        return new Promise((resolve) => {
+            const timer = window.setTimeout(() => {
+                if (resolveGameStartSkip === handleSkip) {
+                    resolveGameStartSkip = null;
+                }
+                resolve();
+            }, ms);
+
+            function handleSkip() {
+                window.clearTimeout(timer);
+                resolveGameStartSkip = null;
+                resolve();
+            }
+
+            if (allowSkip) {
+                resolveGameStartSkip = handleSkip;
+            }
+        });
+    }
+
+    async function playPlayerIntroSequence(players) {
+        if (!gameStartPlayerSequence) return;
+        for (const player of players) {
+            const skinMeta = getTransitionSkinMeta(player);
+            const card = document.createElement('div');
+            card.className = `game-start-player-card rarity-${skinMeta.rarity || 'common'}`;
+            card.innerHTML = `
+                <img class="game-start-player-avatar" src="${skinMeta.image}" alt="${player.name}" />
+                <div class="game-start-player-name">${player.name}</div>
+                <div class="game-start-player-role">${player.character?.toUpperCase?.() || 'CHAMPION'} • ${skinMeta.title}</div>
+                <div class="game-start-player-rarity">${String(skinMeta.rarity || 'common').toUpperCase()}</div>
+            `;
+            gameStartPlayerSequence.innerHTML = '';
+            gameStartPlayerSequence.appendChild(card);
+            if (gameStartTitle) gameStartTitle.textContent = 'INTRODUCING';
+            if (gameStartSubtitle) gameStartSubtitle.textContent = `${player.name} • ${skinMeta.title}`;
+            requestAnimationFrame(() => card.classList.add('show'));
+            if (typeof GameAudio !== 'undefined' && typeof GameAudio.playLobbyReadyPulse === 'function') {
+                GameAudio.playLobbyReadyPulse();
+            }
+            await waitForTransitionStep(320);
+        }
+    }
+
+    async function playGameStartTransition(state) {
+        if (isGameStartTransitionRunning) {
+            return;
+        }
+
+        isGameStartTransitionRunning = true;
+        gameStartWasSkipped = false;
+        lockGameStartUI();
+        resetGameStartOverlay();
+        gameStartOverlay?.classList.remove('hidden');
+        gameStartOverlay?.setAttribute('aria-hidden', 'false');
+        setGameStartPhase('confirm');
+
+        const players = getStartTransitionPlayers(state);
+        if (gameStartTitle) gameStartTitle.textContent = 'SQUAD READY';
+        if (gameStartSubtitle) gameStartSubtitle.textContent = 'Power signatures aligned. Syncing the arena.';
+        await waitForTransitionStep(180);
+        setGameStartPhase('focus');
+        gameStartOverlay?.classList.add('is-zooming');
+        await waitForTransitionStep(180);
+        setGameStartPhase('introductions');
+        await playPlayerIntroSequence(players);
+
+        if (gameStartTitle) gameStartTitle.textContent = 'GET READY';
+        if (gameStartSubtitle) gameStartSubtitle.textContent = 'All players confirmed. Entering the match.';
+        await waitForTransitionStep(320);
+
+        setGameStartPhase('countdown');
+        if (gameStartTitle) gameStartTitle.textContent = 'MATCH STARTING';
+        if (gameStartSubtitle) gameStartSubtitle.textContent = '3 • 2 • 1';
+        gameStartCountdown?.classList.remove('hidden');
+
+        clearGameStartSkipRevealTimeout();
+        gameStartSkipRevealTimeoutId = window.setTimeout(() => {
+            allowGameStartSkip = true;
+            gameStartSkipBtn?.classList.remove('hidden');
+        }, 1200);
+
+        for (const step of ['3', '2', '1']) {
+            if (gameStartCountdown) {
+                gameStartCountdown.textContent = step;
+                gameStartCountdown.classList.remove('show');
+                void gameStartCountdown.offsetWidth;
+                gameStartCountdown.classList.add('show');
+            }
+            if (typeof GameAudio !== 'undefined' && typeof GameAudio.playCountdownTick === 'function') {
+                GameAudio.playCountdownTick(Number(step));
+            }
+            await waitForTransitionStep(520, { allowSkip: allowGameStartSkip });
+            if (gameStartWasSkipped) {
+                break;
+            }
+        }
+
+        setGameStartPhase('launch');
+        gameStartOverlay?.classList.add('is-flashing');
+        if (typeof GameAudio !== 'undefined' && typeof GameAudio.playMatchStartImpact === 'function') {
+            GameAudio.playMatchStartImpact();
+        }
+        await waitForTransitionStep(240);
+        gameStartOverlay?.classList.remove('is-flashing');
+        allowGameStartSkip = false;
+        gameStartSkipBtn?.classList.add('hidden');
+        resetGameStartOverlay();
+        unlockGameStartUI();
+        isGameStartTransitionRunning = false;
+    }
 
     function startRuntime() {
         if (hasStartedRuntime) return;
@@ -788,6 +1016,9 @@
 
         roomBanner?.classList.toggle('hidden', !roomCode);
         if (roomCodeDisplay) roomCodeDisplay.textContent = roomCode || '------';
+        if (hudRoomCode) hudRoomCode.textContent = roomCode ? `Room ${roomCode}` : 'Room';
+        hudRoomChip?.classList.toggle('hidden', !roomCode);
+        hostControlsShell?.classList.toggle('hidden', !isHost || !isGameStarted);
         lobbyEndBtn?.classList.toggle('hidden', !isHost);
         if (!isHost) {
             uiState.hostControlsOpen = false;
@@ -1086,6 +1317,7 @@
     });
 
     socket.on('disconnect', () => {
+        cancelGameStartTransition();
         Notifications.show('Disconnected from server', 'error', 4000);
     });
 
@@ -1107,6 +1339,10 @@
     socket.on('lobby-update', (state) => {
         lobbyState = state;
         syncBoardSelection(state?.selectedBoardId || state?.boardId);
+        GameUI.updateHostPlayerId(state?.hostPlayerId || null);
+        if (!state?.isGameStarted && isGameStartPreLocked && !isGameStartTransitionRunning) {
+            cancelGameStartTransition();
+        }
         syncRoomChrome(state);
         refreshGameplayUI();
     });
@@ -1118,12 +1354,14 @@
     });
 
     socket.on('room-ended', (data) => {
+        cancelGameStartTransition();
         clearRoomCode();
         Notifications.show(data?.message || 'Room ended', 'info', 5000);
         setTimeout(() => window.location.assign(window.location.pathname), 250);
     });
 
     socket.on('player-kicked', (data) => {
+        cancelGameStartTransition();
         clearRoomCode();
         Notifications.show(data?.message || 'You were removed from the room.', 'error', 5000);
         setTimeout(() => window.location.assign(window.location.pathname), 250);
@@ -1146,6 +1384,12 @@
 
     // ── Init all systems ──────────────────────────────────
     Lobby.init(socket);
+    GameUI.init(socket);
+    GameModals.init(socket);
+    if (typeof GameAudio !== 'undefined') GameAudio.init();
+    HistoryLog.init();
+    TradeSystem.init(socket);
+    AuctionSystem.init(socket);
     if (typeof DevPanel !== 'undefined') DevPanel.init(socket);
     mountGameplayUi();
     GameBoard.setTextProfile(DEFAULT_VIEW_MODE);
@@ -1185,6 +1429,43 @@
         event.target.value = '';
     });
 
+    hostTurnTimerEnabledInput?.addEventListener('change', () => {
+        socket.emit('host-set-turn-timer-enabled', {
+            enabled: Boolean(hostTurnTimerEnabledInput.checked)
+        });
+    });
+
+    hostExtendTimer15Btn?.addEventListener('click', () => {
+        if (hostExtendTimer15Btn.disabled) return;
+        socket.emit('host-extend-turn-timer', { seconds: 15 });
+    });
+
+    hostExtendTimer30Btn?.addEventListener('click', () => {
+        if (hostExtendTimer30Btn.disabled) return;
+        socket.emit('host-extend-turn-timer', { seconds: 30 });
+    });
+
+    gameStartSkipBtn?.addEventListener('click', () => {
+        if (!allowGameStartSkip) return;
+        allowGameStartSkip = false;
+        gameStartWasSkipped = true;
+        gameStartSkipBtn.classList.add('hidden');
+        if (typeof GameAudio !== 'undefined' && typeof GameAudio.playUiClick === 'function') {
+            GameAudio.playUiClick();
+        }
+        if (resolveGameStartSkip) {
+            resolveGameStartSkip();
+            resolveGameStartSkip = null;
+        }
+    });
+
+    window.addEventListener('lobby-start-requested', () => {
+        lockGameStartUI({ withFailSafe: true });
+    });
+
+    viewDockToggle?.addEventListener('click', () => {
+        setTopDownViewOptionsOpen(!document.body.classList.contains('top-down-view-options-open'));
+    });
     document.getElementById('create-room-btn')?.addEventListener('click', () => {
         connectToRoom(generateRoomCode());
     });
@@ -1254,7 +1535,10 @@
         refreshGameplayUI();
     });
 
-    socket.on('gameStarted', (state) => {
+    socket.on('gameStarted', async (state) => {
+        if (isGameStartPreLocked || !currentGameState?.isGameStarted) {
+            await playGameStartTransition(state);
+        }
         applyState(state);
     });
 
@@ -1588,6 +1872,9 @@
     });
 
     socket.on('game-error', (data) => {
+        if (isGameStartPreLocked && !currentGameState?.isGameStarted) {
+            cancelGameStartTransition();
+        }
         Notifications.notifyError(data.message);
         refreshGameplayUI();
     });

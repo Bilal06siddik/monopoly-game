@@ -237,6 +237,233 @@ const GameAudio = (() => {
         });
     }
 
+    function playUiHover() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: 880,
+                glideTo: 1040,
+                type: 'triangle',
+                duration: 0.035,
+                gain: 0.012,
+                release: 0.05
+            });
+        });
+    }
+
+    function playUiClick() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            scheduleNoiseBurst(ctx, {
+                startTime: now,
+                duration: 0.04,
+                gain: 0.018,
+                fromFrequency: 1800,
+                toFrequency: 900,
+                q: 1.6
+            });
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: 540,
+                glideTo: 420,
+                type: 'square',
+                duration: 0.03,
+                gain: 0.01,
+                release: 0.05
+            });
+        });
+    }
+
+    function playSkinSwap() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            scheduleNoiseBurst(ctx, {
+                startTime: now,
+                duration: 0.08,
+                gain: 0.015,
+                fromFrequency: 2400,
+                toFrequency: 700,
+                q: 1.1
+            });
+            scheduleTone(ctx, {
+                startTime: now + 0.015,
+                frequency: 680,
+                glideTo: 980,
+                type: 'sawtooth',
+                duration: 0.08,
+                gain: 0.012,
+                release: 0.08
+            });
+        });
+    }
+
+    function playSelectConfirm() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.01;
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: 320,
+                glideTo: 440,
+                type: 'triangle',
+                duration: 0.11,
+                gain: 0.024,
+                release: 0.12
+            });
+            scheduleTone(ctx, {
+                startTime: now + 0.08,
+                frequency: 640,
+                glideTo: 880,
+                type: 'sine',
+                duration: 0.12,
+                gain: 0.018,
+                release: 0.14
+            });
+        });
+    }
+
+    function playPopupOpen() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            scheduleNoiseBurst(ctx, {
+                startTime: now,
+                duration: 0.12,
+                gain: 0.014,
+                fromFrequency: 2600,
+                toFrequency: 500,
+                q: 1.0
+            });
+            scheduleTone(ctx, {
+                startTime: now + 0.025,
+                frequency: 420,
+                glideTo: 760,
+                type: 'triangle',
+                duration: 0.14,
+                gain: 0.015,
+                release: 0.12
+            });
+        });
+    }
+
+    function playPopupClose() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            scheduleNoiseBurst(ctx, {
+                startTime: now,
+                duration: 0.08,
+                gain: 0.012,
+                fromFrequency: 1200,
+                toFrequency: 320,
+                q: 1.0
+            });
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: 620,
+                glideTo: 360,
+                type: 'triangle',
+                duration: 0.08,
+                gain: 0.01,
+                release: 0.08
+            });
+        });
+    }
+
+    function playLobbyReadyPulse() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.01;
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: 180,
+                glideTo: 260,
+                type: 'triangle',
+                duration: 0.14,
+                gain: 0.028,
+                release: 0.18
+            });
+            scheduleTone(ctx, {
+                startTime: now + 0.06,
+                frequency: 540,
+                glideTo: 720,
+                type: 'sine',
+                duration: 0.09,
+                gain: 0.016,
+                release: 0.12
+            });
+        });
+    }
+
+    function playCountdownTick(step = 3) {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            const base = Math.max(120, 230 - ((3 - Math.max(1, Math.min(3, step))) * 18));
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: base,
+                glideTo: base * 0.88,
+                type: 'triangle',
+                duration: 0.12,
+                gain: 0.035,
+                release: 0.16
+            });
+            scheduleNoiseBurst(ctx, {
+                startTime: now + 0.01,
+                duration: 0.05,
+                gain: 0.013,
+                fromFrequency: 900,
+                toFrequency: 420,
+                q: 1.1
+            });
+        });
+    }
+
+    function playMatchStartImpact() {
+        prime().then(ctx => {
+            if (!ctx || ctx.state !== 'running') return;
+            const now = ctx.currentTime + 0.005;
+            const master = ctx.createGain();
+            master.gain.value = 0.84;
+            master.connect(ctx.destination);
+
+            scheduleNoiseBurst(ctx, {
+                startTime: now,
+                duration: 0.14,
+                gain: 0.03,
+                fromFrequency: 1800,
+                toFrequency: 240,
+                q: 0.9,
+                destination: master
+            });
+            scheduleTone(ctx, {
+                startTime: now,
+                frequency: 160,
+                glideTo: 92,
+                type: 'sawtooth',
+                duration: 0.18,
+                gain: 0.03,
+                release: 0.22,
+                destination: master
+            });
+            scheduleTone(ctx, {
+                startTime: now + 0.06,
+                frequency: 720,
+                glideTo: 1080,
+                type: 'triangle',
+                duration: 0.16,
+                gain: 0.022,
+                release: 0.18,
+                destination: master
+            });
+        });
+    }
+
     function init() {
         if (!AudioContextCtor) return;
         attachUnlockListeners();
@@ -247,6 +474,15 @@ const GameAudio = (() => {
         init,
         prime,
         playDiceRoll,
-        playTurnAlert
+        playTurnAlert,
+        playUiHover,
+        playUiClick,
+        playSkinSwap,
+        playSelectConfirm,
+        playPopupOpen,
+        playPopupClose,
+        playLobbyReadyPulse,
+        playCountdownTick,
+        playMatchStartImpact
     };
 })();

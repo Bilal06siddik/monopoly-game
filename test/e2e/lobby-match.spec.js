@@ -9,6 +9,14 @@ async function selectFirstAvailableCharacter(page) {
     const selector = page.locator('.tcg-card-wrapper:not(.taken) .tcg-select-btn');
     await expect(selector.first()).toBeVisible({ timeout: 30000 });
     await selector.first().click();
+    await expect(page.locator('#confirm-character-btn')).toBeEnabled({ timeout: 15000 });
+    await page.locator('#confirm-character-btn').click();
+}
+
+async function readyUp(page) {
+    const readyButton = page.locator('#ready-toggle-btn');
+    await expect(readyButton).toBeEnabled({ timeout: 15000 });
+    await readyButton.click();
 }
 
 async function installVisibilityStateHarness(page) {
@@ -39,6 +47,7 @@ test('host can create room, add a bot, and start a match', async ({ page }) => {
     await page.locator('#create-room-btn').click();
 
     await selectFirstAvailableCharacter(page);
+    await readyUp(page);
 
     const addBotButton = page.locator('#add-bot-btn');
     await expect(addBotButton).toBeEnabled({ timeout: 15000 });
@@ -126,6 +135,7 @@ test('two clients can join same room and both enter the running match', async ({
         await hostPage.goto('/');
         await hostPage.locator('#create-room-btn').click();
         await selectFirstAvailableCharacter(hostPage);
+        await readyUp(hostPage);
 
         const roomCode = await hostPage.evaluate(() => {
             return new URL(window.location.href).searchParams.get('room');
@@ -134,6 +144,7 @@ test('two clients can join same room and both enter the running match', async ({
 
         await guestPage.goto(`/?room=${roomCode}`);
         await selectFirstAvailableCharacter(guestPage);
+        await readyUp(guestPage);
 
         const startButton = hostPage.locator('#start-game-btn');
         await expect(startButton).toBeEnabled({ timeout: 20000 });

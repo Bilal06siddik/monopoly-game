@@ -12,6 +12,7 @@ const {
     waitForSocketEventMatching,
     connectClient,
     selectCharacter,
+    setReadyState,
     disconnectClients
 } = require('../helpers/socketHarness');
 
@@ -46,6 +47,8 @@ test('host can start a match when two players are ready', async () => {
 
     await selectCharacter(host.socket, 'bilo');
     await selectCharacter(guest.socket, 'osss');
+    await setReadyState(host.socket, true);
+    await setReadyState(guest.socket, true);
 
     const hostStartedPromise = waitForSocketEvent(host.socket, 'gameStarted');
     const guestStartedPromise = waitForSocketEvent(guest.socket, 'gameStarted');
@@ -77,6 +80,7 @@ test('bots stay flagged as bots after game start', async () => {
 
     const host = track(await connectClient({ port, roomCode }));
     await selectCharacter(host.socket, 'bilo');
+    await setReadyState(host.socket, true);
 
     const lobbyUpdatePromise = waitForSocketEventMatching(
         host.socket,
@@ -107,6 +111,8 @@ test('lobby map votes decide which board starts', async () => {
 
     await selectCharacter(host.socket, 'bilo');
     await selectCharacter(guest.socket, 'osss');
+    await setReadyState(host.socket, true);
+    await setReadyState(guest.socket, true);
 
     const votedLobbyPromise = waitForSocketEventMatching(
         host.socket,
@@ -191,6 +197,7 @@ test('host cannot start a match with fewer than two players', async () => {
 
     const host = track(await connectClient({ port, roomCode }));
     await selectCharacter(host.socket, 'bilo');
+    await setReadyState(host.socket, true);
 
     const errorPromise = waitForSocketEvent(host.socket, 'game-error');
     host.socket.emit('requestStartGame');
@@ -207,6 +214,8 @@ test('non-host players cannot start the match', async () => {
 
     await selectCharacter(host.socket, 'bilo');
     await selectCharacter(guest.socket, 'osss');
+    await setReadyState(host.socket, true);
+    await setReadyState(guest.socket, true);
 
     const errorPromise = waitForSocketEvent(guest.socket, 'game-error');
     guest.socket.emit('requestStartGame');

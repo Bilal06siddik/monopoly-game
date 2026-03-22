@@ -3,6 +3,16 @@
 // ═══════════════════════════════════════════════════════════
 
 const GameUI = (() => {
+    const CHARACTER_SKIN_IMAGE_MAP = {
+        bilo: {
+            'casual-player': './characters/bilo-common.png',
+            'rap-mogul': './characters/bilo-rapper.png',
+            'anfield-mind': './characters/bilo-liver.png',
+            'brand-strategist': './characters/bilo-coddi.png',
+            'shark-investor': './characters/bilo.webp'
+        }
+    };
+
     let socket = null;
     let myPlayerId = null;
     let currentHostPlayerId = null;
@@ -120,6 +130,18 @@ const GameUI = (() => {
     function hideAvatarPreview() {
         if (!avatarPreviewElement) return;
         avatarPreviewElement.classList.remove('show');
+    }
+
+    function getPlayerAvatarSrc(player) {
+        if (player?.customAvatarUrl) return player.customAvatarUrl;
+        if (player?.character === 'custom') return './characters/custom.svg';
+
+        const characterId = String(player?.character || '').toLowerCase();
+        const skinId = String(player?.skinId || '').toLowerCase();
+        const mappedSkin = CHARACTER_SKIN_IMAGE_MAP[characterId]?.[skinId];
+        if (mappedSkin) return mappedSkin;
+
+        return `./characters/${characterId}.webp`;
     }
 
     function syncLeaderboardCollapseState() {
@@ -690,7 +712,7 @@ const GameUI = (() => {
             element.className = `lb-card${player.id === myPlayerId ? ' is-me' : ''}${!player.isActive ? ' bankrupt' : ''}`;
             element.style.setProperty('--card-color', player.color);
 
-            const avatarSrc = player.customAvatarUrl || (player.character === 'custom' ? './characters/custom.svg' : `./characters/${player.character.toLowerCase()}.webp`);
+            const avatarSrc = getPlayerAvatarSrc(player);
             const displayName = player.name || player.character;
 
             if (!player.isActive) {

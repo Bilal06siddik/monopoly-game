@@ -497,6 +497,92 @@ const GameBoard = (() => {
         return currentBoardId === 'countries' && tile?.bandStyle === 'flag-image' && Boolean(tile.flagImage);
     }
 
+    function usesEgyptColorShowcase(tile) {
+        return currentBoardId === 'egypt' && tile?.type === 'property';
+    }
+
+    function getTileSectionMetrics(canvas) {
+        const buildZoneHeight = Math.round(canvas.height * 0.26);
+        const showcaseZoneHeight = Math.round(canvas.height * 0.28);
+        const footerHeight = Math.round(canvas.height * 0.18);
+        const contentHeight = canvas.height - footerHeight;
+        const nameZoneTop = buildZoneHeight + showcaseZoneHeight;
+        const nameZoneHeight = Math.max(0, contentHeight - nameZoneTop);
+
+        return {
+            buildZoneHeight,
+            showcaseZoneHeight,
+            nameZoneTop,
+            nameZoneHeight,
+            showcaseZoneTop: buildZoneHeight,
+            footerHeight,
+            contentHeight
+        };
+    }
+
+    function drawTileSectionSeparators(ctx, canvas, metrics) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+        ctx.fillRect(18, metrics.showcaseZoneTop, canvas.width - 36, 4);
+        ctx.fillRect(18, metrics.nameZoneTop, canvas.width - 36, 4);
+    }
+
+    function drawBuildingZone(ctx, tile, canvas, metrics, buildingCount, textScale, isMortgaged) {
+        if (tile?.type !== 'property') return;
+
+        const zoneX = canvas.width * 0.13;
+        const zoneY = canvas.height * 0.05;
+        const zoneWidth = canvas.width * 0.74;
+        const zoneHeight = metrics.buildZoneHeight * 0.68;
+
+        ctx.fillStyle = 'rgba(7, 12, 20, 0.28)';
+        ctx.beginPath();
+        addRoundedRectPath(ctx, zoneX, zoneY, zoneWidth, zoneHeight, 24);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        addRoundedRectPath(ctx, zoneX + 2, zoneY + 2, zoneWidth - 4, zoneHeight - 4, 22);
+        ctx.stroke();
+
+        if (!buildingCount || isMortgaged) {
+            ctx.fillStyle = 'rgba(220, 231, 255, 0.7)';
+            ctx.font = `700 ${Math.floor(canvas.width * 0.05 * textScale)}px 'Segoe UI', Arial, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('BUILD', canvas.width / 2, zoneY + (zoneHeight / 2));
+            return;
+        }
+
+        ctx.fillStyle = buildingCount >= 5 ? '#ffcf7a' : '#c6ffd7';
+        ctx.font = `800 ${Math.floor(canvas.width * 0.086 * textScale)}px 'Segoe UI', Arial, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(buildingCount >= 5 ? 'HOTEL' : `${buildingCount}H`, canvas.width / 2, zoneY + (zoneHeight / 2));
+    }
+
+    function drawEgyptColorShowcase(ctx, tile, canvas, metrics) {
+        const colorHex = getTileAccentColor(tile);
+        const cardX = canvas.width * 0.17;
+        const cardY = metrics.showcaseZoneTop + (metrics.showcaseZoneHeight * 0.15);
+        const cardWidth = canvas.width * 0.66;
+        const cardHeight = metrics.showcaseZoneHeight * 0.7;
+        const gradient = ctx.createLinearGradient(cardX, cardY, cardX + cardWidth, cardY);
+        gradient.addColorStop(0, shadeColor(colorHex, 20));
+        gradient.addColorStop(1, shadeColor(colorHex, -12));
+
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        addRoundedRectPath(ctx, cardX, cardY, cardWidth, cardHeight, 26);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.26)';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        addRoundedRectPath(ctx, cardX + 2, cardY + 2, cardWidth - 4, cardHeight - 4, 24);
+        ctx.stroke();
+    }
+
     function drawDefaultTileBand(ctx, tile, canvas, bandHeight) {
         const colorHex = getTileAccentColor(tile);
         const bandGradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
@@ -512,12 +598,12 @@ const GameBoard = (() => {
         ctx.fillRect(0, bandHeight - 10, canvas.width, 10);
     }
 
-    function drawCenteredFlagCard(ctx, tile, canvas) {
+    function drawCenteredFlagCard(ctx, tile, canvas, metrics = getTileSectionMetrics(canvas)) {
         const flagImageEntry = getFlagImageEntry(tile.flagImage, tile.index);
         const cardX = canvas.width * 0.17;
-        const cardY = canvas.height * 0.23;
+        const cardY = metrics.showcaseZoneTop + (metrics.showcaseZoneHeight * 0.15);
         const cardWidth = canvas.width * 0.66;
-        const cardHeight = canvas.height * 0.2;
+        const cardHeight = metrics.showcaseZoneHeight * 0.7;
 
         ctx.fillStyle = 'rgba(8, 14, 24, 0.36)';
         ctx.beginPath();
@@ -586,7 +672,8 @@ const GameBoard = (() => {
         const isCenteredCountriesFlagTile = isCountriesFlagTile(tile);
 
         drawOrientedTexture(ctx, canvas, rotationDegrees, () => {
-            const footerHeight = Math.round(canvas.height * 0.18);
+            const metrics = getTileSectionMetrics(canvas);
+            const footerHeight = metrics.footerHeight;
             const bandHeight = Math.round(canvas.height * (isCenteredCountriesFlagTile ? 0.13 : tile?.bandStyle === 'flag-image' ? 0.23 : 0.18));
             const isPurchasable = ['property', 'railroad', 'utility'].includes(tile.type);
             const buildingCount = propertyState?.houses || 0;
@@ -608,8 +695,14 @@ const GameBoard = (() => {
             ctx.lineWidth = 2;
             ctx.strokeRect(14, 14, canvas.width - 28, canvas.height - 28);
 
-            if (isPurchasable) {
+            if (isPurchasable && !isCenteredCountriesFlagTile && !usesEgyptColorShowcase(tile)) {
                 drawTileBand(ctx, tile, canvas, bandHeight);
+            }
+
+            drawTileSectionSeparators(ctx, canvas, metrics);
+
+            if (usesEgyptColorShowcase(tile)) {
+                drawEgyptColorShowcase(ctx, tile, canvas, metrics);
             }
 
             if (ownerColor) {
@@ -626,31 +719,10 @@ const GameBoard = (() => {
             }
 
             if (isCenteredCountriesFlagTile) {
-                drawCenteredFlagCard(ctx, tile, canvas);
+                drawCenteredFlagCard(ctx, tile, canvas, metrics);
             }
 
-            if (buildingCount > 0 && tile.type === 'property' && !propertyState?.isMortgaged) {
-                const badgeY = isCenteredCountriesFlagTile ? canvas.height * 0.12 : canvas.height * 0.26;
-                const badgeHeight = isCenteredCountriesFlagTile ? canvas.height * 0.1 : canvas.height * 0.12;
-                const badgeLabelY = isCenteredCountriesFlagTile ? canvas.height * 0.17 : canvas.height * 0.32;
-                ctx.fillStyle = 'rgba(6, 10, 18, 0.78)';
-                ctx.beginPath();
-                addRoundedRectPath(
-                    ctx,
-                    canvas.width * 0.62,
-                    badgeY,
-                    canvas.width * 0.22,
-                    badgeHeight,
-                    18
-                );
-                ctx.fill();
-
-                ctx.fillStyle = buildingCount >= 5 ? '#ffcf7a' : '#c6ffd7';
-                ctx.font = `800 ${Math.floor(canvas.width * 0.072 * textScale)}px 'Segoe UI', Arial, sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(buildingCount >= 5 ? 'HOTEL' : `${buildingCount}H`, canvas.width * 0.73, badgeLabelY);
-            }
+            drawBuildingZone(ctx, tile, canvas, metrics, buildingCount, textScale, propertyState?.isMortgaged);
 
             const iconText = getTileIconText(tile);
             const imageIcon = tile.iconImage === 'metro'
@@ -713,14 +785,16 @@ const GameBoard = (() => {
             const nameLines = wrapText(ctx, tile.name.toUpperCase(), maxNameWidth);
             const lineHeight = fittedFontSize * (isFlagTile ? 1 : 1.06);
             const startY = tile.type === 'railroad'
-                ? canvas.height * 0.52
+                ? metrics.nameZoneTop + (metrics.nameZoneHeight * 0.24)
                 : (canDrawImageIcon || iconText)
-                    ? canvas.height * 0.45
+                    ? metrics.nameZoneTop + (metrics.nameZoneHeight * 0.12)
                     : isCenteredCountriesFlagTile
-                        ? canvas.height * 0.56
+                        ? metrics.nameZoneTop + (metrics.nameZoneHeight * 0.34)
+                    : usesEgyptColorShowcase(tile)
+                        ? metrics.nameZoneTop + (metrics.nameZoneHeight * 0.34)
                     : isFlagTile
-                        ? canvas.height * 0.44
-                        : canvas.height * 0.39;
+                        ? metrics.nameZoneTop + (metrics.nameZoneHeight * 0.2)
+                        : metrics.nameZoneTop + (metrics.nameZoneHeight * 0.16);
             nameLines.slice(0, 3).forEach((line, lineIndex) => {
                 ctx.strokeText(line, canvas.width / 2, startY + (lineIndex * lineHeight));
                 ctx.fillText(line, canvas.width / 2, startY + (lineIndex * lineHeight));
@@ -1409,11 +1483,7 @@ const GameBoard = (() => {
 
     function getBuildingOrientation(index) {
         const tile = boardData[index];
-        const topEdgeOffset = currentBoardId === 'countries'
-            && tile?.type === 'property'
-            && tile?.bandStyle === 'flag-image'
-            ? 0.7
-            : 0;
+        const topEdgeOffset = tile?.type === 'property' ? 0.7 : 0;
         const outward = topEdgeOffset > 0 ? getTileOutwardVector(index) : { x: 0, z: 0 };
 
         if (index >= 1 && index <= 9) {
