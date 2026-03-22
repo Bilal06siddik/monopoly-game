@@ -1765,6 +1765,17 @@ function endAuction() {
       }
       logEvent(`🔨 ${winner.name} won ${tile.name} for $${finishedAuction.currentBid}!`, 'auction');
     }
+  } else if (finishedAuction.reason === 'own' && finishedAuction.initiatorId) {
+    const seller = gameState.getPlayerById(finishedAuction.initiatorId);
+    if (seller) {
+      tile.owner = seller.id;
+      if (!seller.properties.includes(tile.index)) {
+        seller.properties.push(tile.index);
+      }
+      logEvent(`🔨 No bids on ${tile.name}. ${seller.name} keeps the property.`, 'auction');
+    } else {
+      logEvent(`🔨 No bids on ${tile.name}. Property remains unowned.`, 'auction');
+    }
   } else {
     logEvent(`🔨 No bids on ${tile.name}. Property remains unowned.`, 'auction');
   }

@@ -354,6 +354,9 @@
             setFocusedTile(tileIndex);
             openPropertyDetails(tileIndex);
         });
+        if (currentGameState) {
+            syncWorldFromState(currentGameState);
+        }
         GameScene.animate(renderRuntimeUI);
     }
 
@@ -403,6 +406,15 @@
 
     function getTopBarElement() {
         return document.querySelector('.gpu-top-bar');
+    }
+
+    function getOwnAuctionMaxValue(gameState) {
+        return Math.max(
+            0,
+            ...((gameState?.players || [])
+                .filter(player => player?.isActive)
+                .map(player => Number.isFinite(player.money) ? player.money : 0))
+        );
     }
 
     function resetOwnAuctionState() {
@@ -668,7 +680,7 @@
             },
             selectOwnAuctionProperty: (tileIndex) => {
                 const property = currentGameState?.properties?.find(item => item.index === tileIndex);
-                const maxValue = property ? property.price + ((property.houses || 0) * Math.floor(property.price * 0.25)) : 0;
+                const maxValue = property ? getOwnAuctionMaxValue(currentGameState) : 0;
                 uiState.ownAuction = {
                     open: true,
                     selectedTileIndex: tileIndex,
@@ -682,13 +694,16 @@
                 refreshGameplayUI();
             },
             setOwnAuctionPrice: (value) => {
-                uiState.ownAuction.startPrice = value;
+                const maxValue = getOwnAuctionMaxValue(currentGameState);
+                uiState.ownAuction.startPrice = Math.max(0, Math.min(maxValue, value));
                 refreshGameplayUI();
             },
             submitOwnAuction: () => {
+                const maxValue = getOwnAuctionMaxValue(currentGameState);
+                const startPrice = Math.max(0, Math.min(maxValue, uiState.ownAuction.startPrice || 0));
                 socket.emit('own-auction', {
                     tileIndex: uiState.ownAuction.selectedTileIndex,
-                    startPrice: uiState.ownAuction.startPrice
+                    startPrice
                 });
                 resetOwnAuctionState();
                 refreshGameplayUI();

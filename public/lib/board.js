@@ -66,6 +66,7 @@ const GameBoard = (() => {
     let sceneRef = null;
     let rendererStateRef = null;
     let currentBoardId = window.DEFAULT_BOARD_ID || 'egypt';
+    let builtBoardId = null;
     let boardData = Array.isArray(window.BOARD_DATA) ? window.BOARD_DATA : [];
     const interactionHighlightsEnabled = false;
     const BOARD_MAPS = window.BOARD_MAPS || {};
@@ -224,6 +225,7 @@ const GameBoard = (() => {
         sceneRef = scene;
         rendererStateRef = rendererRef || rendererStateRef;
         const activeBoard = setActiveBoard(currentBoardId);
+        const shouldReuseRenderState = builtBoardId === null || builtBoardId === activeBoard.id;
         const surfacePalette = getBoardSurfacePalette(activeBoard.id);
         disposeBoard();
 
@@ -265,17 +267,31 @@ const GameBoard = (() => {
 
         boardData.forEach((tile, index) => {
             const isCorner = tile.type === 'corner';
-            tileRenderState[index] = {
-                ownerColor: null,
-                propertyState: null,
-                isMortgaged: false
-            };
+            const previousRenderState = shouldReuseRenderState ? tileRenderState[index] : null;
+            tileRenderState[index] = previousRenderState
+                ? {
+                    ownerColor: previousRenderState.ownerColor ?? null,
+                    propertyState: previousRenderState.propertyState
+                        ? { ...previousRenderState.propertyState }
+                        : null,
+                    isMortgaged: Boolean(previousRenderState.isMortgaged)
+                }
+                : {
+                    ownerColor: null,
+                    propertyState: null,
+                    isMortgaged: false
+                };
             const geometry = isCorner
                 ? new THREE.BoxGeometry(CORNER_SIZE, TILE_H, CORNER_SIZE)
                 : new THREE.BoxGeometry(TILE_W, TILE_H, TILE_D);
             const materials = isCorner
                 ? createCornerMaterials(tile, index, getCornerState(index))
-                : createTileMaterials(tile, index, null);
+                : createTileMaterials(
+                    tile,
+                    index,
+                    tileRenderState[index].ownerColor,
+                    tileRenderState[index].propertyState
+                );
             const mesh = new THREE.Mesh(geometry, materials);
 
             const position = calculateTilePosition(index);
@@ -371,6 +387,7 @@ const GameBoard = (() => {
         // -----------------------
 
         scene.add(boardGroup);
+        builtBoardId = activeBoard.id;
         return boardGroup;
     }
 
@@ -1352,36 +1369,41 @@ const GameBoard = (() => {
         return group;
     }
 
-    function addOwnershipOutlineToModel(object3D, ownerColor) {
+    function applyOwnershipTintToModel(object3D, ownerColor) {
         if (!object3D || !ownerColor) return object3D;
-
-        const outlineMaterial = new THREE.LineBasicMaterial({
-            color: hexToNumber(shadeColor(ownerColor, 20), 0x9bcaff),
-            transparent: true,
-            opacity: 0.98,
-            depthTest: false
-        });
+        if (object3D.userData?.ownershipTintApplied) return object3D;
+        const tintColor = new THREE.Color(ownerColor);
 
         object3D.traverse(child => {
-            if (!child?.isMesh || !child.geometry || child.userData?.ownershipOutlineApplied) return;
+            if (!child?.isMesh || !child.material) return;
 
-            const outline = new THREE.LineSegments(
-                new THREE.EdgesGeometry(child.geometry, 32),
-                outlineMaterial.clone()
-            );
-            outline.name = 'ownership-outline';
-            outline.scale.setScalar(1.04);
-            outline.renderOrder = 12;
-            outline.userData = {
-                ...outline.userData,
-                ownershipOutline: true
+            const applyTint = (material, blend = 0.28) => {
+                if (!material) return material;
+                const nextMaterial = material.clone();
+
+                if (nextMaterial.color?.isColor) {
+                    nextMaterial.color.lerp(tintColor, blend);
+                }
+                if (nextMaterial.emissive?.isColor) {
+                    nextMaterial.emissive.lerp(tintColor, 0.06);
+                    nextMaterial.emissiveIntensity = Math.max(nextMaterial.emissiveIntensity || 0, 0.06);
+                }
+
+                nextMaterial.needsUpdate = true;
+                return nextMaterial;
             };
-            child.add(outline);
-            child.userData = {
-                ...child.userData,
-                ownershipOutlineApplied: true
-            };
+
+            if (Array.isArray(child.material)) {
+                child.material = child.material.map((material, index) => applyTint(material, 0.24 + (index * 0.015)));
+            } else {
+                child.material = applyTint(child.material);
+            }
         });
+
+        object3D.userData = {
+            ...object3D.userData,
+            ownershipTintApplied: true
+        };
 
         return object3D;
     }
@@ -1493,14 +1515,14 @@ const GameBoard = (() => {
             const upgradeLevel = Math.max(0, Math.min(houseCount, upgradeModelConfigs.length) - 1);
             const upgradeUnit = await createUpgradeUnit(upgradeLevel);
             if (houseRenderTokens[tileIndex] !== renderToken) return;
-            addOwnershipOutlineToModel(upgradeUnit, ownerColor);
+            applyOwnershipTintToModel(upgradeUnit, ownerColor);
             cluster.add(upgradeUnit);
         } catch (error) {
             console.warn(`Failed to load upgrade model for tile ${tileIndex}. Falling back to legacy buildings.`, error);
             if (houseRenderTokens[tileIndex] !== renderToken) return;
             if (houseCount >= 5) {
                 const hotel = createHotelUnit();
-                addOwnershipOutlineToModel(hotel, ownerColor);
+                applyOwnershipTintToModel(hotel, ownerColor);
                 cluster.add(hotel);
             } else {
                 const spacing = 0.29;
@@ -1508,7 +1530,7 @@ const GameBoard = (() => {
                 for (let index = 0; index < houseCount; index++) {
                     const house = createHouseUnit();
                     house.position.x = start + (index * spacing);
-                    addOwnershipOutlineToModel(house, ownerColor);
+                    applyOwnershipTintToModel(house, ownerColor);
                     cluster.add(house);
                 }
             }
@@ -1826,21 +1848,19 @@ const GameBoard = (() => {
     function updateBuildingTransparency(tileIndex) {
         const meshes = houseMeshes[tileIndex];
         if (!meshes || meshes.length === 0) return;
-        const isOccupied = occupiedTiles.has(tileIndex);
-        const targetOpacity = isOccupied ? 0.4 : 1.0;
         meshes.forEach(cluster => {
             cluster.traverse(child => {
                 if (!child?.isMesh) return;
                 if (child.material) {
                     if (Array.isArray(child.material)) {
                         child.material.forEach(mat => {
-                            mat.transparent = isOccupied;
-                            mat.opacity = targetOpacity;
+                            mat.transparent = false;
+                            mat.opacity = 1;
                             mat.needsUpdate = true;
                         });
                     } else {
-                        child.material.transparent = isOccupied;
-                        child.material.opacity = targetOpacity;
+                        child.material.transparent = false;
+                        child.material.opacity = 1;
                         child.material.needsUpdate = true;
                     }
                 }

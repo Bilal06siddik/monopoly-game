@@ -547,6 +547,39 @@ test('late auction bid near timeout resolves to a consistent final state', async
     }
 });
 
+test('own-auction with no bids returns the property to the seller', async () => {
+    const { host, hostState } = await bootstrapMatch();
+
+    const hostPlayer = hostState.players.find((player) => player.character === 'bilo');
+    assert.ok(hostPlayer);
+
+    host.socket.emit('dev-command', {
+        type: 'set-owner',
+        playerId: hostPlayer.id,
+        tileIndex: 1
+    });
+    await waitForSocketEvent(host.socket, 'game-state-sync');
+
+    const auctionStartedPromise = waitForSocketEvent(host.socket, 'auction-started', 12000);
+    const auctionEndedPromise = waitForSocketEvent(host.socket, 'auction-ended', 15000);
+
+    host.socket.emit('own-auction', { tileIndex: 1, startPrice: 100 });
+
+    const started = await auctionStartedPromise;
+    assert.equal(started.auction.tileIndex, 1);
+
+    const ended = await auctionEndedPromise;
+    const finalState = ended.gameState;
+    assert.ok(finalState, 'auction-ended should include final game state snapshot');
+
+    const tile = finalState.properties[1];
+    const seller = finalState.players.find((player) => player.id === hostPlayer.id);
+
+    assert.equal(ended.winnerId, null);
+    assert.equal(tile.owner, hostPlayer.id);
+    assert.ok(seller?.properties.includes(1));
+});
+
 test('own-auction debt recovery returns to done instead of rewinding to a fresh roll', async () => {
     const match = await bootstrapMatch();
     const { actor, actorId, target } = getCurrentTurnPair(match);

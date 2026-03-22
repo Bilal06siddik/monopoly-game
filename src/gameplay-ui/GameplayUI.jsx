@@ -44,6 +44,15 @@ function money(value) {
   return `$${Number.isFinite(value) ? value : 0}`;
 }
 
+function getOwnAuctionMaxValue(state) {
+  return Math.max(
+    0,
+    ...(state?.players || [])
+      .filter((player) => player?.isActive)
+      .map((player) => (Number.isFinite(player.money) ? player.money : 0))
+  );
+}
+
 function formatDuration(durationMs) {
   const totalSeconds = Math.max(0, Math.round((durationMs || 0) / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -483,6 +492,7 @@ function AuctionModal({ snapshot, actions }) {
   const state = snapshot.gameState;
   if (!auction) return null;
   const me = getMe(state, snapshot.myPlayerId);
+  const currentBidder = state?.players?.find((player) => player.id === auction.currentBidderId) || null;
   const timerMax = auction.timerMaxSeconds > 0 ? auction.timerMaxSeconds : auction.currentBidderId ? (auction.bidResetSeconds || 5) : 15;
   const timerPct = Math.max(0, Math.min(100, (auction.timeRemaining / timerMax) * 100));
   const quickBids = AUCTION_INCREMENTS.map((increment) => {
@@ -496,18 +506,27 @@ function AuctionModal({ snapshot, actions }) {
   return (
     <Modal id="auction-modal">
       <div className="gpu-modal-card gpu-auction-card">
-        <div className="gpu-inline gpu-space-between">
+        <div className="gpu-auction-header">
           <div><div className="gpu-modal-kicker">Live Auction</div><h2>{auction.tileName}</h2></div>
-          <div className={`gpu-current-bid${auction.currentBidderId ? ' is-active' : ''}`}>
-            <span>{auction.currentBidderCharacter || 'No bids yet'}</span>
-            <strong>{money(auction.currentBid || 0)}</strong>
-          </div>
         </div>
-        <div className="gpu-progress-track"><div className="gpu-progress-fill" style={{ width: `${timerPct}%` }} /></div>
-        <div className="gpu-auction-timer-line"><span>Round clock</span><strong>{Math.max(0, Math.ceil(auction.timeRemaining || 0))}s left</strong></div>
-        <div className="gpu-three-col">
-          <section className="gpu-stack"><h3>Property</h3><div className="gpu-stat-box"><span>Type</span><strong>{auction.tileType}</strong></div><div className="gpu-stat-box"><span>Price</span><strong>{money(auction.tilePrice)}</strong></div><div className="gpu-stat-box"><span>Rent</span><strong>{money(auction.tileRent)}</strong></div></section>
-          <section className="gpu-stack">
+        <div className="gpu-auction-layout">
+          <section className="gpu-stack gpu-auction-side">
+            <h3>Property</h3>
+            <div className="gpu-stat-box"><span>Type</span><strong>{auction.tileType}</strong></div>
+            <div className="gpu-stat-box"><span>Price</span><strong>{money(auction.tilePrice)}</strong></div>
+            <div className="gpu-stat-box"><span>Rent</span><strong>{money(auction.tileRent)}</strong></div>
+          </section>
+          <section className="gpu-stack gpu-auction-main">
+            <div
+              className={`gpu-current-bid gpu-auction-current${auction.currentBidderId ? ' is-active' : ''}`}
+              style={currentBidder?.color ? { '--gpu-auction-leader-color': currentBidder.color } : undefined}
+            >
+              <span className="gpu-auction-current-label">Current bid</span>
+              <strong>{money(auction.currentBid || 0)}</strong>
+              <em>{auction.currentBidderCharacter || 'No bids yet'}</em>
+            </div>
+            <div className="gpu-progress-track"><div className="gpu-progress-fill" style={{ width: `${timerPct}%` }} /></div>
+            <div className="gpu-auction-timer-line"><span>Round clock</span><strong>{Math.max(0, Math.ceil(auction.timeRemaining || 0))}s left</strong></div>
             <h3>Quick Bids</h3>
             <div className="gpu-auction-summary">
               <div className="gpu-stat-box"><span>Minimum next bid</span><strong>{money((auction.currentBid || 0) + 2)}</strong></div>
@@ -516,13 +535,16 @@ function AuctionModal({ snapshot, actions }) {
             <div id="auc-bid-grid" className="gpu-chip-grid gpu-auction-bids">
               {quickBids.map(({ increment, nextBid, disabled }) => (
                 <button key={increment} type="button" className="gpu-auction-bid-btn" disabled={disabled} onClick={() => actions.placeBid(nextBid)}>
-                  <span className="gpu-auction-bid-label">Bid +{money(increment).slice(1)}</span>
-                  <strong>{money(nextBid)}</strong>
+                  <strong className="gpu-auction-bid-amount">{money(nextBid)}</strong>
+                  <span className="gpu-auction-bid-label">+{money(increment).slice(1)}</span>
                 </button>
               ))}
             </div>
           </section>
-          <section className="gpu-stack"><h3>Players</h3><div className="gpu-scroll">{state.players.filter((player) => player.isActive).map((player) => <div key={player.id} className={`gpu-mini-player${player.id === auction.currentBidderId ? ' is-leading' : ''}`}><span style={{ color: player.color }}>{nameOf(player)}</span><strong>{money(player.money)}</strong></div>)}</div></section>
+          <section className="gpu-stack gpu-auction-side">
+            <h3>Players</h3>
+            <div className="gpu-scroll">{state.players.filter((player) => player.isActive).map((player) => <div key={player.id} className={`gpu-mini-player${player.id === auction.currentBidderId ? ' is-leading' : ''}`}><span style={{ color: player.color }}>{nameOf(player)}</span><strong>{money(player.money)}</strong></div>)}</div>
+          </section>
         </div>
       </div>
     </Modal>
@@ -535,7 +557,8 @@ function OwnAuctionModal({ snapshot, actions }) {
   if (!ownAuction?.open) return null;
   const myProperties = (state?.properties || []).filter((property) => property.owner === snapshot.myPlayerId);
   const selected = getTile(state, ownAuction.selectedTileIndex);
-  const maxValue = selected ? selected.price + (selected.houses * Math.floor(selected.price * 0.25)) : 0;
+  const maxValue = selected ? getOwnAuctionMaxValue(state) : 0;
+  const startPrice = Math.min(Math.max(ownAuction.startPrice || 0, 0), maxValue);
   return (
     <Modal id="own-auction-modal" onBackdropClick={(event) => { if (event.target.id === 'own-auction-modal') actions.closeOwnAuction(); }}>
       <div className="gpu-modal-card">
@@ -553,7 +576,7 @@ function OwnAuctionModal({ snapshot, actions }) {
             <h2>{selected.name}</h2>
             <div className="gpu-stack">
               <label className="gpu-stack"><span>Reset timer</span><div className="gpu-chip-grid">{[3, 6, 9].map((seconds) => <button key={seconds} type="button" className={ownAuction.timeSeconds === seconds ? 'is-active' : ''} onClick={() => actions.setOwnAuctionTime(seconds)}>{seconds}s</button>)}</div></label>
-              <label className="gpu-stack"><span>Start price: {money(ownAuction.startPrice)}</span><input type="range" min="0" max={maxValue} step="10" value={ownAuction.startPrice} onChange={(event) => actions.setOwnAuctionPrice(Number.parseInt(event.target.value, 10) || 0)} /></label>
+              <label className="gpu-stack"><span>Start price: {money(startPrice)}</span><input type="range" min="0" max={maxValue} step="10" value={startPrice} onChange={(event) => actions.setOwnAuctionPrice(Number.parseInt(event.target.value, 10) || 0)} /></label>
             </div>
           </>
         )}
@@ -754,7 +777,7 @@ function PropertyModal({ snapshot, actions }) {
                   <h3>Play This Tile</h3>
                 </div>
               </div>
-              <div id="pd-actions" className="gpu-property-actions">{actionsList.length ? actionsList.map((item) => <button key={item.id} type="button" disabled={item.disabled} title={item.reason} onClick={() => actions.runPropertyAction(item.id, tile.index)}><strong>{item.title}</strong>{item.subtitle ? <span>{item.subtitle}</span> : null}</button>) : <div className="gpu-empty-state">No property actions available.</div>}</div>
+              <div id="pd-actions" className="gpu-property-actions">{actionsList.length ? actionsList.map((item) => <button key={item.id} type="button" className={`gpu-property-action is-${item.id}`} disabled={item.disabled} title={item.reason} onClick={() => actions.runPropertyAction(item.id, tile.index)}><strong>{item.title}</strong>{item.subtitle ? <span>{item.subtitle}</span> : null}</button>) : <div className="gpu-empty-state">No property actions available.</div>}</div>
             </section>
             <section className="gpu-property-section">
               <div className="gpu-property-section-head">

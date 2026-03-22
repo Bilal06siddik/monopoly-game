@@ -736,6 +736,10 @@ input:focus-visible {
   box-shadow: 0 12px 30px rgba(27, 89, 80, 0.32);
 }
 
+.gpu-auction-header {
+  margin-bottom: 12px;
+}
+
 .gpu-current-bid {
   display: grid;
   gap: 4px;
@@ -748,13 +752,19 @@ input:focus-visible {
 }
 
 .gpu-current-bid.is-active {
-  border-color: rgba(242, 204, 128, 0.45);
-  background: linear-gradient(180deg, rgba(86, 71, 31, 0.92), rgba(42, 34, 18, 0.94));
-  box-shadow: 0 0 0 1px rgba(242, 204, 128, 0.08), 0 14px 30px rgba(63, 49, 20, 0.28);
+  border-color: color-mix(in srgb, var(--gpu-auction-leader-color, #f2cc80) 52%, rgba(255, 255, 255, 0.18));
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--gpu-auction-leader-color, #f2cc80) 22%, rgba(28, 40, 56, 0.96)),
+      color-mix(in srgb, var(--gpu-auction-leader-color, #f2cc80) 12%, rgba(14, 20, 29, 0.96))
+    );
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--gpu-auction-leader-color, #f2cc80) 16%, transparent),
+    0 14px 30px color-mix(in srgb, var(--gpu-auction-leader-color, #f2cc80) 18%, rgba(5, 10, 16, 0.82));
 }
 
 .gpu-current-bid.is-active span {
-  color: #ffe4a8;
+  color: color-mix(in srgb, var(--gpu-auction-leader-color, #f2cc80) 46%, #fff4d3);
   font-weight: 700;
 }
 
@@ -766,6 +776,56 @@ input:focus-visible {
   color: #fff2cc;
   font-size: 1.7rem;
   text-shadow: 0 0 18px rgba(242, 204, 128, 0.2);
+}
+
+.gpu-auction-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(340px, 1.45fr) minmax(200px, 240px);
+  gap: 14px;
+  align-items: start;
+}
+
+.gpu-auction-side {
+  gap: 10px;
+}
+
+.gpu-auction-side h3,
+.gpu-auction-main h3 {
+  margin-bottom: 2px;
+}
+
+.gpu-auction-main {
+  gap: 12px;
+}
+
+.gpu-auction-current {
+  justify-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 18px 20px;
+  border-radius: 22px;
+}
+
+.gpu-auction-current strong {
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  line-height: 1;
+}
+
+.gpu-auction-current.is-active strong {
+  font-size: clamp(2.2rem, 4.5vw, 3.1rem);
+}
+
+.gpu-auction-current-label {
+  color: var(--gpu-text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+}
+
+.gpu-auction-current em {
+  color: var(--gpu-text-dim);
+  font-style: normal;
+  font-size: 0.95rem;
 }
 
 .gpu-progress-track {
@@ -787,7 +847,7 @@ input:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: -4px 0 16px;
+  margin: -2px 0 4px;
   color: var(--gpu-text-dim);
 }
 
@@ -801,6 +861,7 @@ input:focus-visible {
 }
 
 .gpu-auction-card .gpu-three-col > section,
+.gpu-auction-layout > section,
 .gpu-summary-card,
 .gpu-trade-incoming-card {
   padding: 16px;
@@ -812,12 +873,13 @@ input:focus-visible {
 
 .gpu-auction-summary {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .gpu-auction-bids {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .gpu-auction-bid-btn {
@@ -825,13 +887,22 @@ input:focus-visible {
   gap: 4px;
   justify-items: start;
   text-align: left;
+  min-height: 78px;
+  padding: 14px 16px;
+  border-radius: 18px;
+}
+
+.gpu-auction-bid-amount {
+  font-size: 1.28rem;
+  line-height: 1.1;
 }
 
 .gpu-auction-bid-label {
   color: var(--gpu-text-dim);
   font-size: 0.82rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+  text-transform: none;
 }
 
 .gpu-trade-layout {
@@ -1098,17 +1169,92 @@ input:focus-visible {
 }
 
 .gpu-property-actions button {
+  position: relative;
+  overflow: hidden;
   display: grid;
   gap: 6px;
   align-content: start;
   min-height: 86px;
   text-align: left;
+  border-color: rgba(194, 209, 226, 0.22);
+  background: linear-gradient(180deg, rgba(38, 49, 66, 0.96), rgba(15, 22, 33, 0.98));
+  box-shadow: var(--gpu-inset-line), 0 14px 28px rgba(4, 9, 14, 0.28);
+}
+
+.gpu-property-actions button::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  border-radius: 14px 0 0 14px;
+  background: rgba(194, 209, 226, 0.28);
+  transition: background 0.18s ease, width 0.18s ease, opacity 0.18s ease;
 }
 
 .gpu-property-actions button span {
   color: var(--gpu-text-dim);
   font-size: 0.85rem;
   font-weight: 600;
+}
+
+.gpu-property-actions button strong,
+.gpu-property-actions button span {
+  position: relative;
+  z-index: 1;
+}
+
+.gpu-property-actions button.is-upgrade {
+  border-color: rgba(123, 215, 203, 0.48);
+  background: linear-gradient(180deg, rgba(58, 142, 130, 0.98), rgba(21, 71, 65, 0.98));
+  box-shadow: var(--gpu-inset-line), 0 16px 32px rgba(15, 72, 65, 0.34);
+}
+
+.gpu-property-actions button.is-upgrade::before {
+  width: 6px;
+  background: linear-gradient(180deg, #c9fff6, #7bd7cb);
+}
+
+.gpu-property-actions button.is-upgrade strong,
+.gpu-property-actions button.is-upgrade span {
+  color: #f4fffd;
+}
+
+.gpu-property-actions button.is-downgrade {
+  border-color: rgba(242, 204, 128, 0.5);
+  background: linear-gradient(180deg, rgba(133, 90, 43, 0.98), rgba(69, 38, 16, 0.98));
+  box-shadow: var(--gpu-inset-line), 0 16px 32px rgba(70, 42, 18, 0.34);
+}
+
+.gpu-property-actions button.is-downgrade::before {
+  width: 6px;
+  background: linear-gradient(180deg, #ffe8bf, #f2cc80);
+}
+
+.gpu-property-actions button.is-downgrade strong,
+.gpu-property-actions button.is-downgrade span {
+  color: #fff7e9;
+}
+
+.gpu-property-actions button.is-mortgage::before,
+.gpu-property-actions button.is-unmortgage::before {
+  background: linear-gradient(180deg, #d6e6ff, #8aa1bc);
+}
+
+.gpu-property-actions button.is-sell {
+  border-color: rgba(239, 122, 112, 0.32);
+}
+
+.gpu-property-actions button.is-sell::before {
+  background: linear-gradient(180deg, #ffd2cd, #ef7a70);
+}
+
+.gpu-property-actions button:hover:not(:disabled)::before,
+.gpu-property-actions button:focus-visible::before {
+  width: 8px;
+}
+
+.gpu-property-actions button:disabled {
+  opacity: 0.82;
 }
 
 .gpu-property-timeline {
@@ -1622,6 +1768,7 @@ input:focus-visible {
   .gpu-jail-card,
   .gpu-two-col,
   .gpu-three-col,
+  .gpu-auction-layout,
   .gpu-property-actions,
   .gpu-trade-layout {
     grid-template-columns: 1fr;

@@ -93,3 +93,23 @@ Original prompt: we are planning to make a v2 update fot his game so first thing
     - `node --check public/lib/board.js` ✅
     - ran the required Playwright client capture to `output/web-game/shot-0.png` ✅
     - recaptured and inspected `artifacts/building-outline-check.png` ✅
+- Building outline visibility follow-up:
+  - replaced the too-subtle shell-only owner outline with a padded 3D frame attached around the building model bounds so the player color reads clearly from the default isometric camera
+  - kept the no-transparency behavior when a token stands on the same property tile
+  - latest verification:
+    - `node --check public/lib/board.js` ✅
+    - ran the required Playwright client capture to `output/web-game/shot-0.png` ✅
+    - recaptured and inspected `artifacts/building-outline-check.png` ✅
+- Building color fallback change:
+  - dropped the 3D outline approach after it remained visually wrong across model variants
+  - switched upgrade models and fallback house/hotel meshes to direct owner-color tinting on their materials instead
+  - kept the occupied-tile transparency disabled so the tint stays readable while a token stands there
+  - verification:
+    - `node --check public/lib/board.js` ✅
+- Own-auction ownership bug fix:
+  - fixed `server.js` so an own-auction with no outside bids restores the seller as the tile owner instead of leaving the property unowned
+  - added an integration regression test covering an own-auction that expires without bids and asserting the seller keeps the property
+  - verification for this fix:
+    - `node --check server.js` ✅
+    - `node --check test/integration/multiplayer-flows.integration.test.js` ✅
+    - `node --test test/integration/multiplayer-flows.integration.test.js --test-name-pattern "own-auction with no bids returns the property to the seller|own-auction debt recovery returns to done instead of rewinding to a fresh roll|late auction bid near timeout resolves to a consistent final state"` ✅
