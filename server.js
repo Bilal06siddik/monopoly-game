@@ -3427,15 +3427,7 @@ io.on('connection', socket => {
     }
 
     const selectedPlayers = [...lobbyPlayers.values()].filter(entry => entry.character);
-    const readyPlayers = selectedPlayers.filter(entry => entry.isBot || entry.isReady);
-    const everyoneReady = selectedPlayers.length > 0 && selectedPlayers.every(entry => entry.isBot || entry.isReady);
-    if (!everyoneReady) {
-      if (!silent) {
-        sourceSocket.emit('game-error', { message: 'All selected players must be ready before the host can start.' });
-      }
-      return false;
-    }
-    if (readyPlayers.length < 2) {
+    if (selectedPlayers.length < 2) {
       if (!silent) {
         sourceSocket.emit('game-error', { message: 'Need at least 2 players to start' });
       }
@@ -3449,7 +3441,11 @@ io.on('connection', socket => {
     }
 
     const selectedBoardId = syncSelectedBoardId(roomState);
-    gameState = new GameState(getBoardTiles(selectedBoardId));
+    const { rulePreset, rulesConfig } = syncRoomRules(roomState);
+    gameState = new GameState(getBoardTiles(selectedBoardId), {
+      rulePreset,
+      rulesConfig
+    });
     shuffleActionDeck();
     pendingTrades.clear();
     eventHistory.length = 0;
@@ -3462,8 +3458,8 @@ io.on('connection', socket => {
       auctionTimer = null;
     }
     gameState.players = [];
-    readyPlayers.forEach((p, idx) => {
-      const customIndex = readyPlayers
+    selectedPlayers.forEach((p, idx) => {
+      const customIndex = selectedPlayers
         .slice(0, idx)
         .filter(entry => entry.character === 'custom')
         .length;
@@ -3495,9 +3491,13 @@ io.on('connection', socket => {
 
     setTurnPhase('waiting');
 
-    console.log(`\n  ðŸŽ® Game started with ${readyPlayers.length} players!\n`);
-    logEvent(`ðŸŽ® Game started with ${readyPlayers.length} players!`, 'system');
-    emitToRoom('gameStarted', buildGameStatePayload());
+    console.log(`\n  ðŸŽ® Game started with ${selectedPlayers.length} players!\n`);
+    logEvent(`ðŸŽ® Game started with ${selectedPlayers.length} players!`, 'system');
+    emitToRoom('gameStarted', buildGameStatePayload(null, {
+      includeHistoryEvents: true,
+      includePropertyHistory: true,
+      includePropertyStatic: true
+    }));
     queueBotTurnIfNeeded(gameState.getCurrentPlayer());
     return true;
   }
@@ -3616,86 +3616,6 @@ io.on('connection', socket => {
 
   bindRoomHandler(socket, roomState, 'requestStartGame', () => {
     tryStartLobbyMatch(socket, { requireHost: true });
-    return;
-    if (!isRoomHost(socket, roomState)) {
-      socket.emit('game-error', { message: 'Only the room host can start the match.' });
-      return;
-    }
-    const selectedPlayers = [...lobbyPlayers.values()].filter(entry => entry.character);
-    const readyPlayers = selectedPlayers.filter(entry => entry.isBot || entry.isReady);
-    const everyoneReady = selectedPlayers.length > 0 && selectedPlayers.every(entry => entry.isBot || entry.isReady);
-    if (!everyoneReady) {
-      socket.emit('game-error', { message: 'All selected players must be ready before the host can start.' });
-      return;
-    }
-    if (readyPlayers.length < 2) {
-      socket.emit('game-error', { message: 'Need at least 2 players to start' });
-      return;
-    }
-    if (gameState && gameState.isGameStarted) {
-      socket.emit('game-error', { message: 'Game is already running' });
-      return;
-    }
-
-    const selectedBoardId = syncSelectedBoardId(roomState);
-    const { rulePreset, rulesConfig } = syncRoomRules(roomState);
-    gameState = new GameState(getBoardTiles(selectedBoardId), {
-      rulePreset,
-      rulesConfig
-    });
-    shuffleActionDeck();
-    pendingTrades.clear();
-    eventHistory.length = 0;
-    pausedTurnTimerState = null;
-    clearPendingMoveResolution();
-    clearAllBotTimers();
-    auctionState = null;
-    if (auctionTimer) {
-      clearInterval(auctionTimer);
-      auctionTimer = null;
-    }
-    gameState.players = [];
-    readyPlayers.forEach((p, idx) => {
-      const customIndex = readyPlayers
-        .slice(0, idx)
-        .filter(entry => entry.character === 'custom')
-        .length;
-      const color = getDefaultColorForLobbyEntry(p, customIndex);
-      const player = gameState.addPlayer(p.playerId, p.character, color, p.sessionToken, {
-        isBot: Boolean(p.isBot),
-        name: p.customName || p.character,
-        customAvatarUrl: p.customAvatarUrl,
-        customColor: p.customColor || null,
-        skinId: p.skinId || null,
-        tokenId: resolveLobbyToken(p.character, p.tokenId),
-        isConnected: Boolean(p.isBot || p.socketId)
-      });
-
-      if (p.socketId) {
-        const targetSocket = io.sockets.sockets.get(p.socketId);
-        if (targetSocket) {
-          replaceSocketBinding(targetSocket, player);
-        }
-      }
-    });
-
-    gameState.isGameStarted = true;
-    gameState.matchStartedAt = Date.now();
-    gameState.matchEndedAt = null;
-    gameState.turnCount = 0;
-    gameState.pauseState = null;
-    gameState.eliminationOrder = [];
-
-    setTurnPhase('waiting');
-
-    console.log(`\n  🎮 Game started with ${readyPlayers.length} players!\n`);
-    logEvent(`🎮 Game started with ${readyPlayers.length} players!`, 'system');
-    emitToRoom('gameStarted', buildGameStatePayload(null, {
-      includeHistoryEvents: true,
-      includePropertyHistory: true,
-      includePropertyStatic: true
-    }));
-    queueBotTurnIfNeeded(gameState.getCurrentPlayer());
   });
 
   bindRoomHandler(socket, roomState, 'end-room', () => {
