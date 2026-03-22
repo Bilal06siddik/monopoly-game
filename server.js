@@ -61,7 +61,6 @@ const UPGRADE_MODEL_FILES = new Set([
 
 function setStaticCacheHeaders(res, filePath) {
   const ext = path.extname(filePath).toLowerCase();
-  const isProduction = process.env.NODE_ENV === 'production';
   const hasContentHash = /\.[a-f0-9]{8,}\./i.test(path.basename(filePath));
   const immutableAssetExtensions = new Set([
     '.js', '.css', '.png', '.jpg', '.jpeg', '.svg', '.webp', '.gif', '.glb', '.ico'
@@ -72,8 +71,9 @@ function setStaticCacheHeaders(res, filePath) {
     return;
   }
 
-  // In local development we want refreshes to pick up JS/CSS edits immediately.
-  if (!isProduction && (ext === '.js' || ext === '.css')) {
+  // The app serves unhashed runtime JS/CSS directly from /public, so they must
+  // always revalidate on deploy or browsers can keep running stale client code.
+  if ((ext === '.js' || ext === '.css') && !hasContentHash) {
     res.setHeader('Cache-Control', 'no-cache');
     return;
   }
