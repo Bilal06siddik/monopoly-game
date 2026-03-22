@@ -526,39 +526,74 @@ const GameBoard = (() => {
         ctx.fillRect(18, metrics.nameZoneTop, canvas.width - 36, 4);
     }
 
-    function drawBuildingZone(ctx, tile, canvas, metrics, buildingCount, textScale, isMortgaged) {
+    function drawBuildingZone(ctx, tile, canvas, metrics, buildingCount, ownerColor, isMortgaged) {
         if (tile?.type !== 'property') return;
 
         const zoneX = canvas.width * 0.13;
         const zoneY = canvas.height * 0.05;
         const zoneWidth = canvas.width * 0.74;
         const zoneHeight = metrics.buildZoneHeight * 0.68;
+        const laneColor = ownerColor && !isMortgaged
+            ? ownerColor
+            : (tile?.colorGroup ? getTileAccentColor(tile) : '#42506a');
+        const laneGradient = ctx.createLinearGradient(zoneX, zoneY, zoneX + zoneWidth, zoneY + zoneHeight);
+        laneGradient.addColorStop(0, hexToRgba(shadeColor(laneColor, 16), ownerColor ? 0.92 : 0.34));
+        laneGradient.addColorStop(1, hexToRgba(shadeColor(laneColor, -14), ownerColor ? 0.88 : 0.24));
 
-        ctx.fillStyle = 'rgba(7, 12, 20, 0.28)';
+        ctx.fillStyle = laneGradient;
         ctx.beginPath();
         addRoundedRectPath(ctx, zoneX, zoneY, zoneWidth, zoneHeight, 24);
         ctx.fill();
 
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = ownerColor && !isMortgaged
+            ? hexToRgba(shadeColor(laneColor, 24), 0.95)
+            : 'rgba(255, 255, 255, 0.12)';
+        ctx.lineWidth = 4;
         ctx.beginPath();
         addRoundedRectPath(ctx, zoneX + 2, zoneY + 2, zoneWidth - 4, zoneHeight - 4, 22);
         ctx.stroke();
 
-        if (!buildingCount || isMortgaged) {
-            ctx.fillStyle = 'rgba(220, 231, 255, 0.7)';
-            ctx.font = `700 ${Math.floor(canvas.width * 0.05 * textScale)}px 'Segoe UI', Arial, sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('BUILD', canvas.width / 2, zoneY + (zoneHeight / 2));
-            return;
+        if (ownerColor && !isMortgaged) {
+            ctx.strokeStyle = hexToRgba('#ffffff', 0.34);
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            addRoundedRectPath(ctx, zoneX + 12, zoneY + 12, zoneWidth - 24, zoneHeight - 24, 18);
+            ctx.stroke();
         }
 
-        ctx.fillStyle = buildingCount >= 5 ? '#ffcf7a' : '#c6ffd7';
-        ctx.font = `800 ${Math.floor(canvas.width * 0.086 * textScale)}px 'Segoe UI', Arial, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(buildingCount >= 5 ? 'HOTEL' : `${buildingCount}H`, canvas.width / 2, zoneY + (zoneHeight / 2));
+        if (buildingCount > 0 && !isMortgaged) {
+            const markerInset = zoneWidth * 0.1;
+            const markerWidth = Math.max(zoneWidth - (markerInset * 2), zoneWidth * 0.42);
+            const markerHeight = Math.max(zoneHeight * 0.28, zoneHeight - 34);
+            const markerX = zoneX + ((zoneWidth - markerWidth) / 2);
+            const markerY = zoneY + ((zoneHeight - markerHeight) / 2);
+            const markerGradient = ctx.createLinearGradient(markerX, markerY, markerX, markerY + markerHeight);
+            markerGradient.addColorStop(0, buildingCount >= 5 ? 'rgba(255, 222, 151, 0.78)' : 'rgba(226, 255, 236, 0.68)');
+            markerGradient.addColorStop(1, buildingCount >= 5 ? 'rgba(194, 136, 50, 0.72)' : 'rgba(44, 102, 72, 0.52)');
+
+            ctx.fillStyle = markerGradient;
+            ctx.beginPath();
+            addRoundedRectPath(ctx, markerX, markerY, markerWidth, markerHeight, 20);
+            ctx.fill();
+
+            ctx.strokeStyle = buildingCount >= 5 ? 'rgba(255, 239, 196, 0.92)' : 'rgba(232, 255, 240, 0.72)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            addRoundedRectPath(ctx, markerX + 2, markerY + 2, markerWidth - 4, markerHeight - 4, 18);
+            ctx.stroke();
+        }
+
+        if (isMortgaged) {
+            ctx.fillStyle = 'rgba(7, 12, 20, 0.42)';
+            ctx.beginPath();
+            addRoundedRectPath(ctx, zoneX + 8, zoneY + 8, zoneWidth - 16, zoneHeight - 16, 18);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            addRoundedRectPath(ctx, zoneX + 10, zoneY + 10, zoneWidth - 20, zoneHeight - 20, 16);
+            ctx.stroke();
+        }
     }
 
     function drawEgyptColorShowcase(ctx, tile, canvas, metrics) {
@@ -676,6 +711,7 @@ const GameBoard = (() => {
             const footerHeight = metrics.footerHeight;
             const bandHeight = Math.round(canvas.height * (isCenteredCountriesFlagTile ? 0.13 : tile?.bandStyle === 'flag-image' ? 0.23 : 0.18));
             const isPurchasable = ['property', 'railroad', 'utility'].includes(tile.type);
+            const isStreetTile = tile?.type === 'property';
             const buildingCount = propertyState?.houses || 0;
 
             const tileGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
@@ -695,22 +731,24 @@ const GameBoard = (() => {
             ctx.lineWidth = 2;
             ctx.strokeRect(14, 14, canvas.width - 28, canvas.height - 28);
 
-            if (isPurchasable && !isCenteredCountriesFlagTile && !usesEgyptColorShowcase(tile)) {
+            if (isPurchasable && tile?.type !== 'property' && !isCenteredCountriesFlagTile && !usesEgyptColorShowcase(tile)) {
                 drawTileBand(ctx, tile, canvas, bandHeight);
             }
 
-            drawTileSectionSeparators(ctx, canvas, metrics);
+            if (!isStreetTile) {
+                drawTileSectionSeparators(ctx, canvas, metrics);
+            }
 
             if (usesEgyptColorShowcase(tile)) {
                 drawEgyptColorShowcase(ctx, tile, canvas, metrics);
             }
 
-            if (ownerColor) {
+            if (!isStreetTile && ownerColor) {
                 ctx.fillStyle = ownerColor;
                 ctx.globalAlpha = 0.88;
                 ctx.fillRect(0, canvas.height - footerHeight, canvas.width, footerHeight);
                 ctx.globalAlpha = 1;
-            } else {
+            } else if (!isStreetTile) {
                 const footerGradient = ctx.createLinearGradient(0, canvas.height - footerHeight, 0, canvas.height);
                 footerGradient.addColorStop(0, surfacePalette.tileFooterTop);
                 footerGradient.addColorStop(1, surfacePalette.tileFooterBottom);
@@ -722,7 +760,7 @@ const GameBoard = (() => {
                 drawCenteredFlagCard(ctx, tile, canvas, metrics);
             }
 
-            drawBuildingZone(ctx, tile, canvas, metrics, buildingCount, textScale, propertyState?.isMortgaged);
+            drawBuildingZone(ctx, tile, canvas, metrics, buildingCount, ownerColor, propertyState?.isMortgaged);
 
             const iconText = getTileIconText(tile);
             const imageIcon = tile.iconImage === 'metro'
@@ -806,9 +844,35 @@ const GameBoard = (() => {
                 const displayLabel = ownerColor
                     ? getOwnedTileDisplayValue(tile, propertyState).label
                     : `$${tile.price}`;
-                ctx.fillStyle = ownerColor ? '#ffffff' : surfacePalette.textAccent;
-                ctx.strokeText(displayLabel, canvas.width / 2, canvas.height - (footerHeight * 0.5));
-                ctx.fillText(displayLabel, canvas.width / 2, canvas.height - (footerHeight * 0.5));
+                if (isStreetTile) {
+                    const chipWidth = canvas.width * 0.84;
+                    const chipHeight = footerHeight * 0.62;
+                    const chipX = (canvas.width - chipWidth) / 2;
+                    const chipY = canvas.height - chipHeight - (footerHeight * 0.16);
+                    const chipGradient = ctx.createLinearGradient(chipX, chipY, chipX + chipWidth, chipY);
+                    const chipBase = ownerColor || surfacePalette.tileFooterTop;
+                    chipGradient.addColorStop(0, ownerColor ? shadeColor(chipBase, 10) : surfacePalette.tileFooterTop);
+                    chipGradient.addColorStop(1, ownerColor ? shadeColor(chipBase, -12) : surfacePalette.tileFooterBottom);
+
+                    ctx.fillStyle = chipGradient;
+                    ctx.beginPath();
+                    addRoundedRectPath(ctx, chipX, chipY, chipWidth, chipHeight, 26);
+                    ctx.fill();
+
+                    ctx.strokeStyle = ownerColor ? hexToRgba('#ffffff', 0.34) : 'rgba(255, 255, 255, 0.14)';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    addRoundedRectPath(ctx, chipX + 2, chipY + 2, chipWidth - 4, chipHeight - 4, 24);
+                    ctx.stroke();
+
+                    ctx.fillStyle = ownerColor ? '#ffffff' : surfacePalette.textAccent;
+                    ctx.strokeText(displayLabel, canvas.width / 2, chipY + (chipHeight * 0.52));
+                    ctx.fillText(displayLabel, canvas.width / 2, chipY + (chipHeight * 0.52));
+                } else {
+                    ctx.fillStyle = ownerColor ? '#ffffff' : surfacePalette.textAccent;
+                    ctx.strokeText(displayLabel, canvas.width / 2, canvas.height - (footerHeight * 0.5));
+                    ctx.fillText(displayLabel, canvas.width / 2, canvas.height - (footerHeight * 0.5));
+                }
             }
         });
 
@@ -1058,6 +1122,17 @@ const GameBoard = (() => {
         const g = Math.max(0, Math.min(255, ((num >> 8) & 0xff) + amount));
         const b = Math.max(0, Math.min(255, (num & 0xff) + amount));
         return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+    }
+
+    function hexToRgba(hex, alpha = 1) {
+        if (typeof hex !== 'string') return `rgba(126, 168, 255, ${alpha})`;
+        const value = hex.replace('#', '');
+        if (!/^[0-9a-f]{6}$/i.test(value)) return `rgba(126, 168, 255, ${alpha})`;
+        const num = Number.parseInt(value, 16);
+        const r = (num >> 16) & 0xff;
+        const g = (num >> 8) & 0xff;
+        const b = num & 0xff;
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
     function addRoundedRectPath(ctx, x, y, width, height, radius) {
@@ -1342,6 +1417,46 @@ const GameBoard = (() => {
         return group;
     }
 
+    function createOwnershipPedestal(ownerColor, houseCount = 1) {
+        const tint = typeof ownerColor === 'string' ? ownerColor : '#6daeff';
+        const width = houseCount >= 5 ? 0.86 : Math.min(0.92, 0.34 + (Math.max(1, houseCount) * 0.18));
+        const depth = houseCount >= 5 ? 0.42 : 0.34;
+        const height = 0.035;
+        const group = new THREE.Group();
+
+        const base = new THREE.Mesh(
+            new THREE.BoxGeometry(width, height, depth),
+            new THREE.MeshStandardMaterial({
+                color: hexToNumber(shadeColor(tint, -10), 0x6daeff),
+                emissive: hexToNumber(shadeColor(tint, -6), 0x2a4b73),
+                emissiveIntensity: 0.42,
+                roughness: 0.5,
+                metalness: 0.16
+            })
+        );
+        base.position.y = height / 2;
+        base.castShadow = true;
+        base.receiveShadow = true;
+        group.add(base);
+
+        const trim = new THREE.Mesh(
+            new THREE.BoxGeometry(width + 0.06, 0.012, depth + 0.06),
+            new THREE.MeshStandardMaterial({
+                color: hexToNumber(shadeColor(tint, 22), 0x9ec8ff),
+                emissive: hexToNumber(shadeColor(tint, 10), 0x4672a8),
+                emissiveIntensity: 0.58,
+                roughness: 0.34,
+                metalness: 0.12
+            })
+        );
+        trim.position.y = 0.008;
+        trim.castShadow = true;
+        trim.receiveShadow = true;
+        group.add(trim);
+
+        return group;
+    }
+
     function getGltfLoader() {
         if (gltfLoader) return gltfLoader;
         if (typeof THREE.GLTFLoader !== 'function') return null;
@@ -1431,6 +1546,8 @@ const GameBoard = (() => {
 
         const position = tilePositions[tileIndex];
         if (!position || houseCount <= 0) return;
+        const renderState = getTileRenderSnapshot(tileIndex);
+        const ownerColor = renderState?.ownerColor || null;
 
         const renderToken = Symbol(`house-${tileIndex}-${houseCount}`);
         houseRenderTokens[tileIndex] = renderToken;
@@ -1442,6 +1559,10 @@ const GameBoard = (() => {
             position.z + offsetZ
         );
         cluster.rotation.y = rotationY;
+
+        if (ownerColor) {
+            cluster.add(createOwnershipPedestal(ownerColor, houseCount));
+        }
 
         try {
             const upgradeLevel = Math.max(0, Math.min(houseCount, upgradeModelConfigs.length) - 1);
@@ -1483,7 +1604,7 @@ const GameBoard = (() => {
 
     function getBuildingOrientation(index) {
         const tile = boardData[index];
-        const topEdgeOffset = tile?.type === 'property' ? 0.7 : 0;
+        const topEdgeOffset = tile?.type === 'property' ? 1.04 : 0;
         const outward = topEdgeOffset > 0 ? getTileOutwardVector(index) : { x: 0, z: 0 };
 
         if (index >= 1 && index <= 9) {

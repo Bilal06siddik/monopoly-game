@@ -163,14 +163,16 @@ const GameUI = (() => {
         }
 
         const rollBtn = document.getElementById('roll-dice-btn');
-        rollBtn.addEventListener('click', () => {
-            if (rollBtn.classList.contains('disabled')) return;
-            primeAudio();
-            socket.emit('roll-dice');
-            rollBtn.classList.add('disabled');
-            rollBtn.textContent = 'Rolling...';
-            setPromptedActionState(rollBtn, false);
-        });
+        if (rollBtn) {
+            rollBtn.addEventListener('click', () => {
+                if (rollBtn.classList.contains('disabled')) return;
+                primeAudio();
+                socket.emit('roll-dice');
+                rollBtn.classList.add('disabled');
+                rollBtn.textContent = 'Rolling...';
+                setPromptedActionState(rollBtn, false);
+            });
+        }
 
         const endTurnBtn = document.getElementById('end-turn-btn');
         if (endTurnBtn) {

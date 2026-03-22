@@ -65,3 +65,16 @@ Original prompt: we are planning to make a v2 update fot his game so first thing
     - `npm run build:ui` ✅
     - `npm run test:unit` ✅
     - `npm run test:integration` ✅
+- Post-merge lobby regression fix:
+  - restored missing runtime script tags in `public/index.html` for `gameUI`, `modals`, `historyLog`, `trade`, and `auction`
+  - root cause was `main.js` crashing on `GameUI is not defined`, which blocked the lobby from consuming its socket updates and left the champion card grid empty
+  - added a null-safe guard in `public/lib/gameUI.js` so the legacy init path no longer crashes when the React gameplay HUD owns the roll button instead of static DOM
+  - updated `public/main.js` to only initialize the legacy gameplay DOM modules when their old HUD markup actually exists, so the lobby no longer dies on removed modal/feed/button elements
+- Board ownership/build-lane follow-up:
+  - converted the build lane on property tiles into a clean ownership lane without `BUILD` / `1H` / `HOTEL` text
+  - fixed a follow-up regression where the updated `drawBuildingZone()` call was still passing `textScale` instead of `ownerColor`, which could break owned-tile redraws and hide building updates
+  - added an owner-colored 3D pedestal under building clusters so houses/hotels keep a visible owner tint around the outside of the model base
+  - removed the old top property color band so the upper tile section stays dedicated to builds instead of showing the original group strip
+  - matched building placement more closely to `CapitalistaGame (1).js` by pushing property upgrades outward into the dedicated edge strip instead of leaving them too far inward
+  - added `CapitalistaGame (1).js` to `.gitignore` so it stays reference-only and never gets committed as game code
+  - reworked property tiles toward the reference structure by replacing the full-width footer stripe with a dedicated bottom price chip that takes the owner color instead of tinting the whole lower tile

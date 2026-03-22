@@ -85,6 +85,8 @@
     const cameraResetBtn = document.getElementById('camera-reset-btn');
     const viewDockToggle = document.getElementById('view-dock-toggle');
     const viewDock = document.getElementById('view-dock');
+    const hudRoomChip = document.getElementById('hud-room-chip');
+    const hudRoomCode = document.getElementById('hud-room-code');
     const roomGate = document.getElementById('room-gate');
     const roomGateStatus = document.getElementById('room-gate-status');
     const roomCodeInput = document.getElementById('room-code-input');
@@ -1256,6 +1258,11 @@
         if (syncHistory) syncHistoryFromState(appliedState);
         if (syncTrades) syncPendingTrades(appliedState);
         if (syncAuction) syncAuctionFromState(appliedState);
+        else if (!appliedState.auctionState && uiState.auctionState) {
+            // Clear stale auction UI when the authoritative state says the auction is over,
+            // even if this particular update skipped the full auction-state sync.
+            uiState.auctionState = null;
+        }
         if (appliedState.isGameStarted) {
             Lobby.hideLobby();
             gameHud?.classList.remove('hidden');
@@ -1382,14 +1389,30 @@
         Notifications.show('Saved game loaded for the room.', 'success', 2500);
     });
 
+    const hasLegacyGameplayHud = Boolean(
+        document.getElementById('roll-dice-btn')
+        || document.getElementById('buy-modal')
+        || document.getElementById('history-content')
+    );
+
     // ── Init all systems ──────────────────────────────────
     Lobby.init(socket);
-    GameUI.init(socket);
-    GameModals.init(socket);
+    if (hasLegacyGameplayHud && typeof GameUI !== 'undefined' && typeof GameUI.init === 'function') {
+        GameUI.init(socket);
+    }
+    if (hasLegacyGameplayHud && typeof GameModals !== 'undefined' && typeof GameModals.init === 'function') {
+        GameModals.init(socket);
+    }
     if (typeof GameAudio !== 'undefined') GameAudio.init();
-    HistoryLog.init();
-    TradeSystem.init(socket);
-    AuctionSystem.init(socket);
+    if (hasLegacyGameplayHud && typeof HistoryLog !== 'undefined' && typeof HistoryLog.init === 'function') {
+        HistoryLog.init();
+    }
+    if (hasLegacyGameplayHud && typeof TradeSystem !== 'undefined' && typeof TradeSystem.init === 'function') {
+        TradeSystem.init(socket);
+    }
+    if (hasLegacyGameplayHud && typeof AuctionSystem !== 'undefined' && typeof AuctionSystem.init === 'function') {
+        AuctionSystem.init(socket);
+    }
     if (typeof DevPanel !== 'undefined') DevPanel.init(socket);
     mountGameplayUi();
     GameBoard.setTextProfile(DEFAULT_VIEW_MODE);
