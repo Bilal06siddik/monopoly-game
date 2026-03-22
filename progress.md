@@ -78,3 +78,18 @@ Original prompt: we are planning to make a v2 update fot his game so first thing
   - matched building placement more closely to `CapitalistaGame (1).js` by pushing property upgrades outward into the dedicated edge strip instead of leaving them too far inward
   - added `CapitalistaGame (1).js` to `.gitignore` so it stays reference-only and never gets committed as game code
   - reworked property tiles toward the reference structure by replacing the full-width footer stripe with a dedicated bottom price chip that takes the owner color instead of tinting the whole lower tile
+- Tile/building visual cleanup follow-up:
+  - removed the colored build-lane fill from property tile textures so the build area above centered flag cards stays visually clear
+  - replaced the filled owner pedestal under building clusters with a thinner owner-colored perimeter outline around the building footprint
+  - lowered the building cluster slightly so models still sit naturally on the tile after removing the pedestal
+  - verification for this pass:
+    - `node --check public/lib/board.js` ✅
+    - ran the required Playwright client capture to `output/web-game/shot-0.png` ✅
+    - captured and inspected `artifacts/building-outline-check.png` ✅
+- Building owner-outline correction:
+  - removed the tile-surface owner outline after clarifying that the highlight needs to live on the 3D building itself
+  - added owner-colored 3D edge outlines directly onto upgrade meshes and fallback house/hotel meshes
+  - verification for this correction:
+    - `node --check public/lib/board.js` ✅
+    - ran the required Playwright client capture to `output/web-game/shot-0.png` ✅
+    - recaptured and inspected `artifacts/building-outline-check.png` ✅

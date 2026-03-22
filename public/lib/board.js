@@ -528,72 +528,7 @@ const GameBoard = (() => {
 
     function drawBuildingZone(ctx, tile, canvas, metrics, buildingCount, ownerColor, isMortgaged) {
         if (tile?.type !== 'property') return;
-
-        const zoneX = canvas.width * 0.13;
-        const zoneY = canvas.height * 0.05;
-        const zoneWidth = canvas.width * 0.74;
-        const zoneHeight = metrics.buildZoneHeight * 0.68;
-        const laneColor = ownerColor && !isMortgaged
-            ? ownerColor
-            : (tile?.colorGroup ? getTileAccentColor(tile) : '#42506a');
-        const laneGradient = ctx.createLinearGradient(zoneX, zoneY, zoneX + zoneWidth, zoneY + zoneHeight);
-        laneGradient.addColorStop(0, hexToRgba(shadeColor(laneColor, 16), ownerColor ? 0.92 : 0.34));
-        laneGradient.addColorStop(1, hexToRgba(shadeColor(laneColor, -14), ownerColor ? 0.88 : 0.24));
-
-        ctx.fillStyle = laneGradient;
-        ctx.beginPath();
-        addRoundedRectPath(ctx, zoneX, zoneY, zoneWidth, zoneHeight, 24);
-        ctx.fill();
-
-        ctx.strokeStyle = ownerColor && !isMortgaged
-            ? hexToRgba(shadeColor(laneColor, 24), 0.95)
-            : 'rgba(255, 255, 255, 0.12)';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        addRoundedRectPath(ctx, zoneX + 2, zoneY + 2, zoneWidth - 4, zoneHeight - 4, 22);
-        ctx.stroke();
-
-        if (ownerColor && !isMortgaged) {
-            ctx.strokeStyle = hexToRgba('#ffffff', 0.34);
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            addRoundedRectPath(ctx, zoneX + 12, zoneY + 12, zoneWidth - 24, zoneHeight - 24, 18);
-            ctx.stroke();
-        }
-
-        if (buildingCount > 0 && !isMortgaged) {
-            const markerInset = zoneWidth * 0.1;
-            const markerWidth = Math.max(zoneWidth - (markerInset * 2), zoneWidth * 0.42);
-            const markerHeight = Math.max(zoneHeight * 0.28, zoneHeight - 34);
-            const markerX = zoneX + ((zoneWidth - markerWidth) / 2);
-            const markerY = zoneY + ((zoneHeight - markerHeight) / 2);
-            const markerGradient = ctx.createLinearGradient(markerX, markerY, markerX, markerY + markerHeight);
-            markerGradient.addColorStop(0, buildingCount >= 5 ? 'rgba(255, 222, 151, 0.78)' : 'rgba(226, 255, 236, 0.68)');
-            markerGradient.addColorStop(1, buildingCount >= 5 ? 'rgba(194, 136, 50, 0.72)' : 'rgba(44, 102, 72, 0.52)');
-
-            ctx.fillStyle = markerGradient;
-            ctx.beginPath();
-            addRoundedRectPath(ctx, markerX, markerY, markerWidth, markerHeight, 20);
-            ctx.fill();
-
-            ctx.strokeStyle = buildingCount >= 5 ? 'rgba(255, 239, 196, 0.92)' : 'rgba(232, 255, 240, 0.72)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            addRoundedRectPath(ctx, markerX + 2, markerY + 2, markerWidth - 4, markerHeight - 4, 18);
-            ctx.stroke();
-        }
-
-        if (isMortgaged) {
-            ctx.fillStyle = 'rgba(7, 12, 20, 0.42)';
-            ctx.beginPath();
-            addRoundedRectPath(ctx, zoneX + 8, zoneY + 8, zoneWidth - 16, zoneHeight - 16, 18);
-            ctx.fill();
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            addRoundedRectPath(ctx, zoneX + 10, zoneY + 10, zoneWidth - 20, zoneHeight - 20, 16);
-            ctx.stroke();
-        }
+        if (!buildingCount || isMortgaged) return;
     }
 
     function drawEgyptColorShowcase(ctx, tile, canvas, metrics) {
@@ -1417,44 +1352,38 @@ const GameBoard = (() => {
         return group;
     }
 
-    function createOwnershipPedestal(ownerColor, houseCount = 1) {
-        const tint = typeof ownerColor === 'string' ? ownerColor : '#6daeff';
-        const width = houseCount >= 5 ? 0.86 : Math.min(0.92, 0.34 + (Math.max(1, houseCount) * 0.18));
-        const depth = houseCount >= 5 ? 0.42 : 0.34;
-        const height = 0.035;
-        const group = new THREE.Group();
+    function addOwnershipOutlineToModel(object3D, ownerColor) {
+        if (!object3D || !ownerColor) return object3D;
 
-        const base = new THREE.Mesh(
-            new THREE.BoxGeometry(width, height, depth),
-            new THREE.MeshStandardMaterial({
-                color: hexToNumber(shadeColor(tint, -10), 0x6daeff),
-                emissive: hexToNumber(shadeColor(tint, -6), 0x2a4b73),
-                emissiveIntensity: 0.42,
-                roughness: 0.5,
-                metalness: 0.16
-            })
-        );
-        base.position.y = height / 2;
-        base.castShadow = true;
-        base.receiveShadow = true;
-        group.add(base);
+        const outlineMaterial = new THREE.LineBasicMaterial({
+            color: hexToNumber(shadeColor(ownerColor, 20), 0x9bcaff),
+            transparent: true,
+            opacity: 0.98,
+            depthTest: false
+        });
 
-        const trim = new THREE.Mesh(
-            new THREE.BoxGeometry(width + 0.06, 0.012, depth + 0.06),
-            new THREE.MeshStandardMaterial({
-                color: hexToNumber(shadeColor(tint, 22), 0x9ec8ff),
-                emissive: hexToNumber(shadeColor(tint, 10), 0x4672a8),
-                emissiveIntensity: 0.58,
-                roughness: 0.34,
-                metalness: 0.12
-            })
-        );
-        trim.position.y = 0.008;
-        trim.castShadow = true;
-        trim.receiveShadow = true;
-        group.add(trim);
+        object3D.traverse(child => {
+            if (!child?.isMesh || !child.geometry || child.userData?.ownershipOutlineApplied) return;
 
-        return group;
+            const outline = new THREE.LineSegments(
+                new THREE.EdgesGeometry(child.geometry, 32),
+                outlineMaterial.clone()
+            );
+            outline.name = 'ownership-outline';
+            outline.scale.setScalar(1.04);
+            outline.renderOrder = 12;
+            outline.userData = {
+                ...outline.userData,
+                ownershipOutline: true
+            };
+            child.add(outline);
+            child.userData = {
+                ...child.userData,
+                ownershipOutlineApplied: true
+            };
+        });
+
+        return object3D;
     }
 
     function getGltfLoader() {
@@ -1555,31 +1484,31 @@ const GameBoard = (() => {
         const { rotationY, offsetX, offsetZ } = getBuildingOrientation(tileIndex);
         cluster.position.set(
             position.x + offsetX,
-            (TILE_H / 2) + 0.04,
+            (TILE_H / 2) + 0.018,
             position.z + offsetZ
         );
         cluster.rotation.y = rotationY;
-
-        if (ownerColor) {
-            cluster.add(createOwnershipPedestal(ownerColor, houseCount));
-        }
 
         try {
             const upgradeLevel = Math.max(0, Math.min(houseCount, upgradeModelConfigs.length) - 1);
             const upgradeUnit = await createUpgradeUnit(upgradeLevel);
             if (houseRenderTokens[tileIndex] !== renderToken) return;
+            addOwnershipOutlineToModel(upgradeUnit, ownerColor);
             cluster.add(upgradeUnit);
         } catch (error) {
             console.warn(`Failed to load upgrade model for tile ${tileIndex}. Falling back to legacy buildings.`, error);
             if (houseRenderTokens[tileIndex] !== renderToken) return;
             if (houseCount >= 5) {
-                cluster.add(createHotelUnit());
+                const hotel = createHotelUnit();
+                addOwnershipOutlineToModel(hotel, ownerColor);
+                cluster.add(hotel);
             } else {
                 const spacing = 0.29;
                 const start = -((houseCount - 1) * spacing) / 2;
                 for (let index = 0; index < houseCount; index++) {
                     const house = createHouseUnit();
                     house.position.x = start + (index * spacing);
+                    addOwnershipOutlineToModel(house, ownerColor);
                     cluster.add(house);
                 }
             }
