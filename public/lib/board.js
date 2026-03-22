@@ -1667,6 +1667,8 @@ const GameBoard = (() => {
     function updateTileOwner(tileIndex, ownerColor, propertyState = null) {
         rememberTileRenderState(tileIndex, ownerColor, propertyState);
         refreshTileTexture(tileIndex);
+        refreshBuildingPlacements([tileIndex]);
+        updateBuildingTransparency(tileIndex);
     }
 
     function updateBailoutAmount(amount) {
@@ -1780,6 +1782,15 @@ const GameBoard = (() => {
         if (!mesh) return;
         disposeMaterialSet(mesh.material);
         mesh.material = materialSet;
+        if (Array.isArray(mesh.material)) {
+            mesh.material.forEach(material => {
+                if (material?.map) material.map.needsUpdate = true;
+                if (material) material.needsUpdate = true;
+            });
+        } else if (mesh.material) {
+            if (mesh.material.map) mesh.material.map.needsUpdate = true;
+            mesh.material.needsUpdate = true;
+        }
         applyTileInteractionState(tileIndex);
     }
 
