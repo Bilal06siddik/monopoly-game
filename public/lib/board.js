@@ -1503,13 +1503,7 @@ const GameBoard = (() => {
         const renderToken = Symbol(`house-${tileIndex}-${houseCount}`);
         houseRenderTokens[tileIndex] = renderToken;
         const cluster = new THREE.Group();
-        const { rotationY, offsetX, offsetZ } = getBuildingOrientation(tileIndex);
-        cluster.position.set(
-            position.x + offsetX,
-            (TILE_H / 2) + 0.018,
-            position.z + offsetZ
-        );
-        cluster.rotation.y = rotationY;
+        positionBuildingCluster(tileIndex, cluster);
 
         try {
             const upgradeLevel = Math.max(0, Math.min(houseCount, upgradeModelConfigs.length) - 1);
@@ -1553,24 +1547,74 @@ const GameBoard = (() => {
         houseMeshes[tileIndex] = [];
     }
 
+    function getTileMeshRotationY(index) {
+        if (index >= 11 && index <= 19) return Math.PI / 2;
+        if (index >= 31 && index <= 39) return -Math.PI / 2;
+        return 0;
+    }
+
+    function rotatePlanarVector(vector, radians) {
+        const cos = Math.cos(radians);
+        const sin = Math.sin(radians);
+        return {
+            x: (vector.x * cos) + (vector.z * sin),
+            z: (-vector.x * sin) + (vector.z * cos)
+        };
+    }
+
+    function getTileBuildZoneVector(index) {
+        const textureRotation = THREE.MathUtils.degToRad(
+            getTileRotationDegrees(index, currentTextProfile, { activeSide: currentThirdPersonSide })
+        );
+        const meshRotation = getTileMeshRotationY(index);
+        const localBuildVector = rotatePlanarVector({ x: 0, z: -1 }, textureRotation);
+        const worldBuildVector = rotatePlanarVector(localBuildVector, meshRotation);
+        const length = Math.hypot(worldBuildVector.x, worldBuildVector.z) || 1;
+        return {
+            x: worldBuildVector.x / length,
+            z: worldBuildVector.z / length
+        };
+    }
+
     function getBuildingOrientation(index) {
         const tile = boardData[index];
-        const topEdgeOffset = tile?.type === 'property' ? 1.04 : 0;
-        const outward = topEdgeOffset > 0 ? getTileOutwardVector(index) : { x: 0, z: 0 };
+        const buildZoneOffset = tile?.type === 'property' ? 1.04 : 0;
+        const buildZoneVector = buildZoneOffset > 0 ? getTileBuildZoneVector(index) : { x: 0, z: 0 };
 
         if (index >= 1 && index <= 9) {
-            return { inward: { x: 0, z: -1 }, rotationY: 0, offsetX: outward.x * topEdgeOffset, offsetZ: outward.z * topEdgeOffset };
+            return { inward: { x: 0, z: -1 }, rotationY: 0, offsetX: buildZoneVector.x * buildZoneOffset, offsetZ: buildZoneVector.z * buildZoneOffset };
         }
         if (index >= 11 && index <= 19) {
-            return { inward: { x: 1, z: 0 }, rotationY: Math.PI / 2, offsetX: outward.x * topEdgeOffset, offsetZ: outward.z * topEdgeOffset };
+            return { inward: { x: 1, z: 0 }, rotationY: Math.PI / 2, offsetX: buildZoneVector.x * buildZoneOffset, offsetZ: buildZoneVector.z * buildZoneOffset };
         }
         if (index >= 21 && index <= 29) {
-            return { inward: { x: 0, z: 1 }, rotationY: 0, offsetX: outward.x * topEdgeOffset, offsetZ: outward.z * topEdgeOffset };
+            return { inward: { x: 0, z: 1 }, rotationY: 0, offsetX: buildZoneVector.x * buildZoneOffset, offsetZ: buildZoneVector.z * buildZoneOffset };
         }
         if (index >= 31 && index <= 39) {
-            return { inward: { x: -1, z: 0 }, rotationY: Math.PI / 2, offsetX: outward.x * topEdgeOffset, offsetZ: outward.z * topEdgeOffset };
+            return { inward: { x: -1, z: 0 }, rotationY: Math.PI / 2, offsetX: buildZoneVector.x * buildZoneOffset, offsetZ: buildZoneVector.z * buildZoneOffset };
         }
         return { inward: { x: 0, z: 0 }, rotationY: 0, offsetX: 0, offsetZ: 0 };
+    }
+
+    function positionBuildingCluster(tileIndex, cluster) {
+        const position = tilePositions[tileIndex];
+        if (!position || !cluster) return;
+
+        const { rotationY, offsetX, offsetZ } = getBuildingOrientation(tileIndex);
+        cluster.position.set(
+            position.x + offsetX,
+            (TILE_H / 2) + 0.018,
+            position.z + offsetZ
+        );
+        cluster.rotation.y = rotationY;
+    }
+
+    function refreshBuildingPlacements(tileIndexes = []) {
+        tileIndexes.forEach(tileIndex => {
+            const clusters = houseMeshes[tileIndex];
+            if (!clusters?.length) return;
+            clusters.forEach(cluster => positionBuildingCluster(tileIndex, cluster));
+        });
     }
 
     function getTileOutwardVector(index) {
@@ -1721,12 +1765,14 @@ const GameBoard = (() => {
             currentTextProfile = nextProfile;
             currentThirdPersonSide = nextThirdPersonSide;
             refreshTileTextures(Array.from(impactedTiles));
+            refreshBuildingPlacements(Array.from(impactedTiles));
             return;
         }
 
         currentTextProfile = nextProfile;
         currentThirdPersonSide = nextThirdPersonSide;
         refreshTileTextures(boardData.map(tile => tile.index));
+        refreshBuildingPlacements(boardData.map(tile => tile.index));
     }
 
     function replaceTileMaterial(tileIndex, materialSet) {

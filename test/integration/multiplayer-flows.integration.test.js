@@ -303,6 +303,59 @@ test('dev tools can force a bot into bankruptcy', async () => {
     assert.equal(eliminatedBot?.money, 0);
 });
 
+test('players can voluntarily declare bankruptcy while still solvent', async () => {
+    const roomCode = randomRoomCode('VOLBK');
+    const host = track(await connectClient({ port, roomCode }));
+    const guest = track(await connectClient({ port, roomCode }));
+
+    await selectCharacter(host.socket, 'bilo');
+    await selectCharacter(guest.socket, 'osss');
+
+    const lobbyBotPromise = waitForSocketEventMatching(
+        host.socket,
+        'lobby-update',
+        (payload) => Array.isArray(payload?.players) && payload.players.some((player) => player.isBot),
+        5000
+    );
+    host.socket.emit('add-random-bot');
+    await lobbyBotPromise;
+
+    await setReadyState(host.socket, true);
+    await setReadyState(guest.socket, true);
+
+    const hostStartedPromise = waitForSocketEvent(host.socket, 'gameStarted');
+    const guestStartedPromise = waitForSocketEvent(guest.socket, 'gameStarted');
+    host.socket.emit('requestStartGame');
+
+    const hostState = await hostStartedPromise;
+    const guestState = await guestStartedPromise;
+    const guestPlayer = guestState.players.find((player) => player.character === 'osss');
+
+    assert.ok(guestPlayer, 'guest player should exist in the started match');
+    assert.equal(guestPlayer.money, 1500);
+    assert.equal(guestPlayer.bankruptcyDeadline, null);
+    assert.equal(guestPlayer.isActive, true);
+
+    const bankruptPromise = waitForSocketEventMatching(
+        host.socket,
+        'player-bankrupt',
+        (payload) => payload?.playerId === guestPlayer.id,
+        5000
+    );
+    const noErrorPromise = expectNoSocketEvent(guest.socket, 'game-error', 800);
+
+    guest.socket.emit('declare-bankruptcy');
+
+    const bankruptEvent = await bankruptPromise;
+    await noErrorPromise;
+
+    const eliminatedGuest = bankruptEvent.gameState?.players?.find((player) => player.id === guestPlayer.id);
+    assert.equal(bankruptEvent.playerId, guestPlayer.id);
+    assert.equal(eliminatedGuest?.isActive, false);
+    assert.equal(eliminatedGuest?.money, 0);
+    assert.equal(eliminatedGuest?.bankruptcyDeadline, null);
+});
+
 test('host can disable and re-enable turn timer during a live match', async () => {
     const { host, guest } = await bootstrapMatch();
 

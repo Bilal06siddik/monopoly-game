@@ -273,7 +273,7 @@ function ViewRail({ snapshot, actions }) {
       <div id="view-dock" className={`gpu-view-dock${dockOpen ? '' : ' is-hidden'}`}>
         <button id="camera-iso-btn" className={snapshot.viewMode === 'isometric' ? 'is-active' : ''} type="button" onClick={() => actions.setViewMode('isometric')}>Isometric</button>
         <button id="camera-view-btn" className={snapshot.viewMode === 'third-person' ? 'is-active' : ''} type="button" disabled={!me?.isActive} onClick={() => actions.setViewMode('third-person')}>Third Person</button>
-        <button id="camera-topdown-btn" className={snapshot.viewMode === 'top-down' ? 'is-active' : ''} type="button" onClick={() => actions.setViewMode('top-down')}>Top Down</button>
+        <button id="camera-topdown-btn" className={snapshot.viewMode === 'top-down' ? 'is-active' : ''} type="button" disabled title="Top-down view is being polished" onClick={() => actions.setViewMode('top-down')}>Top Down (disabled)</button>
         <button id="camera-reset-btn" type="button" className="is-secondary" onClick={actions.resetView}>Reset View</button>
       </div>
     </div>
@@ -287,7 +287,7 @@ function ActionDock({ snapshot, actions }) {
   const endTurn = getEndTurnState(state, snapshot.myPlayerId);
   const overflowOpen = snapshot.ui?.overflowOpen;
   const canManage = canManageAssets(state, snapshot.myPlayerId);
-  const canDeclareBankruptcy = Boolean(me?.isActive && (me?.bankruptcyDeadline || (typeof me?.money === 'number' && me.money < 0)));
+  const canDeclareBankruptcy = Boolean(me?.isActive);
   const hasAuctionableProperty = (state?.properties || []).some((property) => property.owner === snapshot.myPlayerId && !(property.type === 'property' && property.colorGroup && state.properties.some((entry) => entry.type === 'property' && entry.colorGroup === property.colorGroup && entry.houses > 0)));
   const showJail = Boolean(me?.inJail && state?.currentPlayerId === snapshot.myPlayerId && !state?.pauseState);
   const showJailBuyout = Boolean(

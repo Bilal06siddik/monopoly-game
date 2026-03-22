@@ -368,6 +368,12 @@ input:disabled {
   transform: none !important;
 }
 
+.gpu-view-dock button:disabled {
+  border-color: rgba(132, 142, 156, 0.38);
+  background: linear-gradient(180deg, rgba(84, 90, 99, 0.92), rgba(54, 59, 67, 0.94));
+  color: rgba(229, 233, 238, 0.88);
+}
+
 button:focus,
 input:focus {
   outline: none;

@@ -449,7 +449,7 @@ const GameUI = (() => {
             }, myPlayerId)
         );
         const hasAuctionableProperty = currentProperties.some(property => property.owner === myPlayerId && !isGroupLocked(property));
-        const canDeclareBankruptcy = Boolean(me?.isActive && (me?.bankruptcyDeadline || (typeof me?.money === 'number' && me.money < 0)));
+        const canDeclareBankruptcy = Boolean(me?.isActive);
 
         overflowWrapper.classList.toggle('hidden', !me?.isActive);
 
@@ -463,7 +463,7 @@ const GameUI = (() => {
         declareBankruptcyBtn.classList.toggle('disabled', !canDeclareBankruptcy);
         declareBankruptcyBtn.title = canDeclareBankruptcy
             ? 'Leave the match and surrender your assets.'
-            : 'Declare bankruptcy when you are in debt.';
+            : 'Only active players can declare bankruptcy.';
 
         if (!me?.isActive) {
             setOverflowMenuOpen(false);
