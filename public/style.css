@@ -6430,11 +6430,9 @@ body.lobby-popup-open {
 @keyframes party-start-pulse {
     0%, 100% {
         box-shadow: 0 0 0 0 rgba(255, 214, 130, 0.18);
-        transform: translateY(0);
     }
     50% {
         box-shadow: 0 0 0 8px rgba(255, 214, 130, 0.04);
-        transform: translateY(-1px);
     }
 }
 

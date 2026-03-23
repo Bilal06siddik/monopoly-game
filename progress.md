@@ -113,3 +113,18 @@ Original prompt: we are planning to make a v2 update fot his game so first thing
     - `node --check server.js` ✅
     - `node --check test/integration/multiplayer-flows.integration.test.js` ✅
     - `node --test test/integration/multiplayer-flows.integration.test.js --test-name-pattern "own-auction with no bids returns the property to the seller|own-auction debt recovery returns to done instead of rewinding to a fresh roll|late auction bid near timeout resolves to a consistent final state"` ✅
+- Final presentation-pass follow-up:
+  - raised Socket.IO `maxHttpBufferSize` headroom so oversize custom avatar uploads return the intended validation error instead of risking transport-level drops before the handler runs
+  - removed the launch-button translate animation from the lobby pulse so the host start CTA stays visually animated without shifting under pointer/click targeting
+  - updated the Playwright lobby helpers to follow the current character-confirm + ready-up flow before asserting bot/start controls, matching the shipped lobby UX
+- End-stats lifecycle fix:
+  - added a terminal-match cache in `public/main.js` so the end-of-match results screen keeps rendering against the frozen final gameplay snapshot even after the server sends the post-match lobby sync
+  - deferred the non-started `game-state-sync` payload during an active end-stats session and restore that cached lobby state only when the player presses `Return to Lobby`
+  - updated the gameplay snapshot builder so the React HUD stays mounted whenever end stats are active, even if the live match runtime has already been cleared server-side
+  - rewired the `closeEndStats` action to use the new lobby-restore path instead of only hiding the overlay
+  - follow-up fix after the first regression run: the new React end-stats overlay was still inheriting legacy `#end-stats-screen` CSS from `public/style.css`, so it existed in the DOM but stayed hidden; fixed that in `src/gameplay-ui/GameplayUI.jsx` and rebuilt the shipped UI bundle
+  - added a Playwright regression in `test/e2e/gameplay-ui.spec.js` that starts a host-vs-bot match, forces the bot into bankruptcy through the dev panel, verifies the end-stats screen persists across the follow-up lobby sync, and then verifies `Return to Lobby` hides the gameplay HUD again
+  - verification:
+    - `npm run build:ui` ✅
+    - `npx playwright test test/e2e/gameplay-ui.spec.js --grep "end stats stay visible until the player returns to the lobby"` ✅
+    - `npx playwright test test/e2e/gameplay-ui.spec.js` ✅

@@ -49,6 +49,8 @@
     } = window.MonopolyStateSync || {};
     let myPlayerId = null;
     let currentGameState = null;
+    let terminalMatchSnapshot = null;
+    let deferredLobbyStateAfterMatch = null;
     let currentBoardId = window.DEFAULT_BOARD_ID || 'egypt';
     let activeRoomCode = initialRoomCode;
     let focusedTileIndex = null;
@@ -130,6 +132,15 @@
         lowerCollapsed: false,
         viewDockOpen: false
     };
+
+    function isEndStatsSessionActive() {
+        return Boolean(uiState.endStats?.visible && uiState.endStats?.summary);
+    }
+
+    function clearTerminalMatchCache() {
+        terminalMatchSnapshot = null;
+        deferredLobbyStateAfterMatch = null;
+    }
 
     function wait(ms) {
         return new Promise(resolve => window.setTimeout(resolve, ms));
@@ -425,6 +436,21 @@
         uiState.tradeComposer = { open: false, targetId: null, counterTradeId: null, offerCash: 0, requestCash: 0, offerProperties: [], requestProperties: [], validation: null };
     }
 
+    function resetMatchRuntimeUi({ clearEndStats = true } = {}) {
+        updatePendingTrades([]);
+        uiState.buyPrompt = null;
+        uiState.auctionState = null;
+        uiState.tradeIncomingModalTradeId = null;
+        uiState.propertyDetailsTileIndex = null;
+        uiState.summary = null;
+        if (clearEndStats) {
+            uiState.endStats = { visible: false, summary: null, winner: null };
+        }
+        resetOwnAuctionState();
+        resetTradeComposer();
+        setFocusedTile(null);
+    }
+
     function setDiceResult(payload) {
         if (diceResultTimeout) clearTimeout(diceResultTimeout);
         uiState.diceResult = payload;
@@ -511,12 +537,16 @@
     }
 
     function buildGameplaySnapshot() {
+        const endStatsActive = isEndStatsSessionActive();
+        const gameplayState = endStatsActive
+            ? (terminalMatchSnapshot || currentGameState)
+            : currentGameState;
         return {
-            visible: Boolean(currentGameState?.isGameStarted),
+            visible: Boolean(gameplayState && (gameplayState.isGameStarted || endStatsActive)),
             myPlayerId,
             roomCode: activeRoomCode,
             viewMode: GameScene.getViewMode?.() || DEFAULT_VIEW_MODE,
-            gameState: currentGameState,
+            gameState: gameplayState,
             lobbyState,
             orientation: buildOrientationState(),
             ui: {
@@ -831,10 +861,7 @@
                 uiState.summary = null;
                 refreshGameplayUI();
             },
-            closeEndStats: () => {
-                uiState.endStats = { visible: false, summary: null, winner: null };
-                refreshGameplayUI();
-            }
+            closeEndStats: () => hideEndStatsScreen()
         });
         gameplayUiMounted = true;
         refreshGameplayUI();
@@ -996,13 +1023,23 @@
     }
 
     function hideEndStatsScreen() {
+        const nextLobbyState = deferredLobbyStateAfterMatch;
         uiState.endStats = { visible: false, summary: null, winner: null };
+        Lobby.showLobby();
+        gameHud?.classList.add('hidden');
+        if (nextLobbyState) {
+            setCurrentGameState(nextLobbyState, { normalized: true });
+        }
+        clearTerminalMatchCache();
+        resetMatchRuntimeUi({ clearEndStats: false });
         refreshGameplayUI();
     }
 
     function showEndStatsScreen(summary, winner) {
         if (!summary) return;
+        uiState.summary = null;
         uiState.endStats = { visible: true, summary, winner };
+        gameHud?.classList.remove('hidden');
         refreshGameplayUI();
     }
 
@@ -1108,8 +1145,8 @@
         document.body.style.setProperty('--top-down-action-dock-top', `${actionDockTop}px`);
     }
 
-    function setCurrentGameState(state) {
-        const normalizedState = normalizeSerializedGameState(state, currentGameState);
+    function setCurrentGameState(state, { normalized = false } = {}) {
+        const normalizedState = normalized ? state : normalizeSerializedGameState(state, currentGameState);
         if (isStaleSerializedGameState(normalizedState, currentGameState)) {
             return false;
         }
@@ -1187,27 +1224,7 @@
         GameTokens.layoutTokens(state.players);
 
         state.properties.forEach(prop => {
-            GameBoard.removeHouses(prop.index, scene);
-
-            const isPurchasable = prop.type === 'property' || prop.type === 'railroad' || prop.type === 'utility';
-            if (!isPurchasable) return;
-
-            const owner = prop.owner
-                ? state.players.find(player => player.id === prop.owner)
-                : null;
-            // #6: Only show owner color if the owner is still active (not bankrupt)
-            const ownerColor = (owner && owner.isActive) ? owner.color : null;
-            const displayRent = getTileDisplayRent(prop, state.properties);
-            GameBoard.updateTileOwner(prop.index, ownerColor, {
-                ...prop,
-                displayRent: displayRent.amount,
-                displayRentLabel: displayRent.label
-            });
-            GameBoard.setMortgaged(prop.index, Boolean(prop.isMortgaged));
-
-            if (prop.houses > 0) {
-                GameBoard.addHouse(prop.index, prop.houses, scene);
-            }
+            refreshPropertyTileVisual(state, prop.index);
         });
 
         // #17: Update building transparency based on player positions
@@ -1220,6 +1237,35 @@
         });
 
         syncCameraViewState();
+    }
+
+    function refreshPropertyTileVisual(state, tileIndex) {
+        if (!state || !Number.isInteger(tileIndex)) return;
+
+        const prop = state.properties?.[tileIndex];
+        if (!prop) return;
+
+        GameBoard.removeHouses(prop.index, scene);
+
+        const isPurchasable = prop.type === 'property' || prop.type === 'railroad' || prop.type === 'utility';
+        if (!isPurchasable) return;
+
+        const owner = prop.owner
+            ? state.players.find(player => player.id === prop.owner)
+            : null;
+        const ownerColor = (owner && owner.isActive) ? owner.color : null;
+        const displayRent = getTileDisplayRent(prop, state.properties);
+
+        GameBoard.updateTileOwner(prop.index, ownerColor, {
+            ...prop,
+            displayRent: displayRent.amount,
+            displayRentLabel: displayRent.label
+        });
+        GameBoard.setMortgaged(prop.index, Boolean(prop.isMortgaged));
+
+        if (prop.houses > 0) {
+            GameBoard.addHouse(prop.index, prop.houses, scene);
+        }
     }
 
     function syncHistoryFromState(state) {
@@ -1260,8 +1306,15 @@
 
     function applyState(state, { syncWorld = true, syncHistory = true, syncTrades = true, syncAuction = true, syncBuyPrompt = true } = {}) {
         if (!state) return;
+        const normalizedState = normalizeSerializedGameState(state, currentGameState);
+        if (isStaleSerializedGameState(normalizedState, currentGameState)) return;
+        if (isEndStatsSessionActive() && normalizedState && !normalizedState.isGameStarted) {
+            deferredLobbyStateAfterMatch = normalizedState;
+            refreshGameplayUI();
+            return;
+        }
         // Ignore any snapshot that finished animating after a newer authoritative state already arrived.
-        if (!setCurrentGameState(state)) return;
+        if (!setCurrentGameState(normalizedState, { normalized: true })) return;
 
         const appliedState = currentGameState;
         syncBoardSelection(appliedState.boardId);
@@ -1282,17 +1335,10 @@
             Lobby.hideLobby();
             gameHud?.classList.remove('hidden');
         } else {
+            clearTerminalMatchCache();
             Lobby.showLobby();
             gameHud?.classList.add('hidden');
-            updatePendingTrades([]);
-            uiState.buyPrompt = null;
-            uiState.auctionState = null;
-            uiState.propertyDetailsTileIndex = null;
-            uiState.summary = null;
-            uiState.endStats = { visible: false, summary: null, winner: null };
-            resetOwnAuctionState();
-            resetTradeComposer();
-            closeIncomingTradeModal();
+            resetMatchRuntimeUi();
         }
         if (syncBuyPrompt) maybeRestoreBuyPrompt(appliedState);
         refreshGameplayUI();
@@ -1392,6 +1438,7 @@
     socket.on('game-ended-by-host', (data) => {
         Notifications.show(data?.message || 'The host ended the current match.', 'info', 5000);
         uiState.summary = null;
+        clearTerminalMatchCache();
         hideEndStatsScreen();
     });
 
@@ -1641,6 +1688,7 @@
 
     socket.on('property-bought', (data) => {
         applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: false });
+        refreshPropertyTileVisual(currentGameState || data.gameState, data.tileIndex);
         if (data.playerId === myPlayerId) {
             Notifications.show(`🏠 Bought ${data.tileName}!`, 'success', 2500);
         }
@@ -1726,8 +1774,15 @@
     });
 
     socket.on('game-over', (data) => {
+        deferredLobbyStateAfterMatch = null;
         if (data.gameState) {
+            const frozenState = normalizeSerializedGameState(data.gameState, currentGameState);
+            if (!isStaleSerializedGameState(frozenState, terminalMatchSnapshot || currentGameState)) {
+                terminalMatchSnapshot = frozenState;
+            }
             applyState(data.gameState, { syncTrades: true, syncAuction: true, syncBuyPrompt: false });
+        } else if (currentGameState) {
+            terminalMatchSnapshot = currentGameState;
         }
         showEndStatsScreen(data.summary, data.winner);
     });
@@ -1781,8 +1836,17 @@
         }
     });
     socket.on('auction-ended', (data) => {
-        applyState(data.gameState, { syncHistory: false, syncTrades: false, syncAuction: true, syncBuyPrompt: true });
         uiState.auctionState = null;
+        if (currentGameState) {
+            currentGameState.auctionState = null;
+        }
+        const endedState = data.gameState
+            ? { ...data.gameState, auctionState: null }
+            : data.gameState;
+        applyState(endedState, { syncHistory: false, syncTrades: false, syncAuction: false, syncBuyPrompt: true });
+        if (Number.isInteger(data.tileIndex)) {
+            refreshPropertyTileVisual(currentGameState || endedState, data.tileIndex);
+        }
         refreshGameplayUI();
         if (data.winnerId) {
             const isMe = data.winnerId === myPlayerId;

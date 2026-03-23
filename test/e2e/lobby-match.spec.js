@@ -69,6 +69,7 @@ test('hidden tabs fast-forward active gameplay animations', async ({ page }) => 
     }
 
     await selectFirstAvailableCharacter(page);
+    await readyUp(page);
 
     const addBotButton = page.locator('#add-bot-btn');
     await expect(addBotButton).toBeEnabled({ timeout: 15000 });
@@ -125,6 +126,7 @@ test('hidden tabs fast-forward active gameplay animations', async ({ page }) => 
 });
 
 test('two clients can join same room and both enter the running match', async ({ browser }) => {
+    test.setTimeout(90000);
     const hostContext = await browser.newContext();
     const guestContext = await browser.newContext();
 

@@ -187,10 +187,10 @@ function propertyActions(state, tile, myPlayerId) {
     const downgradeRefund = Math.floor(tile.price * 0.25);
     const upgradeValidation = rules.validateUpgrade ? rules.validateUpgrade(state.properties, myPlayerId, tile.index, state.rulesConfig) : { ok: false, message: 'Unavailable' };
     const downgradeValidation = rules.validateDowngrade ? rules.validateDowngrade(state.properties, myPlayerId, tile.index, state.rulesConfig) : { ok: false, message: 'Unavailable' };
-
     if (!tile.isMortgaged && tile.houses < 5) {
       push('upgrade', 'Upgrade', money(upgradeCost), !canManage || mortgagedGroup || !upgradeValidation.ok || me.money < upgradeCost, !canManage ? 'Only the active player can build right now.' : mortgagedGroup ? 'Unmortgage the full color set before building.' : !upgradeValidation.ok ? upgradeValidation.message : `Need ${money(upgradeCost)} to upgrade.`);
     }
+
     if (tile.houses > 0) {
       push('downgrade', 'Downgrade', `+${money(downgradeRefund).slice(1)}`, !canManage || !downgradeValidation.ok, !canManage ? 'Only the active player can sell buildings right now.' : downgradeValidation.message);
     }
@@ -265,6 +265,8 @@ function ViewRail({ snapshot, actions }) {
   const state = snapshot.gameState;
   const me = getMe(state, snapshot.myPlayerId);
   const dockOpen = snapshot.viewMode !== 'top-down' ? true : snapshot.ui?.viewDockOpen;
+  const canUseThirdPerson = Boolean(me) && (me.isActive || snapshot.viewMode === 'third-person');
+  const topDownDisabledTitle = 'Top-down view is being polished';
   return (
     <div className="gpu-left-rail">
       <button id="view-dock-toggle" className="gpu-utility-toggle" type="button" aria-expanded={dockOpen} onClick={actions.toggleViewDock}>
@@ -272,8 +274,8 @@ function ViewRail({ snapshot, actions }) {
       </button>
       <div id="view-dock" className={`gpu-view-dock${dockOpen ? '' : ' is-hidden'}`}>
         <button id="camera-iso-btn" className={snapshot.viewMode === 'isometric' ? 'is-active' : ''} type="button" onClick={() => actions.setViewMode('isometric')}>Isometric</button>
-        <button id="camera-view-btn" className={snapshot.viewMode === 'third-person' ? 'is-active' : ''} type="button" disabled={!me?.isActive} onClick={() => actions.setViewMode('third-person')}>Third Person</button>
-        <button id="camera-topdown-btn" className={snapshot.viewMode === 'top-down' ? 'is-active' : ''} type="button" disabled title="Top-down view is being polished" onClick={() => actions.setViewMode('top-down')}>Top Down (disabled)</button>
+        <button id="camera-view-btn" className={snapshot.viewMode === 'third-person' ? 'is-active' : ''} type="button" disabled={!canUseThirdPerson} onClick={() => actions.setViewMode('third-person')}>Third Person</button>
+        <button id="camera-topdown-btn" className={snapshot.viewMode === 'top-down' ? 'is-active' : ''} type="button" disabled aria-disabled="true" title={topDownDisabledTitle} onClick={() => actions.setViewMode('top-down')}>Top Down (disabled)</button>
         <button id="camera-reset-btn" type="button" className="is-secondary" onClick={actions.resetView}>Reset View</button>
       </div>
     </div>
@@ -488,7 +490,7 @@ function BuyModal({ snapshot, actions }) {
 }
 
 function AuctionModal({ snapshot, actions }) {
-  const auction = snapshot.ui?.auctionState || snapshot.gameState?.auctionState;
+  const auction = snapshot.ui?.auctionState || null;
   const state = snapshot.gameState;
   if (!auction) return null;
   const me = getMe(state, snapshot.myPlayerId);
@@ -829,7 +831,7 @@ function EndStats({ snapshot, actions }) {
   const topRent = endStats.summary.topRentProperties?.[0] || null;
   const myPlacement = placements.find((player) => player.playerId === snapshot.myPlayerId) || null;
   return (
-    <div id="end-stats-screen" className="gpu-end-stats">
+    <div id="end-stats-screen" className="gpu-end-stats" style={{ display: 'grid', opacity: 1, visibility: 'visible' }}>
       <div className="gpu-end-card">
         <section className="gpu-end-hero">
           <div className="gpu-modal-kicker">Match Complete</div>

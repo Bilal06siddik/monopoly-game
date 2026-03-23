@@ -36,9 +36,9 @@ const normalizeRulesConfig = RulePresets.normalizeRulesConfig || ((rulesConfig =
 
 const app = express();
 const server = http.createServer(app);
-// Keep this above the base64-expanded transport size so the server can reply with
+// Keep this well above the base64-expanded transport size so the server can reply with
 // a validation error instead of dropping the socket before the event handler runs.
-const SOCKET_MAX_HTTP_BUFFER_SIZE = 8 * 1024 * 1024;
+const SOCKET_MAX_HTTP_BUFFER_SIZE = 12 * 1024 * 1024;
 const MAX_CUSTOM_AVATAR_BYTES = 2 * 1024 * 1024;
 
 const io = new Server(server, {
