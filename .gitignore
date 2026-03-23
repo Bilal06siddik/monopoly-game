@@ -15,6 +15,10 @@ pnpm-debug.log*
 dist/
 build/
 coverage/
+artifacts/
+playwright-report/
+test-results/
+output/web-game/
 
 # OS and editor files
 .DS_Store
