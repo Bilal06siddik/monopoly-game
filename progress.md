@@ -128,3 +128,8 @@ Original prompt: we are planning to make a v2 update fot his game so first thing
     - `npm run build:ui` ✅
     - `npx playwright test test/e2e/gameplay-ui.spec.js --grep "end stats stay visible until the player returns to the lobby"` ✅
     - `npx playwright test test/e2e/gameplay-ui.spec.js` ✅
+- Added a localhost-only browser automation API in `public/main.js` so Playwright can read the authoritative gameplay snapshot and emit controlled test/dev actions without brittle DOM scraping.
+- Fixed dev ownership commands in `server.js` to resync `player.properties` after `set-owner`, `clear-owner`, and `claim-color-group`, keeping dev-driven states consistent for simulations and summaries.
+- Added `test/integration/full-match.simulation.test.js` to autoplay a human seat through a bot-heavy match and fail on stalls or socket-level gameplay errors.
+- Added `test/e2e/simulation-visual.spec.js` to force and capture core gameplay states (buy prompt, auction, jail, trade, endgame) while checking for browser runtime errors.
+- Added `npm run test:simulation` and documented the new simulation lane in `TESTING.md`.

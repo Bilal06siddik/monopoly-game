@@ -3934,6 +3934,7 @@ io.on('connection', socket => {
     }
 
     let restartTurnTimer = false;
+    let shouldSyncPlayerProperties = false;
 
     switch (data.type) {
       case 'set-money': {
@@ -3998,6 +3999,7 @@ io.on('connection', socket => {
         }
 
         tile.owner = playerRecord.id;
+        shouldSyncPlayerProperties = true;
         if (gameState.turnPhase === 'buying') {
           gameState.turnPhase = 'waiting';
           restartTurnTimer = true;
@@ -4017,6 +4019,7 @@ io.on('connection', socket => {
         tile.owner = null;
         tile.houses = 0;
         tile.isMortgaged = false;
+        shouldSyncPlayerProperties = true;
         if (gameState.turnPhase === 'buying') {
           gameState.turnPhase = 'waiting';
           restartTurnTimer = true;
@@ -4079,6 +4082,7 @@ io.on('connection', socket => {
           tile.owner = playerRecord.id;
           tile.isMortgaged = false;
         });
+        shouldSyncPlayerProperties = true;
         if (gameState.turnPhase === 'buying') {
           gameState.turnPhase = 'waiting';
           restartTurnTimer = true;
@@ -4152,6 +4156,10 @@ io.on('connection', socket => {
       default:
         socket.emit('game-error', { message: 'Unknown developer command.' });
         return;
+    }
+
+    if (shouldSyncPlayerProperties) {
+      syncPlayerPropertyLists();
     }
 
     emitGameStateSync({ restartTurnTimer });

@@ -695,7 +695,22 @@ const GameBoard = (() => {
                 drawEgyptColorShowcase(ctx, tile, canvas, metrics);
             }
 
-            if (!isStreetTile && ownerColor) {
+            if (isStreetTile && ownerColor) {
+                const ownerGlowTop = canvas.height - footerHeight - (metrics.buildZoneHeight * 0.26);
+                const ownerGlowHeight = footerHeight + (metrics.buildZoneHeight * 0.26);
+                const ownerGlow = ctx.createLinearGradient(0, ownerGlowTop, 0, canvas.height);
+                ownerGlow.addColorStop(0, hexToRgba(ownerColor, 0));
+                ownerGlow.addColorStop(0.42, hexToRgba(ownerColor, 0.18));
+                ownerGlow.addColorStop(1, hexToRgba(ownerColor, 0.42));
+                ctx.fillStyle = ownerGlow;
+                ctx.fillRect(0, ownerGlowTop, canvas.width, ownerGlowHeight);
+
+                ctx.fillStyle = hexToRgba(ownerColor, 0.92);
+                ctx.fillRect(0, canvas.height - footerHeight, canvas.width, footerHeight);
+
+                ctx.fillStyle = hexToRgba('#ffffff', 0.24);
+                ctx.fillRect(0, canvas.height - footerHeight, canvas.width, 10);
+            } else if (!isStreetTile && ownerColor) {
                 ctx.fillStyle = ownerColor;
                 ctx.globalAlpha = 0.88;
                 ctx.fillRect(0, canvas.height - footerHeight, canvas.width, footerHeight);
@@ -803,19 +818,27 @@ const GameBoard = (() => {
                     const chipY = canvas.height - chipHeight - (footerHeight * 0.16);
                     const chipGradient = ctx.createLinearGradient(chipX, chipY, chipX + chipWidth, chipY);
                     const chipBase = ownerColor || surfacePalette.tileFooterTop;
-                    chipGradient.addColorStop(0, ownerColor ? shadeColor(chipBase, 10) : surfacePalette.tileFooterTop);
-                    chipGradient.addColorStop(1, ownerColor ? shadeColor(chipBase, -12) : surfacePalette.tileFooterBottom);
+                    chipGradient.addColorStop(0, ownerColor ? shadeColor(chipBase, 22) : surfacePalette.tileFooterTop);
+                    chipGradient.addColorStop(1, ownerColor ? shadeColor(chipBase, -18) : surfacePalette.tileFooterBottom);
 
                     ctx.fillStyle = chipGradient;
                     ctx.beginPath();
                     addRoundedRectPath(ctx, chipX, chipY, chipWidth, chipHeight, 26);
                     ctx.fill();
 
-                    ctx.strokeStyle = ownerColor ? hexToRgba('#ffffff', 0.34) : 'rgba(255, 255, 255, 0.14)';
-                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = ownerColor ? hexToRgba('#ffffff', 0.48) : 'rgba(255, 255, 255, 0.14)';
+                    ctx.lineWidth = ownerColor ? 5 : 3;
                     ctx.beginPath();
                     addRoundedRectPath(ctx, chipX + 2, chipY + 2, chipWidth - 4, chipHeight - 4, 24);
                     ctx.stroke();
+
+                    if (ownerColor) {
+                        ctx.strokeStyle = hexToRgba(ownerColor, 0.7);
+                        ctx.lineWidth = 10;
+                        ctx.beginPath();
+                        addRoundedRectPath(ctx, chipX - 4, chipY - 4, chipWidth + 8, chipHeight + 8, 30);
+                        ctx.stroke();
+                    }
 
                     ctx.fillStyle = ownerColor ? '#ffffff' : surfacePalette.textAccent;
                     ctx.strokeText(displayLabel, canvas.width / 2, chipY + (chipHeight * 0.52));

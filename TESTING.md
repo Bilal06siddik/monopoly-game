@@ -8,6 +8,7 @@ This document is the source of truth for testing this game before sharing a buil
 - Integration tests (`test/integration/**/*.test.js`): real Socket.IO multiplayer behavior on a live server instance.
 - Stress tests (`test/stress/**/*.test.js`): repeated seeded invariants to catch edge cases that appear over many turns.
 - E2E tests (`test/e2e/**/*.spec.js`): browser-level real player flow checks.
+- Simulation lane (`npm run test:simulation`): an autoplayed full-match logic run plus a browser state tour for buy, auction, jail, trade, and endgame visuals.
 
 ## 2. One-time setup
 
@@ -64,6 +65,7 @@ npm run test:ci
 - `npm run test:integration`: multiplayer socket integration tests.
 - `npm run test:stress`: seeded stress invariants.
 - `npm run test:all`: unit + integration + stress.
+- `npm run test:simulation`: full-match autoplay simulation plus visual-state capture checks.
 - `npm run test:coverage`: c8 coverage report for non-browser tests.
 - `npm run test:e2e`: Playwright suite.
 - `npm run test:ci`: coverage + e2e (same intent as CI pipeline).
@@ -74,6 +76,7 @@ npm run test:ci
 - Changed files under `server.js`: run integration + stress + at least one e2e scenario.
 - Changed files under `public/`: run e2e + relevant integration tests for matching socket events.
 - Changed trade/auction/turn flow: run all layers.
+- Changed cross-cutting gameplay or UI state sync: run `npm run test:simulation`.
 
 ## 6. Manual multiplayer checklist (high-value edge cases)
 

@@ -1242,7 +1242,7 @@
     function refreshPropertyTileVisual(state, tileIndex) {
         if (!state || !Number.isInteger(tileIndex)) return;
 
-        const prop = state.properties?.[tileIndex];
+        const prop = state.properties?.find(property => property.index === tileIndex);
         if (!prop) return;
 
         GameBoard.removeHouses(prop.index, scene);
@@ -1983,6 +1983,40 @@
 
     window.notifyGo = Notifications.notifyGo;
     window.notifyDoubles = Notifications.notifyDoubles;
+    const automationHost = window.location.hostname;
+    const automationParams = new URLSearchParams(window.location.search);
+    const automationEnabled = automationHost === 'localhost'
+        || automationHost === '127.0.0.1'
+        || automationParams.get('dev') === '1';
+
+    function cloneAutomationValue(value) {
+        if (value == null) return value;
+        if (typeof structuredClone === 'function') {
+            return structuredClone(value);
+        }
+        return JSON.parse(JSON.stringify(value));
+    }
+
+    window.__MONOPOLY_TEST_API = automationEnabled ? {
+        getGameplaySnapshot() {
+            return cloneAutomationValue(buildGameplaySnapshot());
+        },
+        getGameState() {
+            return cloneAutomationValue(currentGameState);
+        },
+        getUiState() {
+            return cloneAutomationValue(uiState);
+        },
+        getPlayerId() {
+            return myPlayerId;
+        },
+        emit(eventName, payload = {}) {
+            socket.emit(eventName, payload);
+        },
+        runDevCommand(type, payload = {}) {
+            socket.emit('dev-command', { type, ...payload });
+        }
+    } : null;
 
     console.log(
         '%c🎲 Monopoly Game Loaded!\n%cPhase 5: Textured Board, Clickable Tiles, Upgrades',

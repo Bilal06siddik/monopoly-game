@@ -13,6 +13,7 @@
     "test:unit": "node --test \"test/shared*.test.js\"",
     "test:integration": "node --test \"test/integration/**/*.test.js\"",
     "test:stress": "node --test \"test/stress/**/*.test.js\"",
+    "test:simulation": "node --test \"test/integration/full-match.simulation.test.js\" && playwright test test/e2e/simulation-visual.spec.js --project=chromium",
     "test:all": "npm run test:unit && npm run test:integration && npm run test:stress",
     "test:coverage": "c8 --check-coverage --lines 35 --functions 40 --branches 50 --statements 35 --reporter=text --reporter=lcov npm run test:all",
     "test:e2e": "playwright test",
